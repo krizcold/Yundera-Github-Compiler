@@ -1,0 +1,51 @@
+name: yundera-github-compiler
+
+services:
+  yundera-github-compiler:
+    image: your-dockerhub-username/yundera-github-compiler:latest
+    container_name: yundera-github-compiler
+    restart: unless-stopped
+    environment:
+      # Simply add one line per repo:
+      REPO_0: "https://<TOKEN>@github.com/yourorg/private-repo-1.git"
+      REPO_1: "https://<TOKEN>@github.com/yourorg/private-repo-2.git"
+      # Optional: disable auto-update on a per-repo basis
+      REPO_0_AUTOUPDATE: "false"
+
+      # Global settings
+      UPDATE_INTERVAL: "3600"           # seconds between checks
+      FORCE_UPDATE_GLOBAL: "true"      # expose /force-update API?
+      WEBUI_PORT: "3000"               # port for the API
+
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: /DATA/AppData/$AppID/repos
+        target: /app/repos
+
+    network_mode: bridge
+    x-casaos:
+      volumes:
+        - container: /app/repos
+          description:
+            en_us: "Git repos are cloned here."
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: yundera-github-compiler
+  author: your-dockerhub-username
+  developer: your-dockerhub-username
+  icon: https://github.com/krizcold/Yundera-Github-Compiler/blob/main/YunderaCompiler.png?raw=true
+  tagline:
+    en_us: "Automatically build and deploy GitHub repos on Yundera"
+  category: Utilities
+  description:
+    en_us: "Clone, build, and run Docker-based projects directly from GitHub URLs."
+  title:
+    en_us: "Yundera GitHub Compiler"
+  index: /
+  webui_port: 3000
