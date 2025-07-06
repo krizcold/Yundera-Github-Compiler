@@ -2,7 +2,7 @@ name: yundera-github-compiler
 
 services:
   yundera-github-compiler:
-    image: your-dockerhub-username/yundera-github-compiler:latest
+    image: krizcold/yundera-github-compiler:latest
     container_name: yundera-github-compiler
     restart: unless-stopped
     environment:
@@ -37,8 +37,8 @@ x-casaos:
     - amd64
     - arm64
   main: yundera-github-compiler
-  author: your-dockerhub-username
-  developer: your-dockerhub-username
+  author: krizcold
+  developer: krizcold
   icon: https://github.com/krizcold/Yundera-Github-Compiler/blob/main/YunderaCompiler.png?raw=true
   tagline:
     en_us: "Automatically build and deploy GitHub repos on Yundera"
