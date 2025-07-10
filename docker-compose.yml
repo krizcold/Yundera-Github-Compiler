@@ -8,22 +8,31 @@ services:
     environment:
       # Simply add one line per repo:
       REPO_0: "https://<TOKEN>@github.com/yourorg/private-repo-1.git"
-      REPO_1: "https://<TOKEN>@github.com/yourorg/private-repo-2.git"
+      #REPO_1: "https://<TOKEN>@github.com/yourorg/private-repo-2.git"
       # Optional: disable auto-update on a per-repo basis
-      REPO_0_AUTOUPDATE: "false"
+      REPO_0_AUTOUPDATE: "true"
 
-      # Global settings
-      UPDATE_INTERVAL: "3600"           # seconds between checks
-      FORCE_UPDATE_GLOBAL: "true"      # expose /force-update API?
-      WEBUI_PORT: "3000"               # port for the API
+      DIAG_COMMAND: ""
+
+      UPDATE_INTERVAL: "3600"
+      FORCE_UPDATE_GLOBAL: "true"
+      WEBUI_PORT: "3000"
 
     volumes:
+      # allow the compiler to launch docker
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+
+      # cloned repos
       - type: bind
-        source: /DATA/AppData/$AppID/repos
+        source: /DATA/AppData/yundera-github-compiler/repos
         target: /app/repos
+
+      # where we’ll write out new compose files
+      - type: bind
+        source: /DATA/AppData/casaos/apps
+        target: /casaos/apps
 
     network_mode: bridge
     x-casaos:
@@ -31,6 +40,9 @@ services:
         - container: /app/repos
           description:
             en_us: "Git repos are cloned here."
+        - container: /casaos/apps
+          description:
+            en_us: "Generated compose-files for CasaOS apps."
 
 x-casaos:
   architectures:

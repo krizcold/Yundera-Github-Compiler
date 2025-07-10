@@ -1,0 +1,44 @@
+# >>> DO NOT INDENT WITH TABS <<<
+name: {{APP_SLUG}}
+services:
+  {{SERVICE_KEY}}:
+    cpu_shares: 90
+    command: []
+    container_name: {{SERVICE_KEY}}
+    deploy:
+      resources:
+        limits:
+          memory: "14603517952"
+    image: {{IMAGE_TAG}}
+    restart: unless-stopped
+    network_mode: bridge
+{{ENV_BLOCK}}{{VOLUME_BLOCK}}
+    labels:
+      icon: {{ICON_URL}}
+{{EXPOSE_BLOCK}}
+    x-casaos:
+{{X_CASAOS_VOLUME_BLOCK}}
+networks:
+  default:
+    name: {{APP_SLUG}}_default
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: {{SERVICE_KEY}}
+  author: {{AUTHOR}}
+  developer: {{DEVELOPER}}
+  icon: {{ICON_URL}}
+  tagline:
+    en_us: {{TAGLINE}}
+  category: {{CATEGORY}}
+  description:
+    en_us: {{DESCRIPTION}}
+  title:
+    en_us: {{TITLE}}
+  port_map: "{{PORT_MAP}}"
+  index: {{INDEX_PATH}}
+  webui_port: {{WEBUI_PORT}}
+  store_app_id: {{APP_SLUG}}
+  scheme: http
+  is_uncontrolled: false
