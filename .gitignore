@@ -3,3 +3,4 @@ dist
 app/repos/*
 .env
 package-lock.json
+CLAUDE.md
