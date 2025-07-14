@@ -32,7 +32,9 @@ export function loadConfig(): AppConfig {
   if (repoKeys.length === 0) {
     // Instead of exiting, we print a warning and return an empty config.
     // The application will continue to run without any repos to process.
-    console.warn("⚠️  No REPO_<n> entries found. Yundera GitHub Compiler will start in idle mode.");
+    console.warn(
+      "⚠️  No REPO_<n> entries found. Yundera GitHub Compiler will start in idle mode."
+    );
     console.warn("   The API and diagnostic commands will be available.");
     return {
       repos: [], // Return an empty array of repos
@@ -44,7 +46,7 @@ export function loadConfig(): AppConfig {
   // If we get here, it means repos were found, so we process them normally.
   const repos: RepoConfig[] = repoKeys.map((key) => {
     const idx = key.split("_")[1];
-    const url = process.env[key]!;  // we know it exists
+    const url = process.env[key]!; // we know it exists
     const autoEnv = process.env[`REPO_${idx}_AUTOUPDATE`];
     const autoUpdate = autoEnv?.toLowerCase() === "true";
 

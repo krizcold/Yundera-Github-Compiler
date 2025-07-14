@@ -14,7 +14,9 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ src/
-COPY templates/ templates/
 RUN npm run build
+
+# Copy the public directory AFTER the build is complete
+COPY src/public/ /app/dist/public/
 
 CMD ["node", "dist/index.js"]
