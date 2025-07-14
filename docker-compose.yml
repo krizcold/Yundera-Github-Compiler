@@ -42,11 +42,13 @@ services:
       - type: bind
         source: /DATA
         target: /DATA
+        read_only: true
         
       # Add device access (same as CasaOS container)
       - type: bind
         source: /dev
         target: /dev
+        read_only: true
 
     # Connect to the same network as the CasaOS service
     networks:
