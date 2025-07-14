@@ -9,16 +9,22 @@ export async function buildAndDeployRepo(repo: RepoConfig, baseDir: string) {
   const repoDir = path.join(baseDir, repo.path);
   const composeSrc = path.join(repoDir, "docker-compose.yml");
   if (!fs.existsSync(composeSrc)) {
-    console.warn(`⚠️  [${repo.path}] No docker-compose.yml – skipping`);
-    return;
+    throw new Error(`No docker-compose.yml found in ${repo.path}`);
   }
 
   console.log(`📦 [${repo.path}] Processing compose-based repo…`);
 
+  // Check if Docker is available before proceeding
+  try {
+    execSync('docker --version', { stdio: 'pipe' });
+    console.log(`✅ [${repo.path}] Docker is available`);
+  } catch (error) {
+    throw new Error(`Docker is not available or not running. Please ensure Docker is installed and running.`);
+  }
+
   const origDoc: any = yaml.load(fs.readFileSync(composeSrc, "utf8"));
   if (!origDoc.services || Object.keys(origDoc.services).length === 0) {
-    console.warn(`⚠️  [${repo.path}] compose.yml has no services – skipping`);
-    return;
+    throw new Error(`Docker Compose file has no services defined in ${repo.path}`);
   }
 
   const origSlug =
@@ -31,7 +37,22 @@ export async function buildAndDeployRepo(repo: RepoConfig, baseDir: string) {
 
   const localTag = `${svcKey}:latest`;
   console.log(`🐳 [${origSlug}] Building image '${localTag}' from ${repoDir}`);
-  execSync(`docker build -t ${localTag} ${repoDir}`, { stdio: "inherit" });
+  
+  try {
+    // Use stdio: 'pipe' to capture errors properly
+    const buildOutput = execSync(`docker build -t ${localTag} ${repoDir}`, { 
+      stdio: 'pipe',
+      encoding: 'utf8'
+    });
+    console.log(`✅ [${origSlug}] Docker build completed successfully`);
+    console.log(`📋 Build output: ${buildOutput.slice(-200)}...`); // Show last 200 chars of output
+  } catch (error: any) {
+    console.error(`❌ [${origSlug}] Docker build failed:`, error.message);
+    if (error.stderr) {
+      console.error(`Docker build stderr: ${error.stderr}`);
+    }
+    throw new Error(`Docker build failed for ${origSlug}: ${error.message}`);
+  }
 
   const serviceDefinition: any = {
     cpu_shares: 90,
@@ -124,6 +145,7 @@ export async function buildAndDeployRepo(repo: RepoConfig, baseDir: string) {
     console.error(
       `❌ [${origSlug}] Failed to install app via API: ${result.message}`
     );
+    throw new Error(`CasaOS installation failed for ${origSlug}: ${result.message}`);
   }
 
   try {

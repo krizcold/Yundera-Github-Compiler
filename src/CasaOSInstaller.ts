@@ -49,6 +49,16 @@ export interface CasaOSInstallResult {
 
 export class CasaOSInstaller {
   private static readonly WORKING_ENDPOINT = 'http://localhost:8080/v2/app_management/compose';
+  
+  private static getApiEndpoint(): string {
+    const host = process.env.CASAOS_API_HOST || 'localhost';
+    const port = process.env.CASAOS_API_PORT || '8080';
+    return `http://${host}:${port}/v2/app_management/compose`;
+  }
+  
+  private static isAppStoreMode(): boolean {
+    return process.env.DEPLOYMENT_MODE === 'appstore';
+  }
 
   /**
    * Install a Docker Compose application via CasaOS
@@ -58,8 +68,25 @@ export class CasaOSInstaller {
     try {
       console.log('🚀 Installing app via CasaOS using direct localhost access...');
       
+      // Check if Docker is available before attempting installation
+      try {
+        await execAsync('docker --version');
+      } catch (error) {
+        return {
+          success: false,
+          message: 'Docker is not available or not running. Please ensure Docker is installed and running.',
+          endpoint: this.WORKING_ENDPOINT,
+          method: 'localhost_direct'
+        };
+      }
+      
       // The endpoint we discovered that works without authentication
-      const endpoint = this.WORKING_ENDPOINT;
+      const endpoint = this.getApiEndpoint();
+      const isAppStore = this.isAppStoreMode();
+      
+      if (isAppStore) {
+        console.log('🏪 Running in AppStore mode - using optimized API access');
+      }
       
       console.log(`📡 Using endpoint: ${endpoint}`);
       console.log(`📝 Installing compose: ${composeYaml.substring(0, 100)}...`);
@@ -83,6 +110,15 @@ EOF
       console.log('📤 Installation response:', stdout);
       if (stderr) {
         console.log('⚠️ stderr:', stderr);
+        // Check for common Docker/CasaOS connection errors
+        if (stderr.includes('Connection refused') || stderr.includes('No such container') || stderr.includes('docker: command not found')) {
+          return {
+            success: false,
+            message: `Installation failed due to connection or Docker issues: ${stderr}`,
+            endpoint: endpoint,
+            method: 'localhost_direct'
+          };
+        }
       }
       
       // Parse the response
@@ -132,7 +168,9 @@ EOF
             endpoint: endpoint,
             method: 'localhost_direct'
           };
-        } else if (stdout.includes('error') || stdout.includes('Error') || stdout.includes('fail')) {
+        } else if (stdout.includes('error') || stdout.includes('Error') || stdout.includes('fail') || 
+                   stdout.includes('Connection refused') || stdout.includes('docker: command not found') ||
+                   stdout.includes('Cannot connect to the Docker daemon')) {
           return {
             success: false,
             message: `Installation failed: ${stdout}`,

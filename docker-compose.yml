@@ -7,6 +7,12 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - |
+        chmod 644 /app/casaos-config/docker-compose.yml || true
+        npm run setup
     environment:
       # --> GitHub token for repository access
       # REPO_0: "https://<TOKEN>@github.com/yourorg/private-repo-1.git"
@@ -21,33 +27,32 @@ services:
       FORCE_UPDATE_GLOBAL: "true"
       WEBUI_PORT: "3000"
       
+      # AppStore deployment mode
+      DEPLOYMENT_MODE: "appstore"
+      CASAOS_API_HOST: "localhost"
+      CASAOS_API_PORT: "8080"
+      
       # Add CasaOS-like environment variables (from NSL setup)
       PUID: ${PUID}
       PGID: ${PGID}
       DATA_ROOT: "/DATA"
       REF_NET: "pcs"
 
-    volumes:
-      # allow the compiler to launch docker
-      - type: bind
-        source: /var/run/docker.sock
-        target: /var/run/docker.sock
-
+    volumes:        
       # cloned repos
       - type: bind
         source: /DATA/AppData/yunderagithubcompiler/repos
         target: /app/repos
 
-      # Add DATA root access (same as CasaOS container)
+      # Mount our app directory as read-write to modify compose file
+      - type: bind
+        source: /DATA/AppData/casaos/apps/yunderagithubcompiler
+        target: /app/casaos-config
+
+      # Mount DATA directory as read-only
       - type: bind
         source: /DATA
         target: /DATA
-        read_only: true
-        
-      # Add device access (same as CasaOS container)
-      - type: bind
-        source: /dev
-        target: /dev
         read_only: true
 
     # Connect to the same network as the CasaOS service
@@ -67,6 +72,9 @@ services:
         - container: /app/repos
           description:
             en_us: "Git repos are cloned here."
+        - container: /DATA
+          description:
+            en_us: "Access to DATA directory (read-only via pre-install setup"
 
 # Define the network as external, since it's created by the main NSL stack
 networks:
