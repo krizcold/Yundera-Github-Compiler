@@ -8,13 +8,14 @@ services:
     expose:
       - "3000"
     environment:
-      # Simply add one line per repo:
-      REPO_0: "https://<TOKEN>@github.com/yourorg/private-repo-1.git"
-      #REPO_1: "https://<TOKEN>@github.com/yourorg/private-repo-2.git"
-      # Optional: disable auto-update on a per-repo basis
-      REPO_0_AUTOUPDATE: "true"
+      # --> GitHub token for repository access
+      # REPO_0: "https://<TOKEN>@github.com/yourorg/private-repo-1.git"
+      # REPO_1: "https://<TOKEN>@github.com/yourorg/private-repo-2.git"
+      # --> Optional: disable auto-update on a per-repo basis
+      # REPO_0_AUTOUPDATE: "true"
 
-      # DIAG_COMMAND: "npm run build && echo 'Build complete!' && npm run test:working-install"
+      # --> Optional: Run a custom command on run
+      # DIAG_COMMAND: ""
 
       UPDATE_INTERVAL: "3600"
       FORCE_UPDATE_GLOBAL: "true"
