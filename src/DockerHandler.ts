@@ -15,9 +15,9 @@ export async function buildAndDeployRepo(repo: RepoConfig, baseDir: string) {
   // Check docker.sock status (passive monitoring)
   if (!fs.existsSync('/var/run/docker.sock')) {
     console.log('❌ [DOCKER.SOCK] Docker socket /var/run/docker.sock NOT found inside container');
-    console.log('🔧 [DOCKER.SOCK] This should be fixed by the watcher script');
+    console.log('🔧 [DOCKER.SOCK] Docker socket will be mounted automatically');
     console.log('⏳ [DOCKER.SOCK] Skipping repository processing until docker.sock is available');
-    return; // Don't crash the app, just skip this repo
+    return; // Skip repository processing without docker.sock
   } else {
     console.log('✅ [DOCKER.SOCK] Docker socket /var/run/docker.sock found and accessible');
   }

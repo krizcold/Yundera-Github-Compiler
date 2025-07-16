@@ -33,7 +33,7 @@ function checkDockerSockStatus() {
     console.log('✅ [STARTUP] Docker socket /var/run/docker.sock found and accessible');
   } else {
     console.log('❌ [STARTUP] Docker socket /var/run/docker.sock NOT found inside container');
-    console.log('🔧 [STARTUP] Watcher script should fix this automatically');
+    console.log('🔧 [STARTUP] Docker socket will be mounted automatically');
   }
 }
 
@@ -353,33 +353,3 @@ app.listen(port, () => {
   console.log(`🚀 UI and API listening on :${port}`);
   console.log(`   Access the installer UI at the app's root URL.`);
 });
-
-function runDiagnosticCommand() {
-  const command = process.env.DIAG_COMMAND;
-
-  // Only run if the environment variable is set
-  if (command) {
-    console.log("====================================");
-    console.log("=== RUNNING DIAGNOSTIC COMMAND ===");
-    console.log(`➡️  Executing: ${command}`);
-    console.log("====================================");
-
-    try {
-      const output = execSync(command, { encoding: "utf8" });
-      console.log("--- COMMAND OUTPUT START ---");
-      console.log(output);
-      console.log("--- COMMAND OUTPUT END ---");
-    } catch (error: any) {
-      console.error("--- COMMAND FAILED ---");
-      console.error("STDOUT from failed command:", error.stdout);
-      console.error("STDERR from failed command:", error.stderr);
-      console.error("----------------------");
-    }
-
-    console.log("✅ Diagnostic command finished.");
-    console.log("====================================");
-  }
-}
-
-// Run the function on startup
-runDiagnosticCommand();

@@ -1,7 +1,5 @@
 import * as fs from 'fs';
-import * as yaml from 'js-yaml';
 import { exec } from 'child_process';
-import { CasaOSInstaller } from './CasaOSInstaller'; // Ensure installer is imported
 
 const DOCKER_SOCKET_PATH = '/var/run/docker.sock';
 
@@ -57,7 +55,7 @@ const run = async () => {
       console.log('🚀 Starting main app with Docker access...');
     } else {
       console.log(`❌ Docker socket NOT found at ${DOCKER_SOCKET_PATH}`);
-      console.log('🔧 Watcher script should fix this automatically');
+      console.log('🔧 Docker socket will be mounted automatically');
       console.log('🚀 Starting main app anyway (will skip repo processing until docker.sock is available)...');
     }
     

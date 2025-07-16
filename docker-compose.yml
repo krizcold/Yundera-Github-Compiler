@@ -14,29 +14,20 @@ services:
       - |
         npm run setup
     environment:
-      # --> GitHub token for repository access
-      # REPO_0: "https://<TOKEN>@github.com/yourorg/private-repo-1.git"
-      # REPO_1: "https://<TOKEN>@github.com/yourorg/private-repo-2.git"
-      # --> Optional: disable auto-update on a per-repo basis
+      # Repository configuration (add REPO_0, REPO_1, etc. as needed)
+      # REPO_0: "https://github.com/your-org/your-repo.git"
       # REPO_0_AUTOUPDATE: "true"
-
-      # --> Optional: Run a custom command on run
-      # DIAG_COMMAND: ""
-
+      
+      # Application settings
       UPDATE_INTERVAL: "3600"
       FORCE_UPDATE_GLOBAL: "true"
       WEBUI_PORT: "3000"
       
-      # AppStore deployment mode
+      # CasaOS integration
       DEPLOYMENT_MODE: "appstore"
       CASAOS_API_HOST: "localhost"
       CASAOS_API_PORT: "8080"
-      
-      # Add CasaOS-like environment variables (from NSL setup)
-      PUID: ${PUID}
-      PGID: ${PGID}
       DATA_ROOT: "/DATA"
-      REF_NET: "pcs"
 
     volumes:        
       # cloned repos
@@ -71,9 +62,6 @@ services:
         - container: /app/repos
           description:
             en_us: "Git repos are cloned here."
-        - container: /DATA
-          description:
-            en_us: "Access to DATA directory (read-only via pre-install setup"
 
 # Define the network as external, since it's created by the main NSL stack
 networks:
@@ -202,8 +190,7 @@ x-casaos:
         print
       }' "$COMPOSE_FILE")
       
-      echo "📋 Updated service section:"
-      echo "$UPDATED_SERVICE_SECTION"
+      echo "📋 Docker.sock mount and Docker group ID added successfully"
       
       # Check for docker.sock mount in the updated service section
       if echo "$UPDATED_SERVICE_SECTION" | grep -q "source: /var/run/docker.sock"; then
