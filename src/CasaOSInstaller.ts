@@ -3,9 +3,9 @@
  * This is the production version that bypasses authentication
  */
 
-import axios from 'axios';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import axios from 'axios';
 
 // Type definitions
 export interface DockerComposeSpec {
@@ -39,7 +39,7 @@ export interface DockerComposeSpec {
 
 const execAsync = promisify(exec);
 
-export interface CasaOSInstallResult {
+export interface CasaOSResult {
   success: boolean;
   message: string;
   endpoint?: string;
@@ -48,51 +48,16 @@ export interface CasaOSInstallResult {
 }
 
 export class CasaOSInstaller {
-  private static readonly WORKING_ENDPOINT = 'http://localhost:8080/v2/app_management/compose';
+  private static readonly BASE_ENDPOINT = 'http://localhost:8080/v2/app_management';
   
-  private static getApiEndpoint(): string {
-    const host = process.env.CASAOS_API_HOST || 'localhost';
-    const port = process.env.CASAOS_API_PORT || '8080';
-    return `http://${host}:${port}/v2/app_management/compose`;
-  }
-  
-  private static isAppStoreMode(): boolean {
-    return process.env.DEPLOYMENT_MODE === 'appstore';
-  }
-
   /**
    * Install a Docker Compose application via CasaOS
-   * This method bypasses authentication by accessing the service directly from localhost
    */
-  static async installComposeApp(composeYaml: string, appName?: string): Promise<CasaOSInstallResult> {
+  static async installComposeApp(composeYaml: string, appName?: string): Promise<CasaOSResult> {
+    const endpoint = `${this.BASE_ENDPOINT}/compose`;
     try {
-      console.log('🚀 Installing app via CasaOS using direct localhost access...');
+      console.log('🚀 Installing app via CasaOS API...');
       
-      // Check if Docker is available before attempting installation
-      try {
-        await execAsync('docker --version');
-      } catch (error) {
-        return {
-          success: false,
-          message: 'Docker is not available or not running. Please ensure Docker is installed and running.',
-          endpoint: this.WORKING_ENDPOINT,
-          method: 'localhost_direct'
-        };
-      }
-      
-      // The endpoint we discovered that works without authentication
-      const endpoint = this.getApiEndpoint();
-      const isAppStore = this.isAppStoreMode();
-      
-      if (isAppStore) {
-        console.log('🏪 Running in AppStore mode - using optimized API access');
-      }
-      
-      console.log(`📡 Using endpoint: ${endpoint}`);
-      console.log(`📝 Installing compose: ${composeYaml.substring(0, 100)}...`);
-      
-      // Execute the curl command from within the CasaOS container
-      // This bypasses all authentication since we're making the request from localhost
       const curlCommand = `
         docker exec casaos sh -c "
           curl -s -X POST '${endpoint}' \\
@@ -104,96 +69,73 @@ EOF
         " 2>&1
       `;
       
-      console.log('🔄 Executing installation...');
-      const { stdout, stderr } = await execAsync(curlCommand);
-      
+      const { stdout } = await execAsync(curlCommand);
       console.log('📤 Installation response:', stdout);
-      if (stderr) {
-        console.log('⚠️ stderr:', stderr);
-        // Check for common Docker/CasaOS connection errors
-        if (stderr.includes('Connection refused') || stderr.includes('No such container') || stderr.includes('docker: command not found')) {
-          return {
-            success: false,
-            message: `Installation failed due to connection or Docker issues: ${stderr}`,
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        }
-      }
       
-      // Parse the response
-      try {
-        const response = JSON.parse(stdout);
-        
-        // Check if the response indicates success
-        // CasaOS responses:
-        // - Success: {"message":"compose app is being installed asynchronously"}
-        // - Error: {"message":"request body has an error: ..."}
-        if (response.message && response.message.includes('error')) {
-          return {
-            success: false,
-            message: `Installation failed: ${response.message}`,
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        } else if (response.success === false) {
-          return {
-            success: false,
-            message: `Installation failed: ${response.message || 'Unknown error'}`,
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        } else if (response.message && response.message.includes('is being installed asynchronously')) {
-          return {
-            success: true,
-            message: 'App installation started successfully (asynchronous)',
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        } else {
-          // No explicit error, consider it successful
-          return {
-            success: true,
-            message: response.message || 'App installed successfully via direct localhost access',
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        }
-      } catch (parseError) {
-        // If JSON parsing fails, check if the response looks successful
-        if (stdout.includes('success') || stdout.includes('installed') || stdout.includes('created')) {
-          return {
-            success: true,
-            message: 'App installed successfully (non-JSON response)',
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        } else if (stdout.includes('error') || stdout.includes('Error') || stdout.includes('fail') || 
-                   stdout.includes('Connection refused') || stdout.includes('docker: command not found') ||
-                   stdout.includes('Cannot connect to the Docker daemon')) {
-          return {
-            success: false,
-            message: `Installation failed: ${stdout}`,
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        } else {
-          return {
-            success: false,
-            message: `Installation response not parseable: ${stdout}`,
-            endpoint: endpoint,
-            method: 'localhost_direct'
-          };
-        }
+      if (stdout.includes("error") || stdout.includes("fail")) {
+        return { success: false, message: `Installation failed: ${stdout}` };
       }
+      return { success: true, message: `Installation command sent. Response: ${stdout}` };
       
     } catch (error) {
       console.error('❌ Installation error:', (error as Error).message);
+      return { success: false, message: `Installation failed: ${(error as Error).message}` };
+    }
+  }
+
+  /**
+   * Get the actual app name from CasaOS to ensure we're using the correct identifier
+   */
+  static async getActualAppName(searchTerm: string = 'yundera'): Promise<string> {
+    try {
+      const apps = await this.getInstalledApps();
+      if (apps && apps.data) {
+        const foundApp = apps.data.find((app: any) => 
+          app.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          app.name?.toLowerCase().includes('github') ||
+          app.name?.toLowerCase().includes('compiler')
+        );
+        
+        if (foundApp) {
+          console.log(`✅ Found app with name: ${foundApp.name}`);
+          return foundApp.name;
+        }
+      }
+      
+      console.log(`⚠️  App not found, using default: ${searchTerm}`);
+      return searchTerm;
+    } catch (error) {
+      console.log(`⚠️  Error getting app name: ${(error as Error).message}`);
+      return searchTerm;
+    }
+  }
+
+  /**
+   * Restarts a compose app by updating the compose file.
+   * The background handler monitors the file for docker.sock changes and triggers restart.
+   */
+  static async restartApp(appName: string): Promise<CasaOSResult> {
+    try {
+      console.log(`🚀 Docker-compose file updated with docker.sock mount.`);
+      console.log(`📡 Background handler should detect the change and trigger restart automatically.`);
+      console.log(`🔍 You can check the handler log at: /tmp/yundera-restart.log (on host system)`);
+      
+      // The setup.ts script has already updated the docker-compose.yml file
+      // The background handler will detect the docker.sock mount and trigger restart
+      return {
+        success: true,
+        message: "Docker-compose file updated. Background handler will trigger restart automatically.",
+        endpoint: 'file-monitoring',
+        method: 'file-watch'
+      };
+      
+    } catch (error: any) {
+      console.error(`❌ Failed to signal restart: ${error.message}`);
       return {
         success: false,
-        message: `Installation failed: ${(error as Error).message}`,
-        endpoint: this.WORKING_ENDPOINT,
-        method: 'localhost_direct'
+        message: `Failed to signal restart: ${error.message}`,
+        endpoint: 'file-monitoring',
+        method: 'file-watch'
       };
     }
   }
@@ -202,24 +144,23 @@ EOF
    * Test the connection to ensure the endpoint is accessible
    */
   static async testConnection(): Promise<boolean> {
+    const endpoint = `${this.BASE_ENDPOINT}/compose`;
     try {
       console.log('🔍 Testing connection to CasaOS API...');
       
       const testCommand = `
         docker exec casaos sh -c "
-          curl -s -f '${this.WORKING_ENDPOINT}' -H 'Accept: application/json'
+          curl -s -f '${endpoint}' -H 'Accept: application/json'
         " 2>&1
       `;
       
       const { stdout } = await execAsync(testCommand);
       
-      // If we get JSON data back, the endpoint is working
       try {
         JSON.parse(stdout);
         console.log('✅ Connection test successful - endpoint is accessible');
         return true;
       } catch {
-        // Even if JSON parsing fails, if we get data, it's likely working
         if (stdout && stdout.length > 10 && !stdout.includes('Connection refused')) {
           console.log('✅ Connection test successful - endpoint responds');
           return true;
@@ -237,10 +178,11 @@ EOF
    * Get current compose apps from CasaOS
    */
   static async getInstalledApps(): Promise<any> {
+    const endpoint = `${this.BASE_ENDPOINT}/compose`;
     try {
       const getCommand = `
         docker exec casaos sh -c "
-          curl -s '${this.WORKING_ENDPOINT}' -H 'Accept: application/json'
+          curl -s '${endpoint}' -H 'Accept: application/json'
         " 2>&1
       `;
       

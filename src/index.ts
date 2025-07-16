@@ -27,9 +27,20 @@ async function processRepo(
   }
 }
 
+// Check docker.sock status on startup (passive monitoring)
+function checkDockerSockStatus() {
+  if (fs.existsSync('/var/run/docker.sock')) {
+    console.log('✅ [STARTUP] Docker socket /var/run/docker.sock found and accessible');
+  } else {
+    console.log('❌ [STARTUP] Docker socket /var/run/docker.sock NOT found inside container');
+    console.log('🔧 [STARTUP] Watcher script should fix this automatically');
+  }
+}
+
 // Re-enable the initial sync and periodic check
 (async () => {
   console.log("🚀 Starting initial repository processing...");
+  checkDockerSockStatus();
   for (const repo of config.repos) {
     await processRepo(repo, false);
   }
@@ -283,6 +294,7 @@ app.get("/api/system/status", async (req, res) => {
   const status = {
     docker: false,
     casaos: false,
+    dockerSock: false,
     errors: [] as string[]
   };
 
@@ -292,6 +304,16 @@ app.get("/api/system/status", async (req, res) => {
     status.docker = true;
   } catch (error) {
     status.errors.push('Docker is not available or not running');
+  }
+
+  // Check Docker.sock
+  try {
+    status.dockerSock = fs.existsSync('/var/run/docker.sock');
+    if (!status.dockerSock) {
+      status.errors.push('Docker socket /var/run/docker.sock not found');
+    }
+  } catch (error) {
+    status.errors.push('Failed to check Docker socket');
   }
 
   // Check CasaOS connection
@@ -306,7 +328,7 @@ app.get("/api/system/status", async (req, res) => {
   }
 
   res.json({
-    success: status.docker && status.casaos,
+    success: status.docker && status.casaos && status.dockerSock,
     status,
     message: status.errors.length > 0 ? status.errors.join(', ') : 'All systems operational'
   });

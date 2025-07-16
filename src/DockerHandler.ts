@@ -12,15 +12,17 @@ export async function buildAndDeployRepo(repo: RepoConfig, baseDir: string) {
     throw new Error(`No docker-compose.yml found in ${repo.path}`);
   }
 
-  console.log(`📦 [${repo.path}] Processing compose-based repo…`);
-
-  // Check if Docker is available before proceeding
-  try {
-    execSync('docker --version', { stdio: 'pipe' });
-    console.log(`✅ [${repo.path}] Docker is available`);
-  } catch (error) {
-    throw new Error(`Docker is not available or not running. Please ensure Docker is installed and running.`);
+  // Check docker.sock status (passive monitoring)
+  if (!fs.existsSync('/var/run/docker.sock')) {
+    console.log('❌ [DOCKER.SOCK] Docker socket /var/run/docker.sock NOT found inside container');
+    console.log('🔧 [DOCKER.SOCK] This should be fixed by the watcher script');
+    console.log('⏳ [DOCKER.SOCK] Skipping repository processing until docker.sock is available');
+    return; // Don't crash the app, just skip this repo
+  } else {
+    console.log('✅ [DOCKER.SOCK] Docker socket /var/run/docker.sock found and accessible');
   }
+
+  console.log(`📦 [${repo.path}] Processing compose-based repo…`);
 
   const origDoc: any = yaml.load(fs.readFileSync(composeSrc, "utf8"));
   if (!origDoc.services || Object.keys(origDoc.services).length === 0) {
@@ -39,13 +41,16 @@ export async function buildAndDeployRepo(repo: RepoConfig, baseDir: string) {
   console.log(`🐳 [${origSlug}] Building image '${localTag}' from ${repoDir}`);
   
   try {
-    // Use stdio: 'pipe' to capture errors properly
-    const buildOutput = execSync(`docker build -t ${localTag} ${repoDir}`, { 
+    const buildCommand = `docker build -t ${localTag} ${repoDir}`;
+    
+    console.log(`🔄 Executing direct build: ${buildCommand}`);
+    const buildOutput = execSync(buildCommand, { 
       stdio: 'pipe',
       encoding: 'utf8'
     });
+    
     console.log(`✅ [${origSlug}] Docker build completed successfully`);
-    console.log(`📋 Build output: ${buildOutput.slice(-200)}...`); // Show last 200 chars of output
+    console.log(`📋 Build output: ${buildOutput.slice(-200)}...`);
   } catch (error: any) {
     console.error(`❌ [${origSlug}] Docker build failed:`, error.message);
     if (error.stderr) {

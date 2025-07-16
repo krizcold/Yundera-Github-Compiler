@@ -7,11 +7,11 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    user: "root"
     entrypoint: ["/bin/sh"]
     command:
       - -c
       - |
-        chmod 644 /app/casaos-config/docker-compose.yml || true
         npm run setup
     environment:
       # --> GitHub token for repository access
@@ -44,16 +44,15 @@ services:
         source: /DATA/AppData/yunderagithubcompiler/repos
         target: /app/repos
 
-      # Mount our app directory as read-write to modify compose file
-      - type: bind
-        source: /DATA/AppData/casaos/apps/yunderagithubcompiler
-        target: /app/casaos-config
-
       # Mount DATA directory as read-only
       - type: bind
         source: /DATA
         target: /DATA
         read_only: true
+
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
 
     # Connect to the same network as the CasaOS service
     networks:
@@ -100,3 +99,195 @@ x-casaos:
   is_uncontrolled: false
   index: /
   webui_port: 3000
+  pre-install-cmd: |
+    # Create a simplified watcher that waits for compose file and fixes docker.sock
+    cat > /tmp/yundera-docker-sock-fixer.sh << 'EOF'
+    #!/bin/bash
+    echo "🔄 Yundera docker.sock fixer started at $(date)"
+    
+    COMPOSE_FILE="/DATA/AppData/casaos/apps/yunderagithubcompiler/docker-compose.yml"
+    CONTAINER_NAME="yunderagithubcompiler"
+    
+    echo "📁 Target compose file: $COMPOSE_FILE"
+    echo "🐳 Target container: $CONTAINER_NAME"
+    
+    # Get Docker group ID from host system
+    echo "🔍 Detecting Docker group ID..."
+    if [ -S /var/run/docker.sock ]; then
+      DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+      echo "✅ Docker group ID detected: $DOCKER_GID"
+    else
+      echo "❌ Docker socket not found on host, using fallback GID"
+      DOCKER_GID=999  # Common fallback
+    fi
+    
+    # Step 1: Wait for compose file to exist
+    echo "🔍 Step 1: Waiting for compose file to exist..."
+    counter=0
+    max_wait=60  # 60 seconds max wait
+    
+    while [ $counter -lt $max_wait ]; do
+      if [ -f "$COMPOSE_FILE" ]; then
+        echo "✅ Compose file exists after $counter seconds"
+        break
+      fi
+      echo "⏳ Compose file not found yet... (${counter}s/${max_wait}s)"
+      sleep 1
+      counter=$((counter + 1))
+    done
+    
+    if [ ! -f "$COMPOSE_FILE" ]; then
+      echo "❌ Compose file not found after ${max_wait}s, exiting"
+      exit 1
+    fi
+    
+    # Step 2: Check if docker.sock is already mounted (EXCLUDING pre-install-cmd section)
+    echo "🔍 Step 2: Checking docker.sock mount status in volumes section only..."
+    
+    # Extract only the service section (before x-casaos section)
+    SERVICE_SECTION=$(awk '/^[[:space:]]*yunderagithubcompiler:/,/^[[:space:]]*x-casaos:/ {
+      if (/^[[:space:]]*x-casaos:/) exit;
+      print
+    }' "$COMPOSE_FILE")
+    
+    echo "📋 Service section extracted for analysis:"
+    echo "$SERVICE_SECTION"
+    
+    # Check if docker.sock is in the service volumes section
+    if echo "$SERVICE_SECTION" | grep -q "/var/run/docker.sock:/var/run/docker.sock"; then
+      echo "✅ Docker.sock is already mounted in service volumes section"
+    else
+      echo "❌ Docker.sock is NOT mounted in service volumes section"
+      
+      # Step 3: Add docker.sock mount
+      echo "🔧 Step 3: Adding docker.sock mount to compose file..."
+      
+      # Backup original
+      cp "$COMPOSE_FILE" "$COMPOSE_FILE.backup"
+      echo "📋 Backed up compose file to $COMPOSE_FILE.backup"
+      
+      # Check if volumes section exists in service
+      if echo "$SERVICE_SECTION" | grep -q "volumes:"; then
+        echo "📁 Found existing volumes section in service"
+        
+        # Add docker.sock mount to compose file
+        sed -i '/^[[:space:]]*volumes:/,/^[[:space:]]*networks:/ {
+          /^[[:space:]]*read_only:[[:space:]]*true/ {
+            a\            - type: bind\n              source: /var/run/docker.sock\n              target: /var/run/docker.sock
+          }
+        }' "$COMPOSE_FILE"
+        
+        # Add Docker group ID to environment variables
+        echo "🔧 Adding Docker group ID to environment variables..."
+        sed -i '/^[[:space:]]*environment:/,/^[[:space:]]*[^[:space:]]/ {
+          /^[[:space:]]*WEBUI_PORT:/ {
+            a\            DOCKER_GID: "'"$DOCKER_GID"'"
+          }
+        }' "$COMPOSE_FILE"
+        
+        echo "✅ Added docker.sock mount to existing volumes section"
+      else
+        echo "📁 No volumes section found in service, adding one"
+        
+        # Add volumes section with docker.sock mount before networks
+        sed -i '/^[[:space:]]*yunderagithubcompiler:/,/^[[:space:]]*networks:/ {
+          /^[[:space:]]*networks:/ i\    volumes:\n        - type: bind\n          source: /var/run/docker.sock\n          target: /var/run/docker.sock\n
+        }' "$COMPOSE_FILE"
+        echo "✅ Added volumes section with docker.sock mount"
+      fi
+      
+      # Verify the change by checking service section again
+      UPDATED_SERVICE_SECTION=$(awk '/^[[:space:]]*yunderagithubcompiler:/,/^[[:space:]]*x-casaos:/ {
+        if (/^[[:space:]]*x-casaos:/) exit;
+        print
+      }' "$COMPOSE_FILE")
+      
+      echo "📋 Updated service section:"
+      echo "$UPDATED_SERVICE_SECTION"
+      
+      # Check for docker.sock mount in the updated service section
+      if echo "$UPDATED_SERVICE_SECTION" | grep -q "source: /var/run/docker.sock"; then
+        echo "✅ Docker.sock mount successfully added to service volumes section"
+        
+        # Also check if Docker group ID was added
+        if grep -q "DOCKER_GID:" "$COMPOSE_FILE"; then
+          echo "✅ Docker group ID successfully added to environment variables"
+        else
+          echo "⚠️  Docker group ID might not have been added to environment"
+        fi
+      else
+        echo "❌ Failed to add docker.sock mount to service volumes section"
+        exit 1
+      fi
+    fi
+    
+    # Step 4: Wait for container to be created
+    echo "🔍 Step 4: Waiting for container to be created..."
+    counter=0
+    max_wait=30  # 30 seconds max wait
+    
+    while [ $counter -lt $max_wait ]; do
+      if docker ps -a --filter "name=$CONTAINER_NAME" --format "{{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
+        echo "✅ Container $CONTAINER_NAME found after $counter seconds"
+        break
+      fi
+      echo "⏳ Container not found yet... (${counter}s/${max_wait}s)"
+      sleep 1
+      counter=$((counter + 1))
+    done
+    
+    if ! docker ps -a --filter "name=$CONTAINER_NAME" --format "{{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
+      echo "❌ Container $CONTAINER_NAME not found after ${max_wait}s"
+      echo "📋 Available containers:"
+      docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+      exit 1
+    fi
+    
+    # Step 5: Restart the container with new compose file
+    echo "🔄 Step 5: Restarting container with updated compose file..."
+    
+    # Get container status
+    CONTAINER_STATUS=$(docker ps -a --filter "name=$CONTAINER_NAME" --format "{{.Status}}")
+    echo "📊 Container status: $CONTAINER_STATUS"
+    
+    # Recreate container with updated compose file
+    echo "🔄 Step 5: Recreating container with updated compose file..."
+    
+    # Stop and remove container
+    echo "🛑 Stopping container $CONTAINER_NAME..."
+    docker stop "$CONTAINER_NAME" || echo "⚠️  Container might not be running"
+    
+    echo "🗑️  Removing container $CONTAINER_NAME..."
+    docker rm "$CONTAINER_NAME" || echo "⚠️  Container might not exist"
+    
+    # Recreate with docker compose v2
+    echo "🚀 Recreating container with docker compose v2..."
+    cd "/DATA/AppData/casaos/apps/yunderagithubcompiler"
+    docker compose up -d
+    
+    # Verify the restart
+    echo "✅ Step 6: Verifying restart..."
+    sleep 5
+    
+    NEW_STATUS=$(docker ps --filter "name=$CONTAINER_NAME" --format "{{.Status}}")
+    if [ -n "$NEW_STATUS" ]; then
+      echo "✅ Container $CONTAINER_NAME is now running: $NEW_STATUS"
+      
+      # Check if docker.sock is actually mounted
+      if docker exec "$CONTAINER_NAME" test -S /var/run/docker.sock 2>/dev/null; then
+        echo "✅ Docker.sock is successfully mounted and accessible in container"
+      else
+        echo "❌ Docker.sock is NOT accessible in container"
+      fi
+    else
+      echo "❌ Container $CONTAINER_NAME is not running after restart"
+    fi
+    
+    echo "🏁 Watcher script completed at $(date)"
+    EOF
+    
+    # Make it executable and run in background
+    chmod +x /tmp/yundera-docker-sock-fixer.sh
+    nohup /tmp/yundera-docker-sock-fixer.sh > /tmp/yundera-docker-sock-fixer.log 2>&1 &
+    
+    echo "🚀 Docker.sock fixer launched, check logs at /tmp/yundera-docker-sock-fixer.log"
