@@ -71,6 +71,23 @@ const startMainApp = () => {
   const mainProcess = exec('npm run start');
   mainProcess.stdout?.pipe(process.stdout);
   mainProcess.stderr?.pipe(process.stderr);
+  
+  // Wait for the main process and exit with its exit code
+  mainProcess.on('exit', (code) => {
+    console.log(`🏁 Main application exited with code ${code}`);
+    process.exit(code || 0);
+  });
+  
+  // Handle setup script termination
+  process.on('SIGTERM', () => {
+    console.log('📡 Setup script received SIGTERM, terminating main process...');
+    mainProcess.kill('SIGTERM');
+  });
+  
+  process.on('SIGINT', () => {
+    console.log('📡 Setup script received SIGINT, terminating main process...');
+    mainProcess.kill('SIGINT');
+  });
 };
 
 run();

@@ -1,6 +1,6 @@
 {
   "name": "yundera-github-compiler",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Clone, build, and run Docker-based projects directly from GitHub URLs.",
   "main": "dist/index.js",
   "scripts": {

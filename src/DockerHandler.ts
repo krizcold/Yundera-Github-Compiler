@@ -1,4 +1,9 @@
-import { RepoConfig } from "./config";
+// Temporary interface for compatibility
+interface RepoConfig {
+  url: string;
+  path: string;
+  autoUpdate: boolean;
+}
 import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";

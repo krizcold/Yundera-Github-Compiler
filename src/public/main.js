@@ -3,7 +3,11 @@ class RepoManager {
     constructor() {
         this.repos = [];
         this.currentEditingRepo = null;
-        this.globalAutoUpdate = true;
+        this.globalSettings = {
+            globalApiUpdatesEnabled: true,
+            defaultAutoUpdateInterval: 60,
+            maxConcurrentBuilds: 2
+        };
         this.init();
     }
 
@@ -14,20 +18,36 @@ class RepoManager {
     }
 
     bindEvents() {
-        // Add repository button
-        document.getElementById('add-repo-btn').addEventListener('click', () => {
-            this.addNewRepo();
-        });
-
+        console.log('🔧 Binding events...');
+        
         // Check updates button
-        document.getElementById('check-updates-btn').addEventListener('click', () => {
-            this.checkAllUpdates();
-        });
+        const checkUpdatesBtn = document.getElementById('check-updates-btn');
+        console.log('checkUpdatesBtn:', checkUpdatesBtn);
+        if (checkUpdatesBtn) {
+            checkUpdatesBtn.addEventListener('click', () => {
+                this.checkAllUpdates();
+            });
+        }
 
-        // Global auto-update toggle
-        document.getElementById('global-auto-update').addEventListener('click', (e) => {
-            this.toggleGlobalAutoUpdate();
-        });
+        // Global settings button
+        const settingsBtn = document.getElementById('settings-btn');
+        console.log('settingsBtn:', settingsBtn);
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', () => {
+                this.openSettingsModal();
+            });
+        }
+        
+        // Save settings button
+        const saveSettingsBtn = document.getElementById('save-settings-btn');
+        console.log('saveSettingsBtn:', saveSettingsBtn);
+        if (saveSettingsBtn) {
+            saveSettingsBtn.addEventListener('click', () => {
+                this.saveGlobalSettings();
+            });
+        }
+        
+        console.log('✅ Events bound successfully');
 
         // Modal close on background click
         document.querySelectorAll('.modal').forEach(modal => {
@@ -43,10 +63,35 @@ class RepoManager {
         try {
             const response = await axios.get('/api/repos');
             this.repos = response.data.repos || [];
+            
+            // Show one empty repository by default if no repositories exist
+            if (this.repos.length === 0) {
+                this.repos = [{
+                    id: 'empty',
+                    name: '',
+                    url: '',
+                    autoUpdate: false,
+                    autoUpdateInterval: this.globalSettings.defaultAutoUpdateInterval,
+                    apiUpdatesEnabled: true,
+                    status: 'idle',
+                    isEmpty: true
+                }];
+            }
+            
             this.renderRepos();
         } catch (error) {
             console.error('Failed to load repositories:', error);
             // Show default empty repo on error
+            this.repos = [{
+                id: 'empty',
+                name: '',
+                url: '',
+                autoUpdate: false,
+                autoUpdateInterval: this.globalSettings.defaultAutoUpdateInterval,
+                apiUpdatesEnabled: true,
+                status: 'idle',
+                isEmpty: true
+            }];
             this.renderRepos();
         }
     }
@@ -54,8 +99,12 @@ class RepoManager {
     async loadGlobalSettings() {
         try {
             const response = await axios.get('/api/settings');
-            this.globalAutoUpdate = response.data.globalAutoUpdate || false;
-            this.updateGlobalAutoUpdateUI();
+            this.globalSettings = {
+                globalApiUpdatesEnabled: response.data.globalApiUpdatesEnabled !== false,
+                defaultAutoUpdateInterval: response.data.defaultAutoUpdateInterval || 60,
+                maxConcurrentBuilds: response.data.maxConcurrentBuilds || 2
+            };
+            this.updateSettingsUI();
         } catch (error) {
             console.error('Failed to load global settings:', error);
         }
@@ -63,11 +112,27 @@ class RepoManager {
 
     renderRepos() {
         const repoList = document.getElementById('repo-list');
+        if (!repoList) {
+            console.error('repo-list element not found');
+            return;
+        }
+        
         repoList.innerHTML = '';
 
-        // Always show at least one repo row (empty or first repo)
+        // Show repositories or default empty repository
         if (this.repos.length === 0) {
-            repoList.appendChild(this.createRepoElement(null, 0));
+            // Create default empty repository for display
+            const emptyRepo = {
+                id: 'empty',
+                name: '',
+                url: '',
+                autoUpdate: false,
+                autoUpdateInterval: this.globalSettings.defaultAutoUpdateInterval,
+                apiUpdatesEnabled: true,
+                status: 'idle',
+                isEmpty: true
+            };
+            repoList.appendChild(this.createRepoElement(emptyRepo, 0));
         } else {
             this.repos.forEach((repo, index) => {
                 repoList.appendChild(this.createRepoElement(repo, index));
@@ -76,21 +141,23 @@ class RepoManager {
     }
 
     createRepoElement(repo, index) {
-        const isDefault = repo === null;
-        const repoId = isDefault ? 'default' : repo.id || `repo-${index}`;
+        const isEmpty = repo && repo.isEmpty;
+        const repoId = isEmpty ? 'empty' : (repo.id || `repo-${index}`);
         
         const div = document.createElement('div');
         div.className = 'repo-item';
         div.setAttribute('data-repo-id', repoId);
 
-        const repoName = repo ? this.extractRepoName(repo.url) : 'New Repository';
+        const repoName = repo && repo.name ? repo.name : (repo && repo.url ? this.extractRepoName(repo.url) : '');
         const repoUrl = repo ? repo.url : '';
         const status = repo ? repo.status || 'idle' : 'idle';
-        const currentVersion = repo ? repo.currentVersion || '--' : '--';
-        const latestVersion = repo ? repo.latestVersion || '--' : '--';
-        const lastUpdated = repo ? this.formatDate(repo.lastUpdated) : 'Never';
-        const autoUpdate = repo ? repo.autoUpdate : true;
-        const hasCompose = repo && repo.hasCompose;
+        const autoUpdate = repo ? repo.autoUpdate || false : false;
+        const isInstalled = repo ? repo.isInstalled || false : false;
+
+        // Full repository UI (like original but improved)
+        const lastBuildTime = repo ? repo.lastBuildTime : null;
+        const lastUpdated = lastBuildTime ? this.formatDate(lastBuildTime) : 'Never';
+        const hasCompose = repo && (repo.hasCompose || status === 'success');
 
         div.innerHTML = `
             <div class="repo-icon">
@@ -98,56 +165,64 @@ class RepoManager {
             </div>
             <div class="repo-info">
                 <div class="repo-details">
-                    <h3>${repoName}</h3>
+                    <h3>${repoName || 'New Repository'}</h3>
                     <div class="repo-url">
-                        <input type="text" placeholder="https://github.com/username/repository.git" value="${repoUrl}">
+                        <input type="text" 
+                               placeholder="https://github.com/username/repository.git" 
+                               value="${repoUrl}"
+                               onblur="repoManager.handleUrlChange('${repoId}', this.value)">
                         <button class="btn btn-small btn-secondary" title="Expand URL" onclick="repoManager.expandUrl('${repoId}')">
                             <i class="fas fa-search"></i>
                         </button>
                     </div>
                 </div>
-                <div class="version-info">
-                    <div class="version-badge version-current">Current: ${currentVersion}</div>
-                    <div class="version-badge version-latest">Latest: ${latestVersion}</div>
+                <div class="repo-settings">
+                    <div class="setting-row">
+                        <label>Auto-Update:</label>
+                        <div class="switch ${autoUpdate ? 'active' : ''}" onclick="repoManager.toggleRepoAutoUpdate('${repoId}')">
+                            <div class="switch-slider"></div>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <label>Interval (min):</label>
+                        <input type="number" min="5" max="10080" value="${repo ? repo.autoUpdateInterval || 60 : 60}" 
+                               onchange="repoManager.updateRepoInterval('${repoId}', this.value)" 
+                               ${!autoUpdate ? 'disabled' : ''}>
+                    </div>
+                    <div class="setting-row">
+                        <label>API Updates:</label>
+                        <div class="switch ${repo && repo.apiUpdatesEnabled !== false ? 'active' : ''}" onclick="repoManager.toggleRepoApiUpdates('${repoId}')">
+                            <div class="switch-slider"></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="status-info">
                     <div><span class="status-indicator status-${status}"></span>Status: ${this.capitalizeFirst(status)}</div>
-                    <div>Last Updated: ${lastUpdated}</div>
-                </div>
-                <div class="toggle-switch">
-                    <span style="font-size: 12px;">Auto:</span>
-                    <div class="switch ${autoUpdate ? 'active' : ''}" onclick="repoManager.toggleRepoAutoUpdate('${repoId}')">
-                        <div class="switch-slider"></div>
-                    </div>
+                    <div><span class="install-indicator ${isInstalled ? 'installed' : 'not-installed'}"></span>Installed: ${isInstalled ? 'Yes' : 'No'}</div>
+                    <div>Last Build: ${lastUpdated}</div>
                 </div>
             </div>
             <div class="repo-actions">
                 <button class="btn btn-small ${repo && repo.isInstalled ? 'btn-warning' : 'btn-success'}" 
                         title="${repo && repo.isInstalled ? 'Update' : 'Compile/Build'}" 
                         onclick="repoManager.compileRepo('${repoId}')"
-                        ${isDefault || !repoUrl ? 'disabled' : ''}>
+                        ${isEmpty || !repoUrl ? 'disabled' : ''}>
                     <i class="fas ${repo && repo.isInstalled ? 'fa-sync-alt' : 'fa-hammer'}"></i>
                 </button>
                 <button class="btn btn-small btn-secondary" 
                         title="View Docker Compose" 
                         onclick="repoManager.viewCompose('${repoId}')"
-                        ${isDefault || !hasCompose ? 'disabled' : ''}>
+                        ${isEmpty || !hasCompose ? 'disabled' : ''}>
                     <i class="fas fa-file-code"></i>
                 </button>
                 <button class="btn btn-small btn-warning" 
                         title="Remove Repository" 
                         onclick="repoManager.removeRepo('${repoId}')"
-                        style="${isDefault ? 'display: none;' : ''}">
+                        style="${isEmpty ? 'display: none;' : ''}">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
         `;
-
-        // Bind URL input change event
-        const urlInput = div.querySelector('.repo-url input');
-        urlInput.addEventListener('change', (e) => {
-            this.updateRepoUrl(repoId, e.target.value);
-        });
 
         return div;
     }
@@ -167,38 +242,82 @@ class RepoManager {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
-    addNewRepo() {
-        const newRepo = {
-            id: `repo-${Date.now()}`,
-            url: '',
-            autoUpdate: true,
-            status: 'idle',
-            currentVersion: '--',
-            latestVersion: '--',
-            lastUpdated: null,
-            hasCompose: false,
-            isInstalled: false
-        };
+    async handleUrlChange(repoId, url) {
+        if (!url.trim()) return;
         
-        this.repos.push(newRepo);
-        this.renderRepos();
+        if (repoId === 'empty') {
+            // Create new repository
+            await this.createNewRepo(url);
+        } else {
+            // Update existing repository URL
+            await this.updateRepoUrl(repoId, url);
+        }
+    }
+    
+    async createNewRepo(url) {
+        const repoName = this.extractRepoName(url);
+        
+        try {
+            const response = await axios.post('/api/repos', {
+                name: repoName,
+                url: url,
+                autoUpdate: false,
+                autoUpdateInterval: this.globalSettings.defaultAutoUpdateInterval,
+                apiUpdatesEnabled: true
+            });
+            
+            if (response.data.success) {
+                this.showNotification(`Repository "${repoName}" added successfully!`, 'success');
+                await this.loadRepos();
+            } else {
+                this.showNotification('Failed to add repository: ' + response.data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Failed to add repository:', error);
+            this.showNotification('Failed to add repository: ' + error.message, 'error');
+        }
+    }
+    
+    showRepoSettings(repoId) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo) return;
+        
+        // For now, show settings in a simple alert (we can make this a modal later)
+        const settings = [
+            `Repository: ${repo.name}`,
+            `URL: ${repo.url}`,
+            `Auto-Update: ${repo.autoUpdate ? 'Enabled' : 'Disabled'}`,
+            `Update Interval: ${repo.autoUpdateInterval} minutes`,
+            `API Updates: ${repo.apiUpdatesEnabled ? 'Enabled' : 'Disabled'}`,
+            `Status: ${repo.status}`,
+            `Installed: ${repo.isInstalled ? 'Yes' : 'No'}`
+        ];
+        
+        alert(settings.join('\n'));
+    }
+    
+    // Legacy method - now simplified
+    async addNewRepo() {
+        // This method is no longer used but kept for compatibility
+        const repoUrl = prompt('Enter repository URL:');
+        
+        if (!repoUrl) {
+            this.showNotification('Repository URL is required', 'error');
+            return;
+        }
+        
+        await this.createNewRepo(repoUrl);
     }
 
     async updateRepoUrl(repoId, url) {
         try {
             const response = await axios.put(`/api/repos/${repoId}`, { url });
             
-            // Update local repo data
-            const repo = this.repos.find(r => r.id === repoId);
-            if (repo) {
-                repo.url = url;
-                repo.status = 'idle';
-                this.renderRepos();
-            }
-            
-            // If this is the default repo and now has a URL, convert it to a real repo
-            if (repoId === 'default' && url) {
-                await this.loadRepos(); // Reload to get the new repo with proper ID
+            if (response.data.success) {
+                await this.loadRepos(); // Reload to get updated data
+                this.showNotification('Repository URL updated successfully', 'success');
+            } else {
+                this.showNotification('Failed to update repository URL: ' + response.data.message, 'error');
             }
         } catch (error) {
             console.error('Failed to update repository URL:', error);
@@ -262,34 +381,101 @@ class RepoManager {
             if (!repo) return;
 
             const newAutoUpdate = !repo.autoUpdate;
-            await axios.put(`/api/repos/${repoId}`, { autoUpdate: newAutoUpdate });
+            const response = await axios.put(`/api/repos/${repoId}`, { autoUpdate: newAutoUpdate });
             
-            repo.autoUpdate = newAutoUpdate;
-            this.renderRepos();
+            if (response.data.success) {
+                await this.loadRepos(); // Reload to get updated data
+                this.showNotification(`Auto-update ${newAutoUpdate ? 'enabled' : 'disabled'} for ${repo.name || 'repository'}`, 'success');
+            } else {
+                this.showNotification('Failed to update auto-update setting: ' + response.data.message, 'error');
+            }
         } catch (error) {
             console.error('Failed to toggle auto-update:', error);
             this.showNotification('Failed to update auto-update setting', 'error');
         }
     }
-
-    async toggleGlobalAutoUpdate() {
+    
+    async updateRepoInterval(repoId, interval) {
         try {
-            this.globalAutoUpdate = !this.globalAutoUpdate;
-            await axios.put('/api/settings', { globalAutoUpdate: this.globalAutoUpdate });
-            this.updateGlobalAutoUpdateUI();
-            this.showNotification(`Global auto-update ${this.globalAutoUpdate ? 'enabled' : 'disabled'}`, 'success');
+            const intervalNum = parseInt(interval);
+            if (intervalNum < 5 || intervalNum > 10080) {
+                this.showNotification('Interval must be between 5 minutes and 1 week', 'error');
+                return;
+            }
+            
+            const response = await axios.put(`/api/repos/${repoId}`, { autoUpdateInterval: intervalNum });
+            
+            if (response.data.success) {
+                await this.loadRepos();
+                this.showNotification(`Update interval set to ${intervalNum} minutes`, 'success');
+            } else {
+                this.showNotification('Failed to update interval: ' + response.data.message, 'error');
+            }
         } catch (error) {
-            console.error('Failed to toggle global auto-update:', error);
-            this.showNotification('Failed to update global auto-update setting', 'error');
+            console.error('Failed to update interval:', error);
+            this.showNotification('Failed to update interval', 'error');
+        }
+    }
+    
+    async toggleRepoApiUpdates(repoId) {
+        try {
+            const repo = this.repos.find(r => r.id === repoId);
+            if (!repo) return;
+
+            const newApiUpdatesEnabled = !repo.apiUpdatesEnabled;
+            const response = await axios.put(`/api/repos/${repoId}`, { apiUpdatesEnabled: newApiUpdatesEnabled });
+            
+            if (response.data.success) {
+                await this.loadRepos();
+                this.showNotification(`API updates ${newApiUpdatesEnabled ? 'enabled' : 'disabled'} for ${repo.name || 'repository'}`, 'success');
+            } else {
+                this.showNotification('Failed to update API updates setting: ' + response.data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Failed to toggle API updates:', error);
+            this.showNotification('Failed to update API updates setting', 'error');
         }
     }
 
-    updateGlobalAutoUpdateUI() {
-        const toggle = document.getElementById('global-auto-update');
-        if (this.globalAutoUpdate) {
-            toggle.classList.add('active');
-        } else {
-            toggle.classList.remove('active');
+    openSettingsModal() {
+        // Populate settings form
+        document.getElementById('global-api-updates').checked = this.globalSettings.globalApiUpdatesEnabled;
+        document.getElementById('default-interval').value = this.globalSettings.defaultAutoUpdateInterval;
+        document.getElementById('max-builds').value = this.globalSettings.maxConcurrentBuilds;
+        
+        this.openModal('settings-modal');
+    }
+    
+    async saveGlobalSettings() {
+        try {
+            const newSettings = {
+                globalApiUpdatesEnabled: document.getElementById('global-api-updates').checked,
+                defaultAutoUpdateInterval: parseInt(document.getElementById('default-interval').value),
+                maxConcurrentBuilds: parseInt(document.getElementById('max-builds').value)
+            };
+            
+            const response = await axios.put('/api/settings', newSettings);
+            
+            if (response.data.success) {
+                this.globalSettings = newSettings;
+                this.updateSettingsUI();
+                this.closeModal('settings-modal');
+                this.showNotification('Settings saved successfully', 'success');
+            } else {
+                this.showNotification('Failed to save settings: ' + response.data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Failed to save settings:', error);
+            this.showNotification('Failed to save settings', 'error');
+        }
+    }
+    
+    updateSettingsUI() {
+        // Update any UI elements that reflect global settings
+        const apiStatus = document.getElementById('api-status');
+        if (apiStatus) {
+            apiStatus.textContent = this.globalSettings.globalApiUpdatesEnabled ? 'Enabled' : 'Disabled';
+            apiStatus.className = this.globalSettings.globalApiUpdatesEnabled ? 'status-enabled' : 'status-disabled';
         }
     }
 
@@ -312,10 +498,15 @@ class RepoManager {
         const repoElement = document.querySelector(`[data-repo-id="${repoId}"]`);
         if (repoElement) {
             const statusIndicator = repoElement.querySelector('.status-indicator');
-            const statusText = repoElement.querySelector('.status-info div:first-child');
+            const statusText = repoElement.querySelector('.repo-status');
             
-            statusIndicator.className = `status-indicator status-${status}`;
-            statusText.innerHTML = `<span class="status-indicator status-${status}"></span>Status: ${this.capitalizeFirst(status)}`;
+            if (statusIndicator) {
+                statusIndicator.className = `status-indicator status-${status}`;
+            }
+            
+            if (statusText) {
+                statusText.innerHTML = `<span class="status-indicator status-${status}"></span>${this.capitalizeFirst(status)}`;
+            }
         }
     }
 
@@ -431,6 +622,20 @@ function saveYaml() {
 
 // Initialize the repository manager when the page loads
 let repoManager;
-document.addEventListener('DOMContentLoaded', () => {
-    repoManager = new RepoManager();
-});
+
+function initializeApp() {
+    console.log('🚀 Initializing Yundera GitHub Compiler...');
+    try {
+        repoManager = new RepoManager();
+        console.log('✅ RepoManager initialized successfully');
+    } catch (error) {
+        console.error('❌ Failed to initialize RepoManager:', error);
+    }
+}
+
+// Try multiple initialization methods
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}

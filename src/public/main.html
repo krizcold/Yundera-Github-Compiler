@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yundera GitHub Compiler</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success-color: #059669;
+            --warning-color: #d97706;
+            --danger-color: #dc2626;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            --border-radius: 8px;
+            --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--gray-100);
+            color: var(--gray-900);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            color: var(--gray-800);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header p {
+            color: var(--gray-600);
+        }
+
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-hover);
+        }
+
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .btn-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+
+        .btn-secondary {
+            background-color: var(--gray-600);
+            color: white;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .switch {
+            position: relative;
+            width: 50px;
+            height: 24px;
+            background-color: var(--gray-300);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .switch.active {
+            background-color: var(--primary-color);
+        }
+
+        .switch-slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background-color: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .switch.active .switch-slider {
+            transform: translateX(26px);
+        }
+
+        .repo-list {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .repo-item {
+            display: grid;
+            grid-template-columns: 60px 1fr auto;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--gray-200);
+            gap: 15px;
+        }
+
+        .repo-item:last-child {
+            border-bottom: none;
+        }
+
+        .repo-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--border-radius);
+            background-color: var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: var(--gray-500);
+        }
+
+        .repo-icon img {
+            width: 100%;
+            height: 100%;
+            border-radius: var(--border-radius);
+            object-fit: cover;
+        }
+
+        /* Repository layout */
+        .repo-info {
+            display: grid;
+            grid-template-columns: 1fr 200px 150px 120px;
+            align-items: center;
+            gap: 15px;
+            width: 100%;
+        }
+
+        .repo-details h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--gray-800);
+            margin-bottom: 4px;
+        }
+
+        .repo-url {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .repo-url input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid var(--gray-300);
+            border-radius: var(--border-radius);
+            font-size: 14px;
+        }
+
+        .version-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .version-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .version-current {
+            background-color: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .version-latest {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .status-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 12px;
+            color: var(--gray-600);
+        }
+
+        .repo-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .status-idle { background-color: var(--gray-400); }
+        .status-building { background-color: var(--warning-color); }
+        .status-success { background-color: var(--success-color); }
+        .status-error { background-color: var(--danger-color); }
+        
+        .install-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        
+        .installed { background-color: var(--success-color); }
+        .not-installed { background-color: var(--gray-400); }
+        
+        .status-enabled { color: var(--success-color); font-weight: 500; }
+        .status-disabled { color: var(--danger-color); font-weight: 500; }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-lg);
+            max-width: 90vw;
+            max-height: 90vh;
+            overflow: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--gray-500);
+        }
+
+        textarea {
+            width: 100%;
+            height: 400px;
+            padding: 12px;
+            border: 1px solid var(--gray-300);
+            border-radius: var(--border-radius);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        .url-preview {
+            background-color: var(--gray-100);
+            padding: 15px;
+            border-radius: var(--border-radius);
+            font-family: monospace;
+            font-size: 14px;
+            word-break: break-all;
+            margin-bottom: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .repo-info {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .repo-item {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <i class="fab fa-github"></i>
+                Yundera GitHub Compiler
+            </h1>
+            <p>Manage and deploy GitHub repositories automatically to CasaOS</p>
+        </div>
+
+        <div class="controls">
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <!-- Add Repository button removed - now using direct URL input in repository list -->
+                <button class="btn btn-secondary" id="check-updates-btn">
+                    <i class="fas fa-sync-alt"></i>
+                    Check Updates
+                </button>
+            </div>
+            
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <button class="btn btn-secondary" id="settings-btn">
+                    <i class="fas fa-cog"></i>
+                    Settings
+                </button>
+                <div style="font-size: 12px; color: var(--gray-600);">
+                    API Updates: <span id="api-status" class="status-enabled">Enabled</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="repo-list" id="repo-list">
+            <!-- Repositories will be loaded dynamically -->
+        </div>
+    </div>
+
+    <!-- URL Expand Modal -->
+    <div class="modal" id="url-modal">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h3>Repository URL</h3>
+                <button class="close-btn" onclick="closeModal('url-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="url-preview" id="url-preview"></div>
+                <textarea id="url-textarea" placeholder="Enter the full GitHub repository URL..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('url-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveUrl()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- YAML Editor Modal -->
+    <div class="modal" id="yaml-modal">
+        <div class="modal-content" style="width: 800px;">
+            <div class="modal-header">
+                <h3>Docker Compose YAML</h3>
+                <button class="close-btn" onclick="closeModal('yaml-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="yaml-textarea" placeholder="Docker Compose YAML will appear here..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('yaml-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveYaml()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div class="modal" id="settings-modal">
+        <div class="modal-content" style="width: 500px;">
+            <div class="modal-header">
+                <h3>Global Settings</h3>
+                <button class="close-btn" onclick="closeModal('settings-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="display: flex; flex-direction: column; gap: 20px;">
+                    <div class="setting-row">
+                        <label for="global-api-updates">Enable API Update Requests:</label>
+                        <input type="checkbox" id="global-api-updates">
+                    </div>
+                    <div class="setting-row">
+                        <label for="default-interval">Default Auto-Update Interval (minutes):</label>
+                        <input type="number" id="default-interval" min="5" max="10080" value="60">
+                    </div>
+                    <div class="setting-row">
+                        <label for="max-builds">Max Concurrent Builds:</label>
+                        <input type="number" id="max-builds" min="1" max="10" value="2">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('settings-modal')">Cancel</button>
+                <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/main.js"></script>
+</body>
+</html>

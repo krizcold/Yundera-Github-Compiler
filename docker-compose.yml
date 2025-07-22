@@ -14,13 +14,7 @@ services:
       - |
         npm run setup
     environment:
-      # Repository configuration (add REPO_0, REPO_1, etc. as needed)
-      # REPO_0: "https://github.com/your-org/your-repo.git"
-      # REPO_0_AUTOUPDATE: "true"
-      
       # Application settings
-      UPDATE_INTERVAL: "3600"
-      FORCE_UPDATE_GLOBAL: "true"
       WEBUI_PORT: "3000"
       
       # CasaOS integration
@@ -34,6 +28,11 @@ services:
       - type: bind
         source: /DATA/AppData/yunderagithubcompiler/repos
         target: /app/repos
+
+      # persistent UI data storage
+      - type: bind
+        source: /DATA/AppData/yunderagithubcompiler/uidata
+        target: /app/uidata
 
       # Mount DATA directory as read-only
       - type: bind
@@ -62,6 +61,9 @@ services:
         - container: /app/repos
           description:
             en_us: "Git repos are cloned here."
+        - container: /app/uidata
+          description:
+            en_us: "Persistent UI data storage."
 
 # Define the network as external, since it's created by the main NSL stack
 networks:
@@ -112,7 +114,7 @@ x-casaos:
     # Step 1: Wait for compose file to exist
     echo "🔍 Step 1: Waiting for compose file to exist..."
     counter=0
-    max_wait=60  # 60 seconds max wait
+    max_wait=120  # 120 seconds max wait (2 minutes)
     
     while [ $counter -lt $max_wait ]; do
       if [ -f "$COMPOSE_FILE" ]; then
@@ -120,8 +122,8 @@ x-casaos:
         break
       fi
       echo "⏳ Compose file not found yet... (${counter}s/${max_wait}s)"
-      sleep 1
-      counter=$((counter + 1))
+      sleep 2
+      counter=$((counter + 2))
     done
     
     if [ ! -f "$COMPOSE_FILE" ]; then
@@ -211,7 +213,7 @@ x-casaos:
     # Step 4: Wait for container to be created
     echo "🔍 Step 4: Waiting for container to be created..."
     counter=0
-    max_wait=30  # 30 seconds max wait
+    max_wait=60  # 60 seconds max wait
     
     while [ $counter -lt $max_wait ]; do
       if docker ps -a --filter "name=$CONTAINER_NAME" --format "{{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
@@ -219,8 +221,8 @@ x-casaos:
         break
       fi
       echo "⏳ Container not found yet... (${counter}s/${max_wait}s)"
-      sleep 1
-      counter=$((counter + 1))
+      sleep 2
+      counter=$((counter + 2))
     done
     
     if ! docker ps -a --filter "name=$CONTAINER_NAME" --format "{{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
