@@ -14,12 +14,15 @@ export interface Repository {
   autoUpdate: boolean;
   autoUpdateInterval: number; // minutes
   apiUpdatesEnabled: boolean;
-  status: 'idle' | 'building' | 'success' | 'error';
+  status: 'idle' | 'empty' | 'importing' | 'imported' | 'building' | 'success' | 'error' | 'uninstalling' | 'starting' | 'stopping';
   lastBuildTime?: string;
   lastUpdateCheck?: string;
   currentVersion?: string;
   latestVersion?: string;
   isInstalled?: boolean; // queried from CasaOS
+  isRunning?: boolean; // running status from CasaOS
+  installMismatch?: boolean; // true if marked installed but not found in CasaOS
+  icon?: string; // icon URL extracted from docker-compose.yml
   lastUpdated?: string; // for backward compatibility
   hasCompose?: boolean; // for backward compatibility
 }
@@ -113,8 +116,7 @@ export function addRepository(repo: Omit<Repository, 'id'>): Repository {
   const repositories = loadRepositories();
   const newRepo: Repository = {
     ...repo,
-    id: generateRepositoryId(repo.url),
-    status: 'idle'
+    id: generateRepositoryId(repo.url)
   };
   
   repositories.push(newRepo);

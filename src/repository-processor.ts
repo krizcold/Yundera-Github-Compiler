@@ -1,7 +1,9 @@
 import { Repository, updateRepository } from './storage';
 import { cloneOrUpdateRepo } from './GitHandler';
 import { buildAndDeployRepo } from './DockerHandler';
-import { verifyCasaOSInstallation } from './casaos-status';
+import { verifyCasaOSInstallation, checkCasaOSInstallationProgress } from './casaos-status';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const baseDir = "/app/repos";
 
@@ -42,14 +44,44 @@ export async function processRepo(
     });
     console.log(`✅ Build and deployment completed for ${repository.name}`);
     
-    // Attempt verification (but don't fail on verification issues)
-    console.log(`🔍 Verifying installation of ${repository.name}...`);
+    // Attempt verification using actual app name from docker-compose.yml
+    let appNameToVerify = repository.name;
+    
+    // Try to extract actual app name from docker-compose.yml
+    const composePath = path.join('/app/uidata', repository.name, 'docker-compose.yml');
+    if (fs.existsSync(composePath)) {
+      try {
+        const yaml = await import('yaml');
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        const composeData = yaml.parse(composeContent);
+        
+        // Get the first service name (which becomes the app name in CasaOS)
+        const services = composeData.services;
+        if (services && Object.keys(services).length > 0) {
+          appNameToVerify = Object.keys(services)[0];
+          console.log(`🔍 Using app name from docker-compose.yml: ${appNameToVerify}`);
+        }
+      } catch (error: any) {
+        console.log(`⚠️ Could not parse docker-compose.yml to extract app name: ${error.message}`);
+      }
+    }
+    
+    console.log(`🔍 Verifying installation of ${appNameToVerify} (repo: ${repository.name})...`);
+    
+    // First, investigate what installation progress endpoints might exist
+    console.log(`🔬 Investigating CasaOS installation progress endpoints...`);
+    await checkCasaOSInstallationProgress(appNameToVerify);
+    
+    // Wait a bit for CasaOS async installation to complete
+    console.log(`⏳ Waiting 5 seconds for CasaOS async installation to complete...`);
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
     try {
-      const verification = await verifyCasaOSInstallation(repository.name);
+      const verification = await verifyCasaOSInstallation(appNameToVerify);
       
       if (verification.success && verification.isInstalled) {
         updateRepository(repository.id, { isInstalled: true });
-        console.log(`✅ Installation verified: ${verification.message}`);
+        console.log(`✅ Installation verified for ${appNameToVerify}`);
         return { 
           success: true, 
           message: `Build completed successfully. ${verification.message}` 
@@ -57,6 +89,12 @@ export async function processRepo(
       } else {
         console.log(`⚠️ Could not verify installation: ${verification.message}`);
         console.log(`ℹ️ This may be normal if app name differs from repository name`);
+        
+        // Since build was successful, assume app is installed even if verification failed
+        // The sync process will correct the status if the app is actually not installed
+        updateRepository(repository.id, { isInstalled: true });
+        console.log(`📦 Marking as installed based on successful build - sync will verify later`);
+        
         return { 
           success: true, 
           message: `Build completed successfully. Note: Could not verify installation (${verification.message})` 
@@ -64,6 +102,11 @@ export async function processRepo(
       }
     } catch (verifyError: any) {
       console.log(`⚠️ Verification check failed: ${verifyError.message}`);
+      
+      // Since build was successful, assume app is installed even if verification failed
+      updateRepository(repository.id, { isInstalled: true });
+      console.log(`📦 Marking as installed based on successful build - sync will verify later`);
+      
       return { 
         success: true, 
         message: `Build completed successfully. Note: Could not verify installation due to verification error` 

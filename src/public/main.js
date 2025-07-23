@@ -3,6 +3,7 @@ class RepoManager {
     constructor() {
         this.repos = [];
         this.currentEditingRepo = null;
+        this.pendingRepoUrl = ''; // Store URL for empty repositories before import
         this.globalSettings = {
             globalApiUpdatesEnabled: true,
             defaultAutoUpdateInterval: 60,
@@ -15,6 +16,18 @@ class RepoManager {
         this.bindEvents();
         this.loadRepos();
         this.loadGlobalSettings();
+        this.startAutoRefresh();
+    }
+
+    startAutoRefresh() {
+        // Refresh repository data every 20 seconds to catch external changes
+        setInterval(async () => {
+            try {
+                await this.loadRepos();
+            } catch (error) {
+                console.error('Auto-refresh failed:', error);
+            }
+        }, 20000); // 20 seconds
     }
 
     bindEvents() {
@@ -95,6 +108,18 @@ class RepoManager {
             this.renderRepos();
         }
     }
+    
+    async syncAndReload() {
+        try {
+            // The backend /api/repos endpoint automatically syncs with CasaOS before returning
+            // But we can add a small delay to ensure CasaOS has processed the installation
+            await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+            await this.loadRepos();
+        } catch (error) {
+            console.error('Failed to sync and reload:', error);
+            await this.loadRepos(); // Try loading anyway
+        }
+    }
 
     async loadGlobalSettings() {
         try {
@@ -149,7 +174,8 @@ class RepoManager {
         div.setAttribute('data-repo-id', repoId);
 
         const repoName = repo && repo.name ? repo.name : (repo && repo.url ? this.extractRepoName(repo.url) : '');
-        const repoUrl = repo ? repo.url : '';
+        // For empty repo, use pendingRepoUrl instead of repo.url to preserve user input
+        const repoUrl = (repoId === 'empty' && this.pendingRepoUrl) ? this.pendingRepoUrl : (repo ? repo.url : '');
         const status = repo ? repo.status || 'idle' : 'idle';
         const autoUpdate = repo ? repo.autoUpdate || false : false;
         const isInstalled = repo ? repo.isInstalled || false : false;
@@ -161,7 +187,7 @@ class RepoManager {
 
         div.innerHTML = `
             <div class="repo-icon">
-                ${repo && repo.icon ? `<img src="${repo.icon}" alt="${repoName}">` : '<i class="fab fa-github"></i>'}
+                ${this.getRepoIcon(repo)}
             </div>
             <div class="repo-info">
                 <div class="repo-details">
@@ -198,17 +224,16 @@ class RepoManager {
                 </div>
                 <div class="status-info">
                     <div><span class="status-indicator status-${status}"></span>Status: ${this.capitalizeFirst(status)}</div>
-                    <div><span class="install-indicator ${isInstalled ? 'installed' : 'not-installed'}"></span>Installed: ${isInstalled ? 'Yes' : 'No'}</div>
+                    <div>
+                        <span class="install-indicator ${isInstalled ? 'installed' : 'not-installed'}"></span>
+                        Installed: ${isInstalled ? 'Yes' : 'No'}
+                        ${repo && repo.installMismatch ? '<span class="warning-triangle" title="App is listed as installed but not found in CasaOS. It may have been removed manually."><i class="fas fa-exclamation-triangle"></i></span>' : ''}
+                    </div>
                     <div>Last Build: ${lastUpdated}</div>
                 </div>
             </div>
             <div class="repo-actions">
-                <button class="btn btn-small ${repo && repo.isInstalled ? 'btn-warning' : 'btn-success'}" 
-                        title="${repo && repo.isInstalled ? 'Update' : 'Compile/Build'}" 
-                        onclick="repoManager.compileRepo('${repoId}')"
-                        ${isEmpty || !repoUrl ? 'disabled' : ''}>
-                    <i class="fas ${repo && repo.isInstalled ? 'fa-sync-alt' : 'fa-hammer'}"></i>
-                </button>
+                ${this.renderActionButton(repo, repoId, isEmpty, repoUrl)}
                 <button class="btn btn-small btn-secondary" 
                         title="View Docker Compose" 
                         onclick="repoManager.viewCompose('${repoId}')"
@@ -232,6 +257,55 @@ class RepoManager {
         const parts = url.replace(/\.git$/, '').split('/');
         return parts[parts.length - 1] || 'Repository';
     }
+    
+    normalizeGitUrl(url) {
+        if (!url || !url.trim()) return null;
+        
+        url = url.trim();
+        console.log(`🔍 Normalizing URL: "${url}"`);
+        
+        // Handle different GitHub URL formats
+        if (url.includes('github.com')) {
+            // Convert ZIP download URLs to git URLs
+            if (url.includes('/archive/')) {
+                // https://github.com/user/repo/archive/refs/heads/main.zip -> https://github.com/user/repo.git
+                const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)\/archive/);
+                if (match) {
+                    const normalized = `https://github.com/${match[1]}/${match[2]}.git`;
+                    console.log(`🔄 Converted ZIP URL to: ${normalized}`);
+                    return normalized;
+                }
+            }
+            
+            // Convert regular GitHub URLs to git URLs (only if not already .git)
+            if (url.match(/github\.com\/[^\/]+\/[^\/]+\/?$/) && !url.endsWith('.git')) {
+                const normalized = url.replace(/\/$/, '') + '.git';
+                console.log(`🔄 Added .git to GitHub URL: ${normalized}`);
+                return normalized;
+            }
+            
+            // If it's already a .git URL, return as-is
+            if (url.endsWith('.git')) {
+                console.log(`✅ GitHub .git URL is valid: ${url}`);
+                return url;
+            }
+        }
+        
+        // For any HTTPS git URLs, return as-is (be more permissive)
+        if (url.startsWith('https://') && url.endsWith('.git')) {
+            console.log(`✅ HTTPS .git URL is valid: ${url}`);
+            return url;
+        }
+        
+        // For any git URLs, return as-is (be more permissive)
+        if (url.startsWith('git@') || url.startsWith('ssh://')) {
+            console.log(`✅ SSH git URL is valid: ${url}`);
+            return url;
+        }
+        
+        console.log(`❌ URL format not recognized: ${url}`);
+        return null; // Invalid URL
+    }
 
     formatDate(dateString) {
         if (!dateString) return 'Never';
@@ -242,15 +316,125 @@ class RepoManager {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
-    async handleUrlChange(repoId, url) {
-        if (!url.trim()) return;
-        
+    getRepoIcon(repo) {
+        if (repo && repo.icon) {
+            return `<img src="${repo.icon}" alt="${repo.name}">`;
+        }
+        return '<i class="fab fa-github"></i>';
+    }
+
+    renderActionButton(repo, repoId, isEmpty, repoUrl) {
+        // For empty repositories, check pending URL
         if (repoId === 'empty') {
-            // Create new repository
-            await this.createNewRepo(url);
+            const hasPendingUrl = this.pendingRepoUrl && this.pendingRepoUrl.trim();
+            if (hasPendingUrl) {
+                // Empty repository with pending URL - Import button (enabled)
+                return `<button class="btn btn-small btn-primary" 
+                                title="Import Repository" 
+                                onclick="repoManager.importRepo('${repoId}')">
+                            <i class="fas fa-download"></i>
+                        </button>`;
+            } else {
+                // Empty repository without URL - Import button (disabled)
+                return `<button class="btn btn-small btn-primary" 
+                                title="Import Repository (Enter URL first)" 
+                                disabled>
+                            <i class="fas fa-download"></i>
+                        </button>`;
+            }
+        }
+
+        // Determine the current state and render appropriate button
+        if (isEmpty || !repoUrl) {
+            // Empty repository - Import button (disabled)
+            return `<button class="btn btn-small btn-primary" 
+                            title="Import Repository (Enter URL first)" 
+                            disabled>
+                        <i class="fas fa-download"></i>
+                    </button>`;
+        }
+
+        if (!repo) {
+            // New repository with URL - Import button (enabled)
+            return `<button class="btn btn-small btn-primary" 
+                            title="Import Repository" 
+                            onclick="repoManager.importRepo('${repoId}')">
+                        <i class="fas fa-download"></i>
+                    </button>`;
+        }
+
+        // Existing repository - determine state
+        switch (repo.status) {
+            case 'empty':
+                return `<button class="btn btn-small btn-primary" 
+                                title="Import Repository" 
+                                onclick="repoManager.importRepo('${repoId}')">
+                            <i class="fas fa-download"></i>
+                        </button>`;
+                        
+            case 'importing':
+                return `<button class="btn btn-small btn-primary" 
+                                title="Importing..." 
+                                disabled>
+                            <i class="fas fa-spinner fa-spin"></i>
+                        </button>`;
+                        
+            case 'imported':
+                return `<button class="btn btn-small btn-success" 
+                                title="Build Application" 
+                                onclick="repoManager.buildRepo('${repoId}')">
+                            <i class="fas fa-hammer"></i>
+                        </button>`;
+                        
+            case 'building':
+                return `<button class="btn btn-small btn-success" 
+                                title="Building..." 
+                                disabled>
+                            <i class="fas fa-spinner fa-spin"></i>
+                        </button>`;
+                        
+            case 'success':
+                if (repo.isInstalled) {
+                    return `<button class="btn btn-small btn-warning" 
+                                    title="Update Application" 
+                                    onclick="repoManager.updateRepo('${repoId}')">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>`;
+                } else {
+                    return `<button class="btn btn-small btn-success" 
+                                    title="Build Application" 
+                                    onclick="repoManager.buildRepo('${repoId}')">
+                                <i class="fas fa-hammer"></i>
+                            </button>`;
+                }
+                
+            case 'error':
+                return `<button class="btn btn-small btn-danger" 
+                                title="Retry Build" 
+                                onclick="repoManager.buildRepo('${repoId}')">
+                            <i class="fas fa-redo"></i>
+                        </button>`;
+                        
+            default:
+                return `<button class="btn btn-small btn-primary" 
+                                title="Import Repository" 
+                                onclick="repoManager.importRepo('${repoId}')">
+                            <i class="fas fa-download"></i>
+                        </button>`;
+        }
+    }
+
+    async handleUrlChange(repoId, url) {
+        if (repoId === 'empty') {
+            // For empty repositories, just store the URL as-is (normalize later during import)
+            this.pendingRepoUrl = url;
+            // Refresh UI to enable/disable Import button based on URL presence
+            this.renderRepos();
         } else {
-            // Update existing repository URL
-            await this.updateRepoUrl(repoId, url);
+            // Only update existing repository URL if the user explicitly wants to change it
+            // Don't update automatically during normal text input
+            console.log(`URL change for existing repo ${repoId}: ${url}`);
+            // For now, don't auto-update existing repos to avoid unwanted notifications
         }
     }
     
@@ -263,18 +447,22 @@ class RepoManager {
                 url: url,
                 autoUpdate: false,
                 autoUpdateInterval: this.globalSettings.defaultAutoUpdateInterval,
-                apiUpdatesEnabled: true
+                apiUpdatesEnabled: true,
+                status: 'empty' // Set initial status to empty (ready for import)
             });
             
             if (response.data.success) {
-                this.showNotification(`Repository "${repoName}" added successfully!`, 'success');
-                await this.loadRepos();
+                console.log(`✅ Repository "${repoName}" created successfully`);
+                return response.data.repo;
             } else {
-                this.showNotification('Failed to add repository: ' + response.data.message, 'error');
+                console.error('Backend rejected repository creation:', response.data.message);
+                throw new Error(response.data.message);
             }
         } catch (error) {
             console.error('Failed to add repository:', error);
-            this.showNotification('Failed to add repository: ' + error.message, 'error');
+            console.error('Error response:', error.response?.data);
+            const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
+            throw new Error(errorMessage);
         }
     }
     
@@ -325,26 +513,132 @@ class RepoManager {
         }
     }
 
-    async compileRepo(repoId) {
+    async importRepo(repoId) {
+        // Immediately disable button to prevent double-clicks
+        this.disableActionButton(repoId);
+        
+        try {
+            let repo = this.repos.find(r => r.id === repoId);
+            let repoUrl = '';
+            
+            // Handle empty repository case
+            if (repoId === 'empty') {
+                if (!this.pendingRepoUrl || !this.pendingRepoUrl.trim()) {
+                    this.showNotification('Please enter a repository URL first', 'error');
+                    this.enableActionButton(repoId); // Re-enable on error
+                    return;
+                }
+                
+                repoUrl = this.pendingRepoUrl;
+                
+                try {
+                    // Create the repository first
+                    repo = await this.createNewRepo(repoUrl);
+                    
+                    // Clear pending URL
+                    this.pendingRepoUrl = '';
+                    
+                    // Reload repos to get updated list
+                    await this.loadRepos();
+                    
+                } catch (error) {
+                    this.showNotification('Failed to create repository: ' + error.message, 'error');
+                    this.enableActionButton(repoId); // Re-enable on error
+                    return;
+                }
+            } else if (!repo || !repo.url) {
+                this.showNotification('Repository not found or URL missing', 'error');
+                this.enableActionButton(repoId); // Re-enable on error
+                return;
+            }
+
+            this.updateRepoStatus(repo.id, 'importing');
+            this.showNotification(`Importing ${repo.name}...`, 'info');
+
+            // Call the real import API
+            const response = await axios.post(`/api/repos/${repo.id}/import`);
+            
+            if (response.data.success) {
+                const message = response.data.icon ? 
+                    `${repo.name} imported successfully! Found icon and ready to build.` :
+                    `${repo.name} imported successfully! Ready to build.`;
+                this.showNotification(message, 'success');
+                await this.loadRepos(); // Reload to get updated status
+            } else {
+                this.updateRepoStatus(repo.id, 'error');
+                this.showNotification(`Import failed: ${response.data.message}`, 'error');
+            }
+            
+        } catch (error) {
+            console.error('Import failed:', error);
+            this.enableActionButton(repoId); // Re-enable on error
+            this.showNotification('Import failed: ' + error.message, 'error');
+        }
+    }
+
+    async buildRepo(repoId) {
+        // Immediately disable button to prevent double-clicks
+        this.disableActionButton(repoId);
+        
         try {
             const repo = this.repos.find(r => r.id === repoId);
-            if (!repo || !repo.url) return;
+            if (!repo || !repo.url) {
+                this.enableActionButton(repoId); // Re-enable on error
+                return;
+            }
 
             this.updateRepoStatus(repoId, 'building');
-            
+            this.showNotification(`Building ${repo.name}...`, 'info');
+
             const response = await axios.post(`/api/repos/${repoId}/compile`);
             
             if (response.data.success) {
-                this.updateRepoStatus(repoId, 'success');
-                this.showNotification('Repository compiled successfully!', 'success');
-                setTimeout(() => this.loadRepos(), 2000); // Reload after 2 seconds
+                this.showNotification(`${repo.name} built successfully!`, 'success');
+                // Force sync with CasaOS and reload to get updated status
+                await this.syncAndReload();
             } else {
                 this.updateRepoStatus(repoId, 'error');
-                this.showNotification('Compilation failed: ' + response.data.message, 'error');
+                this.enableActionButton(repoId); // Re-enable on error
+                this.showNotification(`Build failed: ${response.data.message}`, 'error');
             }
         } catch (error) {
+            console.error('Build failed:', error);
             this.updateRepoStatus(repoId, 'error');
-            this.showNotification('Compilation failed: ' + error.message, 'error');
+            this.enableActionButton(repoId); // Re-enable on error
+            this.showNotification('Build failed: ' + (error.response?.data?.message || error.message), 'error');
+        }
+    }
+
+    async updateRepo(repoId) {
+        // Immediately disable button to prevent double-clicks
+        this.disableActionButton(repoId);
+        
+        try {
+            const repo = this.repos.find(r => r.id === repoId);
+            if (!repo || !repo.url) {
+                this.enableActionButton(repoId); // Re-enable on error
+                return;
+            }
+
+            this.updateRepoStatus(repoId, 'building');
+            this.showNotification(`Updating ${repo.name}...`, 'info');
+
+            const response = await axios.post(`/api/repos/${repoId}/compile`);
+            
+            if (response.data.success) {
+                this.showNotification(`${repo.name} updated successfully!`, 'success');
+                // Force sync with CasaOS and reload to get updated status
+                await this.syncAndReload();
+            } else {
+                this.updateRepoStatus(repoId, 'error');
+                this.enableActionButton(repoId); // Re-enable on error
+                this.showNotification(`Update failed: ${response.data.message}`, 'error');
+            }
+        } catch (error) {
+            console.error('Update failed:', error);
+            this.updateRepoStatus(repoId, 'error');
+            this.enableActionButton(repoId); // Re-enable on error
+            this.showNotification('Update failed: ' + (error.response?.data?.message || error.message), 'error');
         }
     }
 
@@ -507,15 +801,111 @@ class RepoManager {
             if (statusText) {
                 statusText.innerHTML = `<span class="status-indicator status-${status}"></span>${this.capitalizeFirst(status)}`;
             }
+            
+            // Update the action button to show loading state
+            this.updateActionButton(repoId, status);
+        }
+    }
+    
+    updateActionButton(repoId, status) {
+        const repoElement = document.querySelector(`[data-repo-id="${repoId}"]`);
+        if (repoElement) {
+            const actionButton = repoElement.querySelector('.repo-actions button');
+            if (actionButton) {
+                // Update button based on status
+                switch (status) {
+                    case 'importing':
+                        actionButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                        actionButton.disabled = true;
+                        actionButton.title = 'Importing...';
+                        break;
+                    case 'building':
+                        actionButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                        actionButton.disabled = true;
+                        actionButton.title = 'Building...';
+                        break;
+                    case 'imported':
+                        actionButton.innerHTML = '<i class="fas fa-hammer"></i>';
+                        actionButton.disabled = false;
+                        actionButton.title = 'Build Application';
+                        actionButton.className = 'btn btn-small btn-success';
+                        actionButton.onclick = () => repoManager.buildRepo(repoId);
+                        break;
+                    case 'success':
+                        // Need to check if installed to determine if it should be Update or Build
+                        const repo = this.repos.find(r => r.id === repoId);
+                        if (repo && repo.isInstalled) {
+                            actionButton.innerHTML = '<i class="fas fa-sync-alt"></i>';
+                            actionButton.title = 'Update Application';
+                            actionButton.className = 'btn btn-small btn-warning';
+                            actionButton.onclick = () => repoManager.updateRepo(repoId);
+                        } else {
+                            actionButton.innerHTML = '<i class="fas fa-hammer"></i>';
+                            actionButton.title = 'Build Application';
+                            actionButton.className = 'btn btn-small btn-success';
+                            actionButton.onclick = () => repoManager.buildRepo(repoId);
+                        }
+                        actionButton.disabled = false;
+                        break;
+                    case 'error':
+                        actionButton.innerHTML = '<i class="fas fa-redo"></i>';
+                        actionButton.disabled = false;
+                        actionButton.title = 'Retry Build';
+                        actionButton.className = 'btn btn-small btn-danger';
+                        actionButton.onclick = () => repoManager.buildRepo(repoId);
+                        break;
+                }
+            }
+        }
+    }
+    
+    disableActionButton(repoId) {
+        const repoElement = document.querySelector(`[data-repo-id="${repoId}"]`);
+        if (repoElement) {
+            const actionButton = repoElement.querySelector('.repo-actions button:first-child');
+            if (actionButton) {
+                console.log(`🔒 Disabling button for ${repoId}:`, actionButton);
+                actionButton.disabled = true;
+                actionButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                actionButton.style.pointerEvents = 'none'; // Extra protection
+            } else {
+                console.error(`❌ Could not find action button for ${repoId}`);
+            }
+        } else {
+            console.error(`❌ Could not find repo element for ${repoId}`);
+        }
+    }
+    
+    enableActionButton(repoId) {
+        const repoElement = document.querySelector(`[data-repo-id="${repoId}"]`);
+        if (repoElement) {
+            const actionButton = repoElement.querySelector('.repo-actions button:first-child');
+            if (actionButton) {
+                console.log(`🔓 Re-enabling button for ${repoId}`);
+                actionButton.disabled = false;
+                actionButton.style.pointerEvents = 'auto'; // Remove extra protection
+                // Restore proper button content based on current state
+                const repo = this.repos.find(r => r.id === repoId);
+                if (repo) {
+                    this.updateActionButton(repoId, repo.status || 'idle');
+                }
+            }
         }
     }
 
     expandUrl(repoId) {
-        const repo = this.repos.find(r => r.id === repoId);
-        const currentUrl = repo ? repo.url : '';
+        let currentUrl = '';
+        
+        if (repoId === 'empty') {
+            // For empty repositories, use the pending URL from the text input
+            currentUrl = this.pendingRepoUrl || '';
+        } else {
+            // For existing repositories, use the stored URL
+            const repo = this.repos.find(r => r.id === repoId);
+            currentUrl = repo ? repo.url : '';
+        }
         
         this.currentEditingRepo = repoId;
-        document.getElementById('url-preview').textContent = currentUrl || 'No URL set';
         document.getElementById('url-textarea').value = currentUrl;
         this.openModal('url-modal');
     }
@@ -556,6 +946,15 @@ class RepoManager {
     }
 
     showNotification(message, type = 'info') {
+        const notificationHeight = 70; // estimated height including margin
+        
+        // First, push all existing notifications down by one position
+        const existingNotifications = document.querySelectorAll('.notification');
+        existingNotifications.forEach((existing, index) => {
+            const newTop = 20 + ((index + 1) * notificationHeight);
+            existing.style.top = `${newTop}px`;
+        });
+        
         // Create notification element
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
@@ -588,7 +987,7 @@ class RepoManager {
         // Add to page
         document.body.appendChild(notification);
         
-        // Animate in
+        // Animate in from right
         setTimeout(() => {
             notification.style.opacity = '1';
             notification.style.transform = 'translateX(0)';
@@ -602,6 +1001,11 @@ class RepoManager {
                 if (notification.parentNode) {
                     notification.parentNode.removeChild(notification);
                 }
+                // Reposition remaining notifications to fill the gap
+                const remainingNotifications = document.querySelectorAll('.notification');
+                remainingNotifications.forEach((remaining, index) => {
+                    remaining.style.top = `${20 + (index * notificationHeight)}px`;
+                });
             }, 300);
         }, 5000);
     }

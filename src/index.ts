@@ -7,7 +7,7 @@ import { loadConfig } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
 import { buildAndDeployRepo } from "./DockerHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
-import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps } from "./casaos-status";
+import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
 
 const config = loadConfig();
@@ -126,6 +126,98 @@ function stopRepoTimer(repositoryId: string) {
   }
 }
 
+// Poll uninstall status until completion
+async function pollUninstallStatus(repositoryId: string, appName: string, attempt: number) {
+  const maxAttempts = 30; // 5 minutes max (10s intervals)
+  const pollInterval = 10000; // 10 seconds
+  
+  if (attempt >= maxAttempts) {
+    console.log(`⏰ Uninstall polling timeout for ${appName} after ${maxAttempts} attempts`);
+    const repo = getRepository(repositoryId);
+    if (repo) {
+      updateRepository(repositoryId, { 
+        status: 'error',
+        isInstalled: false // Assume it worked even if we can't verify
+      });
+    }
+    return;
+  }
+  
+  try {
+    // Use force refresh to bypass any CasaOS caching
+    const installedApps = await getCasaOSInstalledApps(true);
+    const stillInstalled = installedApps.includes(appName);
+    
+    if (!stillInstalled) {
+      // Uninstall completed successfully
+      console.log(`✅ Uninstall completed for ${appName} after ${attempt + 1} attempts`);
+      updateRepository(repositoryId, { 
+        status: 'idle',
+        isInstalled: false,
+        isRunning: false,
+        installMismatch: false
+      });
+      
+      // Trigger full sync to update other repos
+      setTimeout(() => syncWithCasaOS(), 1000);
+      return;
+    }
+    
+    // Still installed, continue polling
+    console.log(`⏳ Uninstall in progress for ${appName} (attempt ${attempt + 1}/${maxAttempts})`);
+    setTimeout(() => pollUninstallStatus(repositoryId, appName, attempt + 1), pollInterval);
+    
+  } catch (error) {
+    console.error(`❌ Error polling uninstall status for ${appName}:`, error);
+    // Continue polling despite error
+    setTimeout(() => pollUninstallStatus(repositoryId, appName, attempt + 1), pollInterval);
+  }
+}
+
+// Poll toggle status until completion
+async function pollToggleStatus(repositoryId: string, appName: string, expectedRunning: boolean, attempt: number) {
+  const maxAttempts = 15; // 2.5 minutes max (10s intervals)
+  const pollInterval = 10000; // 10 seconds
+  
+  if (attempt >= maxAttempts) {
+    console.log(`⏰ Toggle polling timeout for ${appName} after ${maxAttempts} attempts`);
+    const repo = getRepository(repositoryId);
+    if (repo) {
+      updateRepository(repositoryId, { 
+        status: 'success',
+        isRunning: expectedRunning // Assume it worked
+      });
+    }
+    return;
+  }
+  
+  try {
+    const { getCasaOSAppStatus } = await import('./casaos-status');
+    const status = await getCasaOSAppStatus(appName);
+    
+    if (status && status.isRunning === expectedRunning) {
+      // Toggle completed successfully
+      const action = expectedRunning ? 'start' : 'stop';
+      console.log(`✅ ${action} completed for ${appName} after ${attempt + 1} attempts`);
+      updateRepository(repositoryId, { 
+        status: 'success',
+        isRunning: expectedRunning
+      });
+      return;
+    }
+    
+    // Status hasn't changed yet, continue polling
+    const action = expectedRunning ? 'start' : 'stop';
+    console.log(`⏳ ${action} in progress for ${appName} (attempt ${attempt + 1}/${maxAttempts})`);
+    setTimeout(() => pollToggleStatus(repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
+    
+  } catch (error) {
+    console.error(`❌ Error polling toggle status for ${appName}:`, error);
+    // Continue polling despite error
+    setTimeout(() => pollToggleStatus(repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
+  }
+}
+
 // Sync repository installation status with CasaOS
 async function syncWithCasaOS() {
   console.log("🔄 Syncing repository status with CasaOS...");
@@ -133,13 +225,75 @@ async function syncWithCasaOS() {
   try {
     const installedApps = await getCasaOSInstalledApps();
     
-    managedRepos.forEach(repo => {
-      const isInstalled = installedApps.includes(repo.name);
-      if (repo.isInstalled !== isInstalled) {
-        updateRepository(repo.id, { isInstalled });
-        console.log(`🔄 Updated ${repo.name} installation status: ${isInstalled}`);
+    for (const repo of managedRepos) {
+      // Try to get actual app name from docker-compose.yml
+      let appNameToCheck = repo.name;
+      const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+      
+      if (fs.existsSync(composePath)) {
+        try {
+          const yaml = require('yaml');
+          const composeContent = fs.readFileSync(composePath, 'utf8');
+          const composeData = yaml.parse(composeContent);
+          
+          if (composeData.services && Object.keys(composeData.services).length > 0) {
+            appNameToCheck = Object.keys(composeData.services)[0];
+          }
+        } catch (error) {
+          // If we can't parse, fall back to repo name
+        }
       }
-    });
+      
+      const isInstalledInCasaOS = installedApps.includes(appNameToCheck);
+      
+      // Get detailed status including running state
+      let isRunning = false;
+      if (isInstalledInCasaOS) {
+        try {
+          const { getCasaOSAppStatus } = await import('./casaos-status');
+          const status = await getCasaOSAppStatus(appNameToCheck);
+          isRunning = status?.isRunning || false;
+        } catch (error) {
+          console.log(`⚠️ Could not get running status for ${appNameToCheck}`);
+        }
+      }
+      
+      // Don't sync if we're in an intermediate state (let polling handle it)
+      const isInIntermediateState = 
+        repo.status === 'uninstalling' ||
+        repo.status === 'starting' ||
+        repo.status === 'stopping';
+      
+      // Check for changes that need syncing (but respect intermediate states)
+      const needsUpdate = !isInIntermediateState && (
+        repo.isInstalled !== isInstalledInCasaOS ||
+        repo.isRunning !== isRunning ||
+        repo.installMismatch
+      );
+      
+      if (needsUpdate) {
+        const updates: any = {
+          isInstalled: isInstalledInCasaOS,
+          isRunning: isRunning,
+          installMismatch: false
+        };
+        
+        updateRepository(repo.id, updates);
+        
+        if (repo.isInstalled !== isInstalledInCasaOS) {
+          console.log(`🔄 Updated ${repo.name} installation status: ${isInstalledInCasaOS} (app: ${appNameToCheck})`);
+          
+          // If app was uninstalled from CasaOS dashboard, log it (no additional sync needed)
+          if (!isInstalledInCasaOS && repo.isInstalled) {
+            console.log(`📱 App ${appNameToCheck} was uninstalled from CasaOS dashboard`);
+          }
+        }
+        
+        if (repo.isRunning !== isRunning && isInstalledInCasaOS) {
+          console.log(`🔄 Updated ${repo.name} running status: ${isRunning} (app: ${appNameToCheck})`);
+        }
+      }
+    }
     
   } catch (error) {
     console.error("❌ Error syncing with CasaOS:", error);
@@ -154,6 +308,11 @@ app.use(express.json());
 setInterval(() => {
   managedRepos = loadRepositories();
 }, 30000); // Every 30 seconds
+
+// More frequent sync with CasaOS to catch manual changes
+setInterval(async () => {
+  await syncWithCasaOS();
+}, 15000); // Every 15 seconds
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, "public")));
@@ -238,7 +397,7 @@ app.put("/api/settings", (req, res) => {
 
 // POST /api/repos - Add a new repository
 app.post("/api/repos", (req, res) => {
-  const { name, url, autoUpdate = false, autoUpdateInterval = 60, apiUpdatesEnabled = true } = req.body;
+  const { name, url, autoUpdate = false, autoUpdateInterval = 60, apiUpdatesEnabled = true, status = 'empty' } = req.body;
   
   if (!name || !url) {
     return res.status(400).json({ success: false, message: "Name and URL are required" });
@@ -251,7 +410,7 @@ app.post("/api/repos", (req, res) => {
       autoUpdate,
       autoUpdateInterval,
       apiUpdatesEnabled,
-      status: 'idle'
+      status: status as 'idle' | 'empty' | 'importing' | 'imported' | 'building' | 'success' | 'error'
     });
     
     // Start timer if auto-update is enabled
@@ -293,6 +452,94 @@ app.put("/api/repos/:id", (req, res) => {
   }
 });
 
+// POST /api/repos/:id/import - Import repository from GitHub (clone and analyze)
+app.post("/api/repos/:id/import", async (req, res) => {
+  const { id } = req.params;
+  const repo = getRepository(id);
+  
+  if (!repo || !repo.url) {
+    return res.status(400).json({ success: false, message: "Repository not found or URL not set" });
+  }
+  
+  try {
+    // Update status to importing
+    updateRepository(id, { status: 'importing' });
+    
+    console.log(`🔽 Starting import for ${repo.name}...`);
+    
+    // Clone the repository to /app/repos/
+    const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
+    const repoConfig = {
+      url: repo.url,
+      path: repoPath,
+      autoUpdate: repo.autoUpdate
+    };
+    
+    // Clone/update the repository
+    cloneOrUpdateRepo(repoConfig, baseDir);
+    
+    // Copy docker-compose.yml to persistent storage
+    const sourcePath = path.join(baseDir, repoPath, "docker-compose.yml");
+    const targetDir = path.join('/app/uidata', repo.name);
+    const targetPath = path.join(targetDir, "docker-compose.yml");
+    
+    // Ensure target directory exists
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    
+    // Copy docker-compose.yml if it exists
+    let hasCompose = false;
+    let icon = '';
+    
+    if (fs.existsSync(sourcePath)) {
+      fs.copyFileSync(sourcePath, targetPath);
+      hasCompose = true;
+      console.log(`📋 Copied docker-compose.yml to ${targetPath}`);
+      
+      // Analyze docker-compose.yml for icon
+      try {
+        const yaml = await import('yaml');
+        const composeContent = fs.readFileSync(targetPath, 'utf8');
+        const composeData = yaml.parse(composeContent);
+        
+        // Look for icon in x-casaos section
+        if (composeData['x-casaos'] && composeData['x-casaos'].icon) {
+          icon = composeData['x-casaos'].icon;
+          // Icon found and stored
+        }
+      } catch (error: any) {
+        console.log(`⚠️ Could not parse docker-compose.yml for icon: ${error.message}`);
+      }
+    } else {
+      console.log(`⚠️ No docker-compose.yml found in ${sourcePath}`);
+    }
+    
+    // Update repository status to imported
+    updateRepository(id, { 
+      status: 'imported',
+      hasCompose,
+      icon: icon || undefined
+    });
+    
+    console.log(`✅ Import completed for ${repo.name}`);
+    
+    res.json({ 
+      success: true, 
+      message: hasCompose ? 
+        'Repository imported successfully with docker-compose.yml' : 
+        'Repository imported successfully (no docker-compose.yml found)',
+      hasCompose,
+      icon
+    });
+    
+  } catch (error: any) {
+    console.error(`❌ Import failed for ${repo.name}:`, error);
+    updateRepository(id, { status: 'error' });
+    res.status(500).json({ success: false, message: error.message || "Import failed" });
+  }
+});
+
 // POST /api/repos/:id/compile - Compile/build a repository
 app.post("/api/repos/:id/compile", async (req, res) => {
   const { id } = req.params;
@@ -321,21 +568,34 @@ app.get("/api/repos/:id/compose", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
-  if (!repo || !repo.url) {
+  if (!repo) {
     return res.status(400).json({ success: false, message: "Repository not found" });
   }
   
   try {
-    // Try to read the compose file from the cloned repo
-    const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
-    const composePath = path.join(baseDir, repoPath, "docker-compose.yml");
+    // First try to read from persistent storage (/app/uidata/)
+    const persistentComposePath = path.join('/app/uidata', repo.name, "docker-compose.yml");
     
-    if (fs.existsSync(composePath)) {
-      const yamlContent = fs.readFileSync(composePath, 'utf8');
+    if (fs.existsSync(persistentComposePath)) {
+      const yamlContent = fs.readFileSync(persistentComposePath, 'utf8');
       res.json({ success: true, yaml: yamlContent });
-    } else {
-      res.json({ success: true, yaml: "# No docker-compose.yml found\n# Add your Docker Compose configuration here" });
+      return;
     }
+    
+    // Fallback: try to read from cloned repo (if repo has URL)
+    if (repo.url) {
+      const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
+      const clonedComposePath = path.join(baseDir, repoPath, "docker-compose.yml");
+      
+      if (fs.existsSync(clonedComposePath)) {
+        const yamlContent = fs.readFileSync(clonedComposePath, 'utf8');
+        res.json({ success: true, yaml: yamlContent });
+        return;
+      }
+    }
+    
+    // No compose file found
+    res.json({ success: true, yaml: "# No docker-compose.yml found\n# Add your Docker Compose configuration here" });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -347,23 +607,39 @@ app.put("/api/repos/:id/compose", async (req, res) => {
   const { yaml } = req.body;
   const repo = getRepository(id);
   
-  if (!repo || !repo.url) {
+  if (!repo) {
     return res.status(400).json({ success: false, message: "Repository not found" });
   }
   
+  if (!yaml) {
+    return res.status(400).json({ success: false, message: "YAML content is required" });
+  }
+  
   try {
-    // Write to the cloned repo's compose file
-    const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
-    const composePath = path.join(baseDir, repoPath, "docker-compose.yml");
+    // Write to persistent storage first (/app/uidata/)
+    const persistentDir = path.join('/app/uidata', repo.name);
+    const persistentComposePath = path.join(persistentDir, "docker-compose.yml");
     
-    // Ensure directory exists
-    const repoDir = path.join(baseDir, repoPath);
-    if (!fs.existsSync(repoDir)) {
-      fs.mkdirSync(repoDir, { recursive: true });
+    // Ensure persistent directory exists
+    if (!fs.existsSync(persistentDir)) {
+      fs.mkdirSync(persistentDir, { recursive: true });
     }
     
-    fs.writeFileSync(composePath, yaml, 'utf8');
-    repo.hasCompose = true;
+    fs.writeFileSync(persistentComposePath, yaml, 'utf8');
+    
+    // Also write to cloned repo if it exists and repo has URL
+    if (repo.url) {
+      const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
+      const clonedDir = path.join(baseDir, repoPath);
+      const clonedComposePath = path.join(clonedDir, "docker-compose.yml");
+      
+      if (fs.existsSync(clonedDir)) {
+        fs.writeFileSync(clonedComposePath, yaml, 'utf8');
+      }
+    }
+    
+    // Update repository metadata
+    updateRepository(id, { hasCompose: true });
     
     res.json({ success: true, message: "Docker Compose file updated successfully" });
   } catch (error: any) {
@@ -371,19 +647,121 @@ app.put("/api/repos/:id/compose", async (req, res) => {
   }
 });
 
-// DELETE /api/repos/:id - Remove a repository
-app.delete("/api/repos/:id", (req, res) => {
+// DELETE /api/repos/:id - Remove a repository (and uninstall app if installed)
+app.delete("/api/repos/:id", async (req, res) => {
   const { id } = req.params;
   
-  const success = removeRepository(id);
-  if (!success) {
+  // Get repository info before removing it
+  const repo = getRepository(id);
+  if (!repo) {
     return res.status(404).json({ success: false, message: "Repository not found" });
   }
   
-  // Stop any running timer
-  stopRepoTimer(id);
-  
-  res.json({ success: true, message: "Repository removed successfully" });
+  try {
+    // First, uninstall the app from CasaOS if it's installed
+    if (repo.isInstalled) {
+      // Get app name from docker-compose.yml
+      let appNameToUninstall = repo.name;
+      const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+      
+      if (fs.existsSync(composePath)) {
+        try {
+          const yaml = require('yaml');
+          const composeContent = fs.readFileSync(composePath, 'utf8');
+          const composeData = yaml.parse(composeContent);
+          
+          if (composeData.services && Object.keys(composeData.services).length > 0) {
+            appNameToUninstall = Object.keys(composeData.services)[0];
+          }
+        } catch (error) {
+          console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
+        }
+      }
+      
+      console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS before removing repository...`);
+      const result = await uninstallCasaOSApp(appNameToUninstall);
+      
+      if (result.success) {
+        console.log(`✅ App ${appNameToUninstall} uninstall initiated - waiting for completion...`);
+        
+        // Wait for actual uninstall completion (up to 30 seconds)
+        let attempts = 0;
+        const maxAttempts = 6; // 30 seconds total (5s intervals)
+        let uninstallComplete = false;
+        
+        while (attempts < maxAttempts && !uninstallComplete) {
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+          attempts++;
+          
+          try {
+            const installedApps = await getCasaOSInstalledApps(true);
+            uninstallComplete = !installedApps.includes(appNameToUninstall);
+            
+            if (uninstallComplete) {
+              console.log(`✅ App ${appNameToUninstall} successfully uninstalled after ${attempts * 5}s`);
+            } else {
+              console.log(`⏳ Waiting for ${appNameToUninstall} uninstall completion (${attempts}/${maxAttempts})`);
+            }
+          } catch (error) {
+            console.log(`⚠️ Error checking uninstall status: ${error}`);
+          }
+        }
+        
+        if (!uninstallComplete) {
+          console.log(`⏰ Uninstall verification timeout for ${appNameToUninstall} - proceeding with repository removal`);
+        }
+      } else {
+        console.log(`⚠️ Failed to uninstall ${appNameToUninstall}: ${result.message}`);
+        // Continue with repository removal even if uninstall failed
+      }
+    }
+    
+    // Now remove the repository from storage
+    const success = removeRepository(id);
+    if (!success) {
+      return res.status(404).json({ success: false, message: "Repository not found" });
+    }
+    
+    // Stop any running timer
+    stopRepoTimer(id);
+    
+    // Clean up persistent storage directory
+    if (repo && repo.name) {
+      const persistentDir = path.join('/app/uidata', repo.name);
+      try {
+        if (fs.existsSync(persistentDir)) {
+          fs.rmSync(persistentDir, { recursive: true, force: true });
+          console.log(`🧹 Cleaned up persistent storage: ${persistentDir}`);
+        }
+      } catch (error: any) {
+        console.error(`⚠️ Failed to clean up persistent storage for ${repo.name}:`, error.message);
+      }
+      
+      // Also clean up cloned repo directory if it exists
+      if (repo.url) {
+        const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
+        const clonedDir = path.join(baseDir, repoPath);
+        try {
+          if (fs.existsSync(clonedDir)) {
+            fs.rmSync(clonedDir, { recursive: true, force: true });
+            console.log(`🧹 Cleaned up cloned repository: ${clonedDir}`);
+          }
+        } catch (error: any) {
+          console.error(`⚠️ Failed to clean up cloned repository for ${repo.name}:`, error.message);
+        }
+      }
+    }
+    
+    const message = repo.isInstalled 
+      ? "Repository removed and app uninstalled from CasaOS" 
+      : "Repository and associated files removed successfully";
+      
+    res.json({ success: true, message });
+    
+  } catch (error: any) {
+    console.error(`❌ Error removing repository ${repo.name}:`, error);
+    res.status(500).json({ success: false, message: error.message || "Repository removal failed" });
+  }
 });
 
 // GET /api/repos/:id/check-update - Check if a specific repository has updates available
@@ -645,6 +1023,125 @@ app.get("/api/system/status", async (req, res) => {
     status,
     message: status.errors.length > 0 ? status.errors.join(', ') : 'All systems operational'
   });
+});
+
+// POST /api/repos/:id/uninstall - Uninstall app from CasaOS
+app.post("/api/repos/:id/uninstall", async (req, res) => {
+  const { id } = req.params;
+  const repo = getRepository(id);
+  
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+  
+  try {
+    // Get app name from docker-compose.yml
+    let appNameToUninstall = repo.name;
+    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+    
+    if (fs.existsSync(composePath)) {
+      try {
+        const yaml = require('yaml');
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        const composeData = yaml.parse(composeContent);
+        
+        if (composeData.services && Object.keys(composeData.services).length > 0) {
+          appNameToUninstall = Object.keys(composeData.services)[0];
+        }
+      } catch (error) {
+        console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
+      }
+    }
+    
+    // Set status to uninstalling immediately
+    updateRepository(id, { 
+      status: 'uninstalling',
+      isRunning: false
+    });
+    
+    console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS...`);
+    const result = await uninstallCasaOSApp(appNameToUninstall);
+    
+    if (result.success) {
+      console.log(`✅ Successfully initiated uninstall for ${appNameToUninstall}`);
+      res.json({ success: true, message: result.message });
+      
+      // Start polling to verify uninstall completion
+      pollUninstallStatus(id, appNameToUninstall, 0);
+    } else {
+      console.log(`❌ Failed to uninstall ${appNameToUninstall}: ${result.message}`);
+      // Revert status on failure
+      updateRepository(id, { status: 'success' });
+      res.status(500).json({ success: false, message: result.message });
+    }
+    
+  } catch (error: any) {
+    console.error(`❌ Uninstall error for ${repo.name}:`, error);
+    res.status(500).json({ success: false, message: error.message || "Uninstall failed" });
+  }
+});
+
+// POST /api/repos/:id/toggle - Start/Stop app in CasaOS
+app.post("/api/repos/:id/toggle", async (req, res) => {
+  const { id } = req.params;
+  const { start } = req.body; // true to start, false to stop
+  const repo = getRepository(id);
+  
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+  
+  if (!repo.isInstalled) {
+    return res.status(400).json({ success: false, message: "App is not installed" });
+  }
+  
+  try {
+    // Get app name from docker-compose.yml
+    let appNameToToggle = repo.name;
+    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+    
+    if (fs.existsSync(composePath)) {
+      try {
+        const yaml = require('yaml');
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        const composeData = yaml.parse(composeContent);
+        
+        if (composeData.services && Object.keys(composeData.services).length > 0) {
+          appNameToToggle = Object.keys(composeData.services)[0];
+        }
+      } catch (error) {
+        console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
+      }
+    }
+    
+    const action = start ? 'start' : 'stop';
+    
+    // Set intermediate status immediately
+    updateRepository(id, { 
+      status: start ? 'starting' : 'stopping'
+    });
+    
+    console.log(`${start ? '▶️' : '⏹️'} ${action}ing ${appNameToToggle} in CasaOS...`);
+    
+    const result = await toggleCasaOSApp(appNameToToggle, start);
+    
+    if (result.success) {
+      console.log(`✅ Successfully initiated ${action} for ${appNameToToggle}`);
+      res.json({ success: true, message: result.message });
+      
+      // Start polling to verify status change
+      pollToggleStatus(id, appNameToToggle, start, 0);
+    } else {
+      console.log(`❌ Failed to ${action} ${appNameToToggle}: ${result.message}`);
+      // Revert status on failure
+      updateRepository(id, { status: 'success' });
+      res.status(500).json({ success: false, message: result.message });
+    }
+    
+  } catch (error: any) {
+    console.error(`❌ Toggle error for ${repo.name}:`, error);
+    res.status(500).json({ success: false, message: error.message || "Toggle failed" });
+  }
 });
 
 // Environment-based force update API has been removed
