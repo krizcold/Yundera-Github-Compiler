@@ -179,6 +179,7 @@ class RepoManager {
         const status = repo ? repo.status || 'idle' : 'idle';
         const autoUpdate = repo ? repo.autoUpdate || false : false;
         const isInstalled = repo ? repo.isInstalled || false : false;
+        const installationStatus = this.getInstallationStatus(repo);
 
         // Full repository UI (like original but improved)
         const lastBuildTime = repo ? repo.lastBuildTime : null;
@@ -224,9 +225,10 @@ class RepoManager {
                 </div>
                 <div class="status-info">
                     <div><span class="status-indicator status-${status}"></span>Status: ${this.capitalizeFirst(status)}</div>
-                    <div>
-                        <span class="install-indicator ${isInstalled ? 'installed' : 'not-installed'}"></span>
-                        Installed: ${isInstalled ? 'Yes' : 'No'}
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="installation-badge installation-${installationStatus.status}">
+                            ${installationStatus.label}
+                        </span>
                         ${repo && repo.installMismatch ? '<span class="warning-triangle" title="App is listed as installed but not found in CasaOS. It may have been removed manually."><i class="fas fa-exclamation-triangle"></i></span>' : ''}
                     </div>
                     <div>Last Build: ${lastUpdated}</div>
@@ -314,6 +316,32 @@ class RepoManager {
 
     capitalizeFirst(str) {
         return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
+    getInstallationStatus(repo) {
+        if (!repo) {
+            return { status: 'uninstalled', label: 'Uninstalled' };
+        }
+
+        const status = repo.status;
+        const isInstalled = repo.isInstalled;
+
+        // Determine installation status based on repository state
+        if (status === 'idle' || status === 'empty') {
+            return { status: 'uninstalled', label: 'Uninstalled' };
+        } else if (status === 'importing' || status === 'imported') {
+            return { status: 'imported', label: 'Imported' };
+        } else if (status === 'success' && isInstalled) {
+            return { status: 'installed', label: 'Installed' };
+        } else if (status === 'building') {
+            return { status: 'imported', label: 'Building...' };
+        } else if (status === 'error') {
+            return { status: 'imported', label: 'Build Error' };
+        } else if (status === 'uninstalling') {
+            return { status: 'imported', label: 'Uninstalling...' };
+        } else {
+            return { status: 'uninstalled', label: 'Uninstalled' };
+        }
     }
 
     getRepoIcon(repo) {

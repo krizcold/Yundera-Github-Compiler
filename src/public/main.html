@@ -304,6 +304,34 @@
         .status-enabled { color: var(--success-color); font-weight: 500; }
         .status-disabled { color: var(--danger-color); font-weight: 500; }
 
+        /* Installation status badges */
+        .installation-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .installation-uninstalled {
+            background-color: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .installation-imported {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .installation-installed {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+
         .modal {
             display: none;
             position: fixed;
