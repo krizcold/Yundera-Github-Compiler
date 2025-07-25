@@ -80,8 +80,22 @@ export async function processRepo(
       const verification = await verifyCasaOSInstallation(appNameToVerify);
       
       if (verification.success && verification.isInstalled) {
-        updateRepository(repository.id, { isInstalled: true });
-        console.log(`✅ Installation verified for ${appNameToVerify}`);
+        // Check if the app is also running after installation
+        const { getCasaOSAppStatus } = await import('./casaos-status');
+        let isRunning = false;
+        try {
+          const runningStatus = await getCasaOSAppStatus(appNameToVerify);
+          isRunning = runningStatus?.isRunning || false;
+          console.log(`🔍 Post-install running status for ${appNameToVerify}: ${isRunning}`);
+        } catch (error: any) {
+          console.log(`⚠️ Could not check running status after install: ${error.message}`);
+        }
+        
+        updateRepository(repository.id, { 
+          isInstalled: true,
+          isRunning: isRunning
+        });
+        console.log(`✅ Installation verified for ${appNameToVerify} (running: ${isRunning})`);
         return { 
           success: true, 
           message: `Build completed successfully. ${verification.message}` 
@@ -91,9 +105,22 @@ export async function processRepo(
         console.log(`ℹ️ This may be normal if app name differs from repository name`);
         
         // Since build was successful, assume app is installed even if verification failed
-        // The sync process will correct the status if the app is actually not installed
-        updateRepository(repository.id, { isInstalled: true });
-        console.log(`📦 Marking as installed based on successful build - sync will verify later`);
+        // Try to get running status anyway
+        const { getCasaOSAppStatus } = await import('./casaos-status');
+        let isRunning = false;
+        try {
+          const runningStatus = await getCasaOSAppStatus(appNameToVerify);
+          isRunning = runningStatus?.isRunning || false;
+          console.log(`🔍 Fallback running status check for ${appNameToVerify}: ${isRunning}`);
+        } catch (error: any) {
+          console.log(`⚠️ Could not check running status in fallback: ${error.message}`);
+        }
+        
+        updateRepository(repository.id, { 
+          isInstalled: true,
+          isRunning: isRunning
+        });
+        console.log(`📦 Marking as installed based on successful build (running: ${isRunning}) - sync will verify later`);
         
         return { 
           success: true, 

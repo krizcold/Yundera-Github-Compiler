@@ -116,6 +116,12 @@
             color: white;
         }
 
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed !important;
+            pointer-events: auto;
+        }
+
         .btn-small {
             padding: 6px 12px;
             font-size: 12px;
@@ -165,7 +171,7 @@
 
         .repo-item {
             display: grid;
-            grid-template-columns: 60px 1fr auto;
+            grid-template-columns: 80px 1fr auto;
             align-items: center;
             padding: 15px 20px;
             border-bottom: 1px solid var(--gray-200);
@@ -193,6 +199,64 @@
             height: 100%;
             border-radius: var(--border-radius);
             object-fit: cover;
+        }
+
+        .repo-icon-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* App toggle switch below icon */
+        .app-toggle {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            background-color: var(--gray-300);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            display: flex;
+            align-items: center;
+        }
+
+        .app-toggle.running {
+            background-color: var(--success-color);
+        }
+
+        .app-toggle.disabled {
+            background-color: var(--gray-200);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .app-toggle-slider {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background-color: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+            transform: translateX(2px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .app-toggle.running .app-toggle-slider {
+            transform: translateX(18px);
+        }
+
+        .app-toggle-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--gray-600);
+            text-transform: uppercase;
+            margin-top: 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .app-toggle.disabled .app-toggle-label {
+            color: var(--gray-400);
         }
 
         /* Repository layout */

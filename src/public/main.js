@@ -121,6 +121,31 @@ class RepoManager {
         }
     }
 
+    async waitForInstallationConfirmation(repoId, maxAttempts = 15) {
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+            attempts++;
+            
+            // Wait 2 seconds between checks
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Reload repositories
+            await this.loadRepos();
+            
+            // Check if installation is confirmed
+            const updatedRepo = this.repos.find(r => r.id === repoId);
+            if (updatedRepo && updatedRepo.isInstalled) {
+                this.showNotification(`${updatedRepo.name} installed successfully!`, 'success');
+                return;
+            }
+            
+            console.log(`Waiting for installation confirmation... (${attempts}/${maxAttempts})`);
+        }
+        
+        // If we reach here, installation confirmation timed out
+        this.showNotification('Installation completed but confirmation timed out. Check CasaOS dashboard.', 'warning');
+    }
+
     async loadGlobalSettings() {
         try {
             const response = await axios.get('/api/settings');
@@ -184,11 +209,15 @@ class RepoManager {
         // Full repository UI (like original but improved)
         const lastBuildTime = repo ? repo.lastBuildTime : null;
         const lastUpdated = lastBuildTime ? this.formatDate(lastBuildTime) : 'Never';
-        const hasCompose = repo && (repo.hasCompose || status === 'success');
+        // Docker compose button should be enabled after importing (when we have the compose file)
+        const hasCompose = repo && (status === 'imported' || status === 'building' || status === 'success' || status === 'error');
 
         div.innerHTML = `
-            <div class="repo-icon">
-                ${this.getRepoIcon(repo)}
+            <div class="repo-icon-section">
+                <div class="repo-icon">
+                    ${this.getRepoIcon(repo)}
+                </div>
+                ${this.renderAppToggle(repo, repoId, isInstalled)}
             </div>
             <div class="repo-info">
                 <div class="repo-details">
@@ -339,6 +368,10 @@ class RepoManager {
             return { status: 'imported', label: 'Build Error' };
         } else if (status === 'uninstalling') {
             return { status: 'imported', label: 'Uninstalling...' };
+        } else if (status === 'starting') {
+            return { status: 'installed', label: 'Starting...' };
+        } else if (status === 'stopping') {
+            return { status: 'installed', label: 'Stopping...' };
         } else {
             return { status: 'uninstalled', label: 'Uninstalled' };
         }
@@ -349,6 +382,46 @@ class RepoManager {
             return `<img src="${repo.icon}" alt="${repo.name}">`;
         }
         return '<i class="fab fa-github"></i>';
+    }
+
+    renderAppToggle(repo, repoId, isInstalled) {
+        const isRunning = repo && repo.isRunning ? true : false;
+        const isInTransition = repo && (repo.status === 'starting' || repo.status === 'stopping');
+        const isDisabled = !isInstalled || !repo || repoId === 'empty' || isInTransition;
+        
+        let toggleClass = 'app-toggle';
+        let label = 'OFF';
+        
+        if (isInTransition) {
+            toggleClass += ' disabled';
+            label = repo.status === 'starting' ? 'STARTING' : 'STOPPING';
+        } else if (isDisabled) {
+            toggleClass += ' disabled';
+            label = 'OFF';
+        } else if (isRunning) {
+            toggleClass += ' running';
+            label = 'ON';
+        }
+        
+        const clickHandler = isDisabled ? '' : `onclick="repoManager.toggleApp('${repoId}')"`;
+        let title = 'App must be installed first';
+        if (isInTransition) {
+            title = `App is ${repo.status}...`;
+        } else if (!isDisabled) {
+            title = isRunning ? 'Click to stop app' : 'Click to start app';
+        }
+
+        return `
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <div class="${toggleClass}" 
+                     ${clickHandler}
+                     title="${title}"
+                     id="app-toggle-${repoId}">
+                    <div class="app-toggle-slider"></div>
+                </div>
+                <div class="app-toggle-label">${label}</div>
+            </div>
+        `;
     }
 
     renderActionButton(repo, repoId, isEmpty, repoUrl) {
@@ -429,10 +502,11 @@ class RepoManager {
                                 <i class="fas fa-sync-alt"></i>
                             </button>`;
                 } else {
+                    // Build completed but installation not yet confirmed - keep loading
                     return `<button class="btn btn-small btn-success" 
-                                    title="Build Application" 
-                                    onclick="repoManager.buildRepo('${repoId}')">
-                                <i class="fas fa-hammer"></i>
+                                    title="Confirming installation..." 
+                                    disabled>
+                                <i class="fas fa-spinner fa-spin"></i>
                             </button>`;
                 }
                 
@@ -621,9 +695,9 @@ class RepoManager {
             const response = await axios.post(`/api/repos/${repoId}/compile`);
             
             if (response.data.success) {
-                this.showNotification(`${repo.name} built successfully!`, 'success');
-                // Force sync with CasaOS and reload to get updated status
-                await this.syncAndReload();
+                this.showNotification(`${repo.name} built successfully! Confirming installation...`, 'success');
+                // Keep checking until installation is confirmed
+                await this.waitForInstallationConfirmation(repoId);
             } else {
                 this.updateRepoStatus(repoId, 'error');
                 this.enableActionButton(repoId); // Re-enable on error
@@ -680,6 +754,70 @@ class RepoManager {
         } catch (error) {
             console.error('Failed to load compose file:', error);
             this.showNotification('Failed to load Docker Compose file', 'error');
+        }
+    }
+
+    async toggleApp(repoId) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo || !repo.isInstalled) {
+            this.showNotification('App must be installed first', 'error');
+            return;
+        }
+
+        // Check if app is in transition state
+        if (repo.status === 'starting' || repo.status === 'stopping') {
+            this.showNotification(`App is already ${repo.status}, please wait...`, 'warning');
+            return;
+        }
+
+        const isCurrentlyRunning = repo.isRunning || false;
+        const action = isCurrentlyRunning ? 'stop' : 'start';
+        
+        // Additional validation: Check if the desired action matches current state
+        // This prevents race conditions where UI might be out of sync
+        if ((action === 'start' && isCurrentlyRunning) || (action === 'stop' && !isCurrentlyRunning)) {
+            const currentState = isCurrentlyRunning ? 'already running' : 'already stopped';
+            this.showNotification(`App is ${currentState}`, 'info');
+            // Refresh to sync UI with actual state
+            await this.loadRepos();
+            return;
+        }
+
+        try {
+            // Update toggle to show loading state
+            const toggle = document.getElementById(`app-toggle-${repoId}`);
+            if (toggle) {
+                toggle.classList.add('disabled');
+                toggle.style.pointerEvents = 'none';
+            }
+
+            const response = await axios.post(`/api/repos/${repoId}/toggle`, {
+                start: !isCurrentlyRunning
+            });
+            
+            if (response.data.success) {
+                this.showNotification(`Application ${action}ed successfully`, 'success');
+                // Reload repositories to get updated status
+                await this.loadRepos();
+            } else {
+                this.showNotification(`Failed to ${action} application: ${response.data.message}`, 'error');
+                // Re-enable toggle on error
+                if (toggle) {
+                    toggle.classList.remove('disabled');
+                    toggle.style.pointerEvents = '';
+                }
+            }
+        } catch (error) {
+            console.error(`Error ${action}ing app:`, error);
+            const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
+            this.showNotification(`Error ${action}ing application: ${errorMessage}`, 'error');
+            
+            // Re-enable toggle on error
+            const toggle = document.getElementById(`app-toggle-${repoId}`);
+            if (toggle) {
+                toggle.classList.remove('disabled');
+                toggle.style.pointerEvents = '';
+            }
         }
     }
 
@@ -974,31 +1112,38 @@ class RepoManager {
     }
 
     showNotification(message, type = 'info') {
-        const notificationHeight = 70; // estimated height including margin
-        
-        // First, push all existing notifications down by one position
-        const existingNotifications = document.querySelectorAll('.notification');
-        existingNotifications.forEach((existing, index) => {
-            const newTop = 20 + ((index + 1) * notificationHeight);
-            existing.style.top = `${newTop}px`;
-        });
+        // Create notification container if it doesn't exist
+        let container = document.getElementById('notification-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'notification-container';
+            container.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 10000;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
         
         // Create notification element
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
         notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
             padding: 15px 20px;
             border-radius: 8px;
             color: white;
             font-weight: 500;
-            z-index: 10000;
             max-width: 400px;
             opacity: 0;
             transform: translateX(100%);
             transition: all 0.3s ease;
+            pointer-events: auto;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         `;
 
         // Set background color based on type
@@ -1012,8 +1157,8 @@ class RepoManager {
         
         notification.textContent = message;
         
-        // Add to page
-        document.body.appendChild(notification);
+        // Add to container (will automatically stack due to flexbox)
+        container.appendChild(notification);
         
         // Animate in from right
         setTimeout(() => {
@@ -1029,11 +1174,10 @@ class RepoManager {
                 if (notification.parentNode) {
                     notification.parentNode.removeChild(notification);
                 }
-                // Reposition remaining notifications to fill the gap
-                const remainingNotifications = document.querySelectorAll('.notification');
-                remainingNotifications.forEach((remaining, index) => {
-                    remaining.style.top = `${20 + (index * notificationHeight)}px`;
-                });
+                // Clean up container if empty
+                if (container.children.length === 0) {
+                    container.remove();
+                }
             }, 300);
         }, 5000);
     }

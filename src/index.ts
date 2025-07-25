@@ -174,7 +174,62 @@ async function pollUninstallStatus(repositoryId: string, appName: string, attemp
   }
 }
 
-// Poll toggle status until completion
+// Poll toggle status and respond to the original HTTP request when complete
+async function pollToggleStatusAndRespond(res: any, repositoryId: string, appName: string, expectedRunning: boolean, attempt: number) {
+  const maxAttempts = 10; // Reduced from 15 - don't make users wait too long
+  const pollInterval = 3000; // 3 seconds
+  
+  if (attempt >= maxAttempts) {
+    console.log(`⏰ Toggle verification timeout for ${appName} after ${maxAttempts} attempts`);
+    // Get current repository to preserve isInstalled status
+    const currentRepo = getRepository(repositoryId);
+    updateRepository(repositoryId, { 
+      status: 'success',
+      isInstalled: currentRepo?.isInstalled || true  // Preserve installation status
+    });
+    res.status(500).json({ 
+      success: false, 
+      message: `Operation timed out - could not verify ${expectedRunning ? 'start' : 'stop'} completed` 
+    });
+    return;
+  }
+  
+  try {
+    const { getCasaOSAppStatus } = await import('./casaos-status');
+    const status = await getCasaOSAppStatus(appName);
+    
+    if (status && status.isRunning === expectedRunning) {
+      // Toggle completed successfully
+      const action = expectedRunning ? 'started' : 'stopped';
+      console.log(`✅ ${action} verified for ${appName} after ${attempt + 1} attempts`);
+      
+      // Get current repository to preserve isInstalled status
+      const currentRepo = getRepository(repositoryId);
+      updateRepository(repositoryId, { 
+        status: 'success',
+        isRunning: expectedRunning,
+        isInstalled: currentRepo?.isInstalled || true  // Preserve current value, default to true since toggle succeeded
+      });
+      res.json({ 
+        success: true, 
+        message: `Application ${action} successfully` 
+      });
+      return;
+    }
+    
+    // Status hasn't changed yet, continue polling
+    const action = expectedRunning ? 'start' : 'stop';
+    console.log(`⏳ Waiting for ${action} to complete for ${appName} (attempt ${attempt + 1}/${maxAttempts})`);
+    setTimeout(() => pollToggleStatusAndRespond(res, repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
+    
+  } catch (error) {
+    console.error(`❌ Error verifying toggle status for ${appName}:`, error);
+    // Continue polling despite error
+    setTimeout(() => pollToggleStatusAndRespond(res, repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
+  }
+}
+
+// Poll toggle status until completion (for background operations)
 async function pollToggleStatus(repositoryId: string, appName: string, expectedRunning: boolean, attempt: number) {
   const maxAttempts = 15; // 2.5 minutes max (10s intervals)
   const pollInterval = 10000; // 10 seconds
@@ -1126,21 +1181,82 @@ app.post("/api/repos/:id/toggle", async (req, res) => {
     const result = await toggleCasaOSApp(appNameToToggle, start);
     
     if (result.success) {
-      console.log(`✅ Successfully initiated ${action} for ${appNameToToggle}`);
-      res.json({ success: true, message: result.message });
+      console.log(`✅ Toggle command sent for ${appNameToToggle}, now verifying actual status change...`);
       
-      // Start polling to verify status change
-      pollToggleStatus(id, appNameToToggle, start, 0);
+      // Don't return success yet - wait for verification
+      // Start polling to verify status change and respond when complete
+      pollToggleStatusAndRespond(res, id, appNameToToggle, start, 0);
     } else {
       console.log(`❌ Failed to ${action} ${appNameToToggle}: ${result.message}`);
       // Revert status on failure
       updateRepository(id, { status: 'success' });
-      res.status(500).json({ success: false, message: result.message });
+      res.status(500).json({ success: false, message: `Failed to ${action} application: ${result.message}` });
     }
     
   } catch (error: any) {
     console.error(`❌ Toggle error for ${repo.name}:`, error);
     res.status(500).json({ success: false, message: error.message || "Toggle failed" });
+  }
+});
+
+// DEBUG: Get detailed app status for troubleshooting
+app.get("/api/repos/:id/debug", async (req, res) => {
+  const { id } = req.params;
+  const repo = getRepository(id);
+  
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+  
+  try {
+    const { getCasaOSAppStatus } = await import('./casaos-status');
+    
+    // Get app name from docker-compose.yml
+    let appNameToCheck = repo.name;
+    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+    
+    if (fs.existsSync(composePath)) {
+      try {
+        const yaml = require('yaml');
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        const composeData = yaml.parse(composeContent);
+        
+        if (composeData.services && Object.keys(composeData.services).length > 0) {
+          appNameToCheck = Object.keys(composeData.services)[0];
+        }
+      } catch (error) {
+        console.log(`⚠️ Could not parse docker-compose.yml for debug`);
+      }
+    }
+    
+    const casaosStatus = await getCasaOSAppStatus(appNameToCheck);
+    
+    // Also get Docker container info
+    let dockerInfo = {};
+    try {
+      const { exec } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+      const { stdout } = await execAsync(`docker ps -a --filter "name=${appNameToCheck}" --format "{{.Names}}\t{{.Status}}\t{{.State}}"`);
+      dockerInfo = { containerList: stdout };
+    } catch (error: any) {
+      dockerInfo = { error: error.message };
+    }
+    
+    res.json({
+      success: true,
+      debug: {
+        repoName: repo.name,
+        appNameUsed: appNameToCheck,
+        repoStatus: repo.status,
+        repoIsInstalled: repo.isInstalled,
+        repoIsRunning: repo.isRunning,
+        casaosStatus,
+        dockerInfo
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

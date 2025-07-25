@@ -212,6 +212,13 @@ export async function getCasaOSAppStatus(appName: string): Promise<{
               isRunning = appData.status === 'running' || 
                          appData.state === 'running' ||
                          appData.running === true;
+              
+              console.log(`🔍 App ${appName} status check:`, {
+                status: appData.status,
+                state: appData.state, 
+                running: appData.running,
+                isRunning
+              });
             }
             
             return {
@@ -340,59 +347,147 @@ export async function toggleCasaOSApp(appName: string, start: boolean): Promise<
   success: boolean;
   message: string;
 }> {
+  const action = start ? 'start' : 'stop';
+  console.log(`🎯 Attempting to ${action} app: ${appName}`);
+  
+  // Primary method: Use docker-compose directly (most reliable)
   try {
-    const action = start ? 'start' : 'stop';
+    const dockerAction = start ? 'start' : 'stop';
+    const composeCommand = `docker-compose -f /app/uidata/${appName}/docker-compose.yml ${dockerAction} 2>&1`;
+    const { stdout: composeOutput } = await execAsync(composeCommand);
+    
+    console.log(`🐳 Docker-compose ${dockerAction} result:`, composeOutput);
+    
+    if (!composeOutput.includes('ERROR') && !composeOutput.includes('No such file') && !composeOutput.includes('failed')) {
+      return {
+        success: true,
+        message: `App ${appName} ${dockerAction} via docker-compose`
+      };
+    } else {
+      console.log(`⚠️ Docker-compose ${dockerAction} had issues, trying other methods...`);
+    }
+  } catch (composeError) {
+    console.log(`❌ Docker-compose failed:`, composeError);
+  }
+  
+  // Fallback method: Try CasaOS API
+  let casaOSWorked = false;
+  try {
+    console.log(`🔄 Trying CasaOS API as fallback for ${appName}...`);
+    
     const command = `
       docker exec casaos sh -c "
         curl -s -X POST 'http://localhost:8080/v2/app_management/compose/${appName}/${action}' \\
-          -H 'Accept: application/json'
+          -H 'Accept: application/json' \\
+          -H 'Content-Type: application/json'
       " 2>&1
     `;
     
     const { stdout } = await execAsync(command);
+    console.log(`📡 CasaOS ${action} response for ${appName}:`, stdout);
     
     if (stdout.includes('Connection refused') || stdout.includes('404')) {
-      return {
-        success: false,
-        message: `Failed to connect to CasaOS API for ${action}`
-      };
-    }
-    
-    try {
-      const response = JSON.parse(stdout);
-      if (response.success !== false && !stdout.includes('error')) {
-        return {
-          success: true,
-          message: `App ${appName} ${action} initiated`
-        };
-      } else {
-        return {
-          success: false,
-          message: response.message || `Failed to ${action} ${appName}`
-        };
+      console.log(`❌ Failed to connect to CasaOS API`);
+    } else {
+      // Parse the response - be more strict about what constitutes success
+      try {
+        const response = JSON.parse(stdout);
+        console.log(`📊 Parsed CasaOS response:`, response);
+        
+        // Check for common failure indicators
+        if (response.message && (
+            response.message.includes('no matching operation') ||
+            response.message.includes('not found') ||
+            response.message.includes('error') ||
+            response.message.includes('failed')
+          )) {
+          console.log(`⚠️ CasaOS API returned failure:`, response);
+        } else if (response.success !== false && !stdout.includes('error')) {
+          casaOSWorked = true;
+          return {
+            success: true,
+            message: `App ${appName} ${action} initiated`
+          };
+        } else {
+          console.log(`⚠️ CasaOS API returned error:`, response);
+        }
+      } catch (parseError) {
+        console.log(`⚠️ Could not parse response as JSON:`, stdout);
+        
+        // If it's not JSON, check for common success/error indicators
+        const lowerOutput = stdout.toLowerCase();
+        
+        // Common success indicators
+        if (lowerOutput.includes('ok') || 
+            lowerOutput.includes('success') ||
+            (!lowerOutput.includes('error') && 
+             !lowerOutput.includes('failed') && 
+             !lowerOutput.includes('not found') &&
+             !lowerOutput.includes('404'))) {
+          casaOSWorked = true;
+          return {
+            success: true,
+            message: `App ${appName} ${action} initiated (non-JSON response)`
+          };
+        } else {
+          console.log(`⚠️ Non-JSON response indicates failure`);
+        }
       }
-    } catch (parseError) {
-      // If it's not JSON, assume success if no error indicators
-      if (!stdout.includes('error') && !stdout.includes('failed')) {
-        return {
-          success: true,
-          message: `App ${appName} ${action} initiated`
-        };
-      } else {
-        return {
-          success: false,
-          message: `${action} response unclear: ${stdout}`
-        };
-      }
     }
-    
   } catch (error) {
-    console.error(`❌ Error ${start ? 'starting' : 'stopping'} ${appName}:`, error);
-    return {
-      success: false,
-      message: `Error ${start ? 'starting' : 'stopping'} app: ${error}`
-    };
+    console.error(`❌ Error with CasaOS API:`, error);
   }
+
+  // If CasaOS API didn't work, try direct Docker methods
+  if (!casaOSWorked) {
+    console.log(`🔄 CasaOS API failed, trying direct Docker methods...`);
+    
+    // Strategy 1: Find and control the actual container
+    try {
+      const dockerAction = start ? 'start' : 'stop';
+      
+      // First, find all containers that might be related to this app
+      const listCommand = `docker ps -a --format "{{.Names}}\t{{.Status}}" | grep -i "${appName}"`;
+      const { stdout: containerList } = await execAsync(listCommand);
+      console.log(`🔍 Found containers for ${appName}:`, containerList);
+      
+      if (containerList.trim()) {
+        const lines = containerList.trim().split('\n');
+        for (const line of lines) {
+          const containerName = line.split('\t')[0].trim();
+          if (containerName) {
+            console.log(`🎯 Attempting ${dockerAction} on container: ${containerName}`);
+            
+            try {
+              const dockerCommand = `docker ${dockerAction} "${containerName}" 2>&1`;
+              const { stdout: dockerOutput } = await execAsync(dockerCommand);
+              
+              console.log(`🐳 Direct Docker ${dockerAction} result for ${containerName}:`, dockerOutput);
+              
+              if (!dockerOutput.includes('Error') && !dockerOutput.includes('No such container')) {
+                return {
+                  success: true,
+                  message: `Container ${containerName} ${dockerAction} successfully`
+                };
+              }
+            } catch (containerError) {
+              console.log(`❌ Failed to ${dockerAction} container ${containerName}:`, containerError);
+            }
+          }
+        }
+      } else {
+        console.log(`❌ No containers found matching ${appName}`);
+      }
+    } catch (listError) {
+      console.log(`❌ Failed to list containers:`, listError);
+    }
+  }
+  
+  // If all methods failed, return error
+  return {
+    success: false,
+    message: `All methods failed to ${start ? 'start' : 'stop'} app ${appName}`
+  };
 }
 
 export async function verifyDockerImageExists(imageName: string): Promise<boolean> {
