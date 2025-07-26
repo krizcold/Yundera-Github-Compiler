@@ -4,12 +4,31 @@ class RepoManager {
         this.repos = [];
         this.currentEditingRepo = null;
         this.pendingRepoUrl = ''; // Store URL for empty repositories before import
+        this.authHash = this.getAuthHashFromUrl(); // Extract auth hash from URL
         this.globalSettings = {
             globalApiUpdatesEnabled: true,
             defaultAutoUpdateInterval: 60,
             maxConcurrentBuilds: 2
         };
         this.init();
+    }
+
+    // Extract authentication hash from URL parameters
+    getAuthHashFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const hash = urlParams.get('hash');
+        if (!hash) {
+            console.warn('⚠️ No authentication hash found in URL parameters');
+        }
+        return hash;
+    }
+
+    // Add authentication hash to request data
+    addAuthToRequest(data = {}) {
+        if (this.authHash) {
+            data.hash = this.authHash;
+        }
+        return data;
     }
 
     init() {
@@ -74,7 +93,8 @@ class RepoManager {
 
     async loadRepos() {
         try {
-            const response = await axios.get('/api/repos');
+            const url = this.authHash ? `/api/repos?hash=${this.authHash}` : '/api/repos';
+            const response = await axios.get(url);
             this.repos = response.data.repos || [];
             
             // Show one empty repository by default if no repositories exist
@@ -148,7 +168,8 @@ class RepoManager {
 
     async loadGlobalSettings() {
         try {
-            const response = await axios.get('/api/settings');
+            const url = this.authHash ? `/api/settings?hash=${this.authHash}` : '/api/settings';
+            const response = await axios.get(url);
             this.globalSettings = {
                 globalApiUpdatesEnabled: response.data.globalApiUpdatesEnabled !== false,
                 defaultAutoUpdateInterval: response.data.defaultAutoUpdateInterval || 60,
@@ -544,14 +565,14 @@ class RepoManager {
         const repoName = this.extractRepoName(url);
         
         try {
-            const response = await axios.post('/api/repos', {
+            const response = await axios.post('/api/repos', this.addAuthToRequest({
                 name: repoName,
                 url: url,
                 autoUpdate: false,
                 autoUpdateInterval: this.globalSettings.defaultAutoUpdateInterval,
                 apiUpdatesEnabled: true,
                 status: 'empty' // Set initial status to empty (ready for import)
-            });
+            }));
             
             if (response.data.success) {
                 console.log(`✅ Repository "${repoName}" created successfully`);
@@ -601,7 +622,7 @@ class RepoManager {
 
     async updateRepoUrl(repoId, url) {
         try {
-            const response = await axios.put(`/api/repos/${repoId}`, { url });
+            const response = await axios.put(`/api/repos/${repoId}`, this.addAuthToRequest({ url }));
             
             if (response.data.success) {
                 await this.loadRepos(); // Reload to get updated data
@@ -658,7 +679,7 @@ class RepoManager {
             this.showNotification(`Importing ${repo.name}...`, 'info');
 
             // Call the real import API
-            const response = await axios.post(`/api/repos/${repo.id}/import`);
+            const response = await axios.post(`/api/repos/${repo.id}/import`, this.addAuthToRequest({}));
             
             if (response.data.success) {
                 const message = response.data.icon ? 
@@ -692,7 +713,7 @@ class RepoManager {
             this.updateRepoStatus(repoId, 'building');
             this.showNotification(`Building ${repo.name}...`, 'info');
 
-            const response = await axios.post(`/api/repos/${repoId}/compile`);
+            const response = await axios.post(`/api/repos/${repoId}/compile`, this.addAuthToRequest({}));
             
             if (response.data.success) {
                 this.showNotification(`${repo.name} built successfully! Confirming installation...`, 'success');
@@ -725,7 +746,7 @@ class RepoManager {
             this.updateRepoStatus(repoId, 'building');
             this.showNotification(`Updating ${repo.name}...`, 'info');
 
-            const response = await axios.post(`/api/repos/${repoId}/compile`);
+            const response = await axios.post(`/api/repos/${repoId}/compile`, this.addAuthToRequest({}));
             
             if (response.data.success) {
                 this.showNotification(`${repo.name} updated successfully!`, 'success');
@@ -746,7 +767,8 @@ class RepoManager {
 
     async viewCompose(repoId) {
         try {
-            const response = await axios.get(`/api/repos/${repoId}/compose`);
+            const url = this.authHash ? `/api/repos/${repoId}/compose?hash=${this.authHash}` : `/api/repos/${repoId}/compose`;
+            const response = await axios.get(url);
             
             this.currentEditingRepo = repoId;
             document.getElementById('yaml-textarea').value = response.data.yaml || '';
@@ -791,9 +813,9 @@ class RepoManager {
                 toggle.style.pointerEvents = 'none';
             }
 
-            const response = await axios.post(`/api/repos/${repoId}/toggle`, {
+            const response = await axios.post(`/api/repos/${repoId}/toggle`, this.addAuthToRequest({
                 start: !isCurrentlyRunning
-            });
+            }));
             
             if (response.data.success) {
                 this.showNotification(`Application ${action}ed successfully`, 'success');
@@ -824,7 +846,8 @@ class RepoManager {
     async removeRepo(repoId) {
         if (confirm('Are you sure you want to remove this repository?')) {
             try {
-                await axios.delete(`/api/repos/${repoId}`);
+                const url = this.authHash ? `/api/repos/${repoId}?hash=${this.authHash}` : `/api/repos/${repoId}`;
+                await axios.delete(url);
                 this.repos = this.repos.filter(r => r.id !== repoId);
                 this.renderRepos();
                 this.showNotification('Repository removed successfully', 'success');
@@ -841,7 +864,7 @@ class RepoManager {
             if (!repo) return;
 
             const newAutoUpdate = !repo.autoUpdate;
-            const response = await axios.put(`/api/repos/${repoId}`, { autoUpdate: newAutoUpdate });
+            const response = await axios.put(`/api/repos/${repoId}`, this.addAuthToRequest({ autoUpdate: newAutoUpdate }));
             
             if (response.data.success) {
                 await this.loadRepos(); // Reload to get updated data
@@ -863,7 +886,7 @@ class RepoManager {
                 return;
             }
             
-            const response = await axios.put(`/api/repos/${repoId}`, { autoUpdateInterval: intervalNum });
+            const response = await axios.put(`/api/repos/${repoId}`, this.addAuthToRequest({ autoUpdateInterval: intervalNum }));
             
             if (response.data.success) {
                 await this.loadRepos();
@@ -883,7 +906,7 @@ class RepoManager {
             if (!repo) return;
 
             const newApiUpdatesEnabled = !repo.apiUpdatesEnabled;
-            const response = await axios.put(`/api/repos/${repoId}`, { apiUpdatesEnabled: newApiUpdatesEnabled });
+            const response = await axios.put(`/api/repos/${repoId}`, this.addAuthToRequest({ apiUpdatesEnabled: newApiUpdatesEnabled }));
             
             if (response.data.success) {
                 await this.loadRepos();
@@ -914,7 +937,7 @@ class RepoManager {
                 maxConcurrentBuilds: parseInt(document.getElementById('max-builds').value)
             };
             
-            const response = await axios.put('/api/settings', newSettings);
+            const response = await axios.put('/api/settings', this.addAuthToRequest(newSettings));
             
             if (response.data.success) {
                 this.globalSettings = newSettings;
@@ -942,7 +965,7 @@ class RepoManager {
     async checkAllUpdates() {
         try {
             this.showNotification('Checking for updates...', 'info');
-            const response = await axios.post('/api/repos/check-updates');
+            const response = await axios.post('/api/repos/check-updates', this.addAuthToRequest({}));
             
             if (response.data.success) {
                 this.loadRepos(); // Reload to get updated version info
@@ -1100,7 +1123,7 @@ class RepoManager {
             const yamlContent = document.getElementById('yaml-textarea').value;
             
             if (this.currentEditingRepo) {
-                await axios.put(`/api/repos/${this.currentEditingRepo}/compose`, { yaml: yamlContent });
+                await axios.put(`/api/repos/${this.currentEditingRepo}/compose`, this.addAuthToRequest({ yaml: yamlContent }));
                 this.showNotification('Docker Compose file saved successfully', 'success');
             }
         } catch (error) {

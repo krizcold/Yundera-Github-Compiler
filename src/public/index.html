@@ -251,8 +251,10 @@
         function checkSystemReady() {
             checkCount++;
 
-            // Check if system is ready
-            fetch('/api/system/ready')
+            // Check if system is ready (no hash needed - using session cookies)
+            fetch('/api/system/ready', {
+                credentials: 'include' // Include cookies in request
+            })
                 .then(response => response.json())
                 .then(data => {
                     // Update status with server message
@@ -270,6 +272,7 @@
                         
                         // Wait a moment before redirecting
                         setTimeout(() => {
+                            // Clean redirect - no hash needed (using session cookies)
                             window.location.href = '/main';
                         }, 1000);
                     } else {

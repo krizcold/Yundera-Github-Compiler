@@ -2,6 +2,7 @@ import { execSync } from "child_process";
 import express from "express";
 import path from "path";
 import * as fs from "fs";
+import * as crypto from "crypto";
 import axios from "axios"; // Import axios for the backend
 import { loadConfig } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
@@ -9,6 +10,7 @@ import { buildAndDeployRepo } from "./DockerHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
+import { validateAuthHash, protectWebUI } from "./auth-middleware";
 
 const config = loadConfig();
 const baseDir = "/app/repos";
@@ -358,6 +360,43 @@ async function syncWithCasaOS() {
 // --- API and UI Server ---
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded query parameters
+
+// Session storage (in production, use Redis or database)
+const activeSessions = new Map<string, { timestamp: number; authenticated: boolean }>();
+const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+
+// Make session storage globally accessible for auth middleware
+(global as any).activeSessions = activeSessions;
+(global as any).SESSION_DURATION = SESSION_DURATION;
+
+// Cookie parser middleware
+app.use((req, res, next) => {
+  // Parse cookies manually (simple implementation)
+  const cookies: Record<string, string> = {};
+  const cookieHeader = req.headers.cookie;
+  
+  if (cookieHeader) {
+    cookieHeader.split(';').forEach(cookie => {
+      const [name, value] = cookie.trim().split('=');
+      if (name && value) {
+        cookies[name] = decodeURIComponent(value);
+      }
+    });
+  }
+  
+  (req as any).cookies = cookies;
+  next();
+});
+
+// Basic request logging (reduced verbosity)
+app.use((req, res, next) => {
+  // Only log non-static requests to reduce noise
+  if (!req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+    console.log(`📡 ${req.method} ${req.originalUrl}`);
+  }
+  next();
+});
 
 // Reload managed repos from storage periodically to keep in sync
 setInterval(() => {
@@ -369,22 +408,42 @@ setInterval(async () => {
   await syncWithCasaOS();
 }, 15000); // Every 15 seconds
 
-// Serve static files from the 'public' directory
-app.use(express.static(path.join(__dirname, "public")));
-app.use("/main.js", express.static(path.join(__dirname, "public", "main.js")));
-
-// Root serves the loading page (now index.html)
-app.get("/", (req, res) => {
+// Protected routes MUST come before static middleware
+// Root serves the loading page (now index.html) - protected with auth
+app.get("/", protectWebUI, (req, res) => {
+  console.log(`✅ Serving index.html after authentication`);
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Main app interface (redirected from loading page when ready)
-app.get("/main", (req, res) => {
+// Main app interface (redirected from loading page when ready) - protected with auth
+app.get("/main", protectWebUI, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "main.html"));
 });
 
+// Serve static files from the 'public' directory (after protected routes)
+// Only serve non-HTML static files to avoid conflicts with protected routes
+app.use("/public", express.static(path.join(__dirname, "public"), {
+  index: false, // Don't serve index.html automatically
+  setHeaders: (res, filePath) => {
+    // Block direct access to protected HTML files
+    if (filePath.endsWith('index.html') || filePath.endsWith('main.html')) {
+      res.status(403).send('Access denied');
+      return;
+    }
+  }
+}));
+
+// Explicitly serve specific static assets that are safe
+app.get("/main.js", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "main.js"));
+});
+
+app.get("/style.css", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "style.css"));
+});
+
 // --- NEW PROXY ENDPOINT ---
-app.post("/install-via-proxy", async (req, res) => {
+app.post("/install-via-proxy", validateAuthHash, async (req, res) => {
   const yamlContent = req.body.yaml;
   if (!yamlContent) {
     return res
@@ -425,7 +484,7 @@ app.post("/install-via-proxy", async (req, res) => {
 // Repository Management API endpoints
 
 // GET /api/repos - List all managed repositories
-app.get("/api/repos", async (req, res) => {
+app.get("/api/repos", validateAuthHash, async (req, res) => {
   // Sync with CasaOS before returning
   await syncWithCasaOS();
   const repositories = loadRepositories();
@@ -433,13 +492,13 @@ app.get("/api/repos", async (req, res) => {
 });
 
 // GET /api/settings - Get global settings
-app.get("/api/settings", (req, res) => {
+app.get("/api/settings", validateAuthHash, (req, res) => {
   const settings = loadSettings();
   res.json(settings);
 });
 
 // PUT /api/settings - Update global settings
-app.put("/api/settings", (req, res) => {
+app.put("/api/settings", validateAuthHash, (req, res) => {
   const settings = loadSettings();
   const updates = req.body;
   
@@ -451,7 +510,7 @@ app.put("/api/settings", (req, res) => {
 });
 
 // POST /api/repos - Add a new repository
-app.post("/api/repos", (req, res) => {
+app.post("/api/repos", validateAuthHash, (req, res) => {
   const { name, url, autoUpdate = false, autoUpdateInterval = 60, apiUpdatesEnabled = true, status = 'empty' } = req.body;
   
   if (!name || !url) {
@@ -480,7 +539,7 @@ app.post("/api/repos", (req, res) => {
 });
 
 // PUT /api/repos/:id - Update a repository
-app.put("/api/repos/:id", (req, res) => {
+app.put("/api/repos/:id", validateAuthHash, (req, res) => {
   const { id } = req.params;
   const updates = req.body;
   
@@ -508,7 +567,7 @@ app.put("/api/repos/:id", (req, res) => {
 });
 
 // POST /api/repos/:id/import - Import repository from GitHub (clone and analyze)
-app.post("/api/repos/:id/import", async (req, res) => {
+app.post("/api/repos/:id/import", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -596,7 +655,7 @@ app.post("/api/repos/:id/import", async (req, res) => {
 });
 
 // POST /api/repos/:id/compile - Compile/build a repository
-app.post("/api/repos/:id/compile", async (req, res) => {
+app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -619,7 +678,7 @@ app.post("/api/repos/:id/compile", async (req, res) => {
 });
 
 // GET /api/repos/:id/compose - Get docker-compose.yml content
-app.get("/api/repos/:id/compose", async (req, res) => {
+app.get("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -657,7 +716,7 @@ app.get("/api/repos/:id/compose", async (req, res) => {
 });
 
 // PUT /api/repos/:id/compose - Update docker-compose.yml content
-app.put("/api/repos/:id/compose", async (req, res) => {
+app.put("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const { yaml } = req.body;
   const repo = getRepository(id);
@@ -703,7 +762,7 @@ app.put("/api/repos/:id/compose", async (req, res) => {
 });
 
 // DELETE /api/repos/:id - Remove a repository (and uninstall app if installed)
-app.delete("/api/repos/:id", async (req, res) => {
+app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   
   // Get repository info before removing it
@@ -820,7 +879,7 @@ app.delete("/api/repos/:id", async (req, res) => {
 });
 
 // GET /api/repos/:id/check-update - Check if a specific repository has updates available
-app.get("/api/repos/:id/check-update", async (req, res) => {
+app.get("/api/repos/:id/check-update", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -864,7 +923,7 @@ app.get("/api/repos/:id/check-update", async (req, res) => {
 });
 
 // POST /api/repos/check-updates - Check for updates on all repositories
-app.post("/api/repos/check-updates", async (req, res) => {
+app.post("/api/repos/check-updates", validateAuthHash, async (req, res) => {
   try {
     console.log("🔍 Checking updates for all managed repositories...");
     
@@ -937,7 +996,7 @@ app.post("/api/repos/check-updates", async (req, res) => {
 });
 
 // GET /api/build-queue/status - Get build queue status
-app.get("/api/build-queue/status", (req, res) => {
+app.get("/api/build-queue/status", validateAuthHash, (req, res) => {
   try {
     const status = buildQueue.getQueueStatus();
     res.json({ success: true, data: status });
@@ -947,7 +1006,7 @@ app.get("/api/build-queue/status", (req, res) => {
 });
 
 // GET /api/build-queue/history - Get recent build history
-app.get("/api/build-queue/history", (req, res) => {
+app.get("/api/build-queue/history", validateAuthHash, (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
     const history = buildQueue.getRecentJobs(limit);
@@ -958,7 +1017,7 @@ app.get("/api/build-queue/history", (req, res) => {
 });
 
 // DELETE /api/build-queue/:repositoryId - Cancel a queued build
-app.delete("/api/build-queue/:repositoryId", (req, res) => {
+app.delete("/api/build-queue/:repositoryId", validateAuthHash, (req, res) => {
   try {
     const { repositoryId } = req.params;
     const cancelled = buildQueue.cancelQueuedJob(repositoryId);
@@ -974,7 +1033,7 @@ app.delete("/api/build-queue/:repositoryId", (req, res) => {
 });
 
 // GET /api/system/ready - Simple readiness check for UI loading (NO docker commands)
-app.get("/api/system/ready", (req, res) => {
+app.get("/api/system/ready", validateAuthHash, (req, res) => {
   const checks = {
     dockerSock: false,
     storageInitialized: false,
@@ -1036,7 +1095,7 @@ app.get("/api/system/ready", (req, res) => {
 });
 
 // GET /api/system/status - Check system status (Docker, CasaOS, etc.)
-app.get("/api/system/status", async (req, res) => {
+app.get("/api/system/status", validateAuthHash, async (req, res) => {
   const status = {
     docker: false,
     casaos: false,
@@ -1081,7 +1140,7 @@ app.get("/api/system/status", async (req, res) => {
 });
 
 // POST /api/repos/:id/uninstall - Uninstall app from CasaOS
-app.post("/api/repos/:id/uninstall", async (req, res) => {
+app.post("/api/repos/:id/uninstall", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -1137,7 +1196,7 @@ app.post("/api/repos/:id/uninstall", async (req, res) => {
 });
 
 // POST /api/repos/:id/toggle - Start/Stop app in CasaOS
-app.post("/api/repos/:id/toggle", async (req, res) => {
+app.post("/api/repos/:id/toggle", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const { start } = req.body; // true to start, false to stop
   const repo = getRepository(id);
@@ -1200,7 +1259,7 @@ app.post("/api/repos/:id/toggle", async (req, res) => {
 });
 
 // DEBUG: Get detailed app status for troubleshooting
-app.get("/api/repos/:id/debug", async (req, res) => {
+app.get("/api/repos/:id/debug", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
