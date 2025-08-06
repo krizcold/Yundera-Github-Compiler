@@ -16,8 +16,6 @@ export interface Repository {
   autoUpdateInterval: number; // minutes
   apiUpdatesEnabled: boolean;
   status: 'idle' | 'empty' | 'importing' | 'imported' | 'building' | 'success' | 'error' | 'uninstalling' | 'starting' | 'stopping' | 'installing';
-  statusMessage?: string; // For real-time progress
-  progress?: number; // For progress bar (0-100)
   lastBuildTime?: string;
   lastUpdateCheck?: string;
   currentVersion?: string;

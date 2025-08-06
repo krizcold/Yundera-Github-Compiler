@@ -11,7 +11,6 @@ import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApp
 import { buildQueue } from "./build-queue";
 import { validateAuthHash, protectWebUI } from "./auth-middleware";
 
-import { installerEmitter } from "./CasaOSInstaller";
 
 const config = loadConfig();
 const baseDir = "/app/repos";
@@ -273,8 +272,7 @@ async function pollToggleStatus(repositoryId: string, appName: string, expectedR
 }
 
 // Sync repository installation status with CasaOS
-async function syncWithCasaOS() {
-  console.log("🔄 Syncing repository status with CasaOS...");
+export async function syncWithCasaOS() {
   
   try {
     const installedApps = await getCasaOSInstalledApps();
@@ -335,16 +333,7 @@ async function syncWithCasaOS() {
         updateRepository(repo.id, updates);
         
         if (repo.isInstalled !== isInstalledInCasaOS) {
-          console.log(`🔄 Updated ${repo.name} installation status: ${isInstalledInCasaOS} (app: ${appNameToCheck})`);
-          
-          // If app was uninstalled from CasaOS dashboard, log it (no additional sync needed)
-          if (!isInstalledInCasaOS && repo.isInstalled) {
-            console.log(`📱 App ${appNameToCheck} was uninstalled from CasaOS dashboard`);
-          }
-        }
-        
-        if (repo.isRunning !== isRunning && isInstalledInCasaOS) {
-          console.log(`🔄 Updated ${repo.name} running status: ${isRunning} (app: ${appNameToCheck})`);
+          console.log(`🔄 Updated ${repo.name} installation status: ${isInstalledInCasaOS}`);
         }
       }
     }
@@ -359,31 +348,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded query parameters
 
-// --- Server-Sent Events (SSE) endpoint for real-time progress ---
-app.get('/api/install-progress', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders(); // Flush the headers to establish the connection
 
-  const progressListener = (data: { repositoryId: string, message: string }) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  const finishedListener = (data: { repositoryId: string, success: boolean, message?: string }) => {
-    res.write(`data: ${JSON.stringify({ ...data, finished: true })}\n\n`);
-  };
-
-  installerEmitter.on('progress', progressListener);
-  installerEmitter.on('finished', finishedListener);
-
-  // Clean up when the client closes the connection
-  req.on('close', () => {
-    installerEmitter.removeListener('progress', progressListener);
-    installerEmitter.removeListener('finished', finishedListener);
-    res.end();
-  });
-});
 
 // Session storage (in production, use Redis or database)
 const activeSessions = new Map<string, { timestamp: number; authenticated: boolean }>();
@@ -694,6 +659,10 @@ app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
     
     if (result.success) {
       res.json({ success: true, message: result.message });
+      // Trigger immediate sync after successful build
+      setTimeout(async () => {
+        await syncWithCasaOS();
+      }, 2000);
     } else {
       res.status(500).json({ success: false, message: result.message });
     }

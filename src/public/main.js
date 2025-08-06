@@ -112,21 +112,6 @@ class RepoManager {
         }
     }
 
-    async waitForInstallationConfirmation(repoId, maxAttempts = 15) {
-        let attempts = 0;
-        while (attempts < maxAttempts) {
-            attempts++;
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await this.loadRepos();
-            const updatedRepo = this.repos.find(r => r.id === repoId);
-            if (updatedRepo && updatedRepo.isInstalled) {
-                this.showNotification(`${updatedRepo.name} installed successfully!`, 'success');
-                return;
-            }
-            console.log(`Waiting for installation confirmation... (${attempts}/${maxAttempts})`);
-        }
-        this.showNotification('Installation completed but confirmation timed out. Check CasaOS dashboard.', 'warning');
-    }
 
     async loadGlobalSettings() {
         try {
@@ -200,11 +185,7 @@ class RepoManager {
                     </span>
                     ${repo.installMismatch ? '<span class="warning-triangle" title="App is listed as installed but not found in CasaOS. It may have been removed manually."><i class="fas fa-exclamation-triangle"></i></span>' : ''}
                 </div>
-                ${status === 'installing' || status === 'building' ? `
-                    <div class="progress-bar-container" title="${repo.progress || 0}%">
-                        <div class="progress-bar-fill" style="width: ${repo.progress || 0}%;"></div>
-                    </div>
-                ` : `<div>Last Action: ${lastBuildTime}</div>`}
+                <div>Last Action: ${lastBuildTime}</div>
             </div>
         `;
 
@@ -296,18 +277,21 @@ class RepoManager {
 
     getInstallationStatus(repo) {
         if (!repo || repo.id === 'empty') return { status: 'uninstalled', label: 'Not Created' };
+        
         const { status, isInstalled, statusMessage } = repo;
 
-        if (status === 'installing') {
-            return { status: 'installing', label: statusMessage || 'Installing...' };
+        if (status === 'installing' || status === 'building') {
+            return { status: 'installing', label: statusMessage || `${this.capitalizeFirst(status)}...` };
         }
-        if (status === 'uninstalling') return { status: 'imported', label: 'Uninstalling...' };
-        if (status === 'starting') return { status: 'installed', label: 'Starting...' };
-        if (status === 'stopping') return { status: 'installed', label: 'Stopping...' };
+        if (status === 'uninstalling') return { status: 'uninstalling', label: 'Uninstalling...' };
+        if (status === 'starting') return { status: 'starting', label: 'Starting...' };
+        if (status === 'stopping') return { status: 'stopping', label: 'Stopping...' };
+        
         if (isInstalled) return { status: 'installed', label: 'Installed' };
-        if (status === 'importing' || status === 'imported') return { status: 'imported', label: 'Ready to Install' };
-        if (status === 'building') return { status: 'imported', label: statusMessage || 'Building...' };
-        if (status === 'error') return { status: 'imported', label: statusMessage || 'Action Failed' };
+        
+        if (status === 'imported') return { status: 'imported', label: 'Ready to Install' };
+        if (status === 'error') return { status: 'error', label: statusMessage || 'Action Failed' };
+        
         return { status: 'uninstalled', label: 'Not Installed' };
     }
 
@@ -460,25 +444,32 @@ class RepoManager {
     }
 
     async buildRepo(repoId) {
-        this.disableActionButton(repoId);
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
-        const action = repo.type === 'github' ? 'Building' : 'Installing';
-        this.updateRepoStatus(repoId, action.toLowerCase());
-        this.showNotification(`${action} ${repo.name}...`, 'info');
+        const action = repo.type === 'github' ? 'building' : 'installing';
+        this.updateRepoStatus(repoId, action); // This will re-render and disable the button
+        
 
         try {
-            const response = await axios.post(`/api/repos/${repoId}/compile`, this.addAuthToRequest({}));
-            if (response.data.success) {
-                this.showNotification(`${repo.name} ${action.toLowerCase()} process started! Confirming...`, 'success');
-                await this.waitForInstallationConfirmation(repoId);
-            } else {
-                throw new Error(response.data.message);
-            }
+            await axios.post(`/api/repos/${repoId}/compile`, this.addAuthToRequest({}));
+            console.log(`[${repo.name}] ${action} process initiated via API.`);
+            
+            // Refresh the UI immediately after successful initiation, then again after a delay
+            setTimeout(() => this.loadRepos(), 1000);
+            setTimeout(() => this.loadRepos(), 3000);
+            setTimeout(() => this.loadRepos(), 6000);
         } catch (error) {
-            this.updateRepoStatus(repoId, 'error');
-            this.showNotification(`${action} failed: ${error.response?.data?.message || error.message}`, 'error');
+            const errorMessage = error.response?.data?.message || error.message;
+            this.showNotification(`${this.capitalizeFirst(action)} failed to start: ${errorMessage}`, 'error');
+            
+            // Revert status on immediate failure
+            const repoToUpdate = this.repos.find(r => r.id === repoId);
+            if (repoToUpdate) {
+                repoToUpdate.status = 'error';
+                repoToUpdate.statusMessage = 'Failed to start';
+            }
+            this.renderRepos();
         }
     }
 

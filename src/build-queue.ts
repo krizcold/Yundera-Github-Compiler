@@ -17,6 +17,7 @@ export class BuildQueue {
   private queue: BuildJob[] = [];
   private running: Map<string, BuildJob> = new Map();
   private completed: BuildJob[] = [];
+  private pendingRepositoryIds: Set<string> = new Set();
   private maxConcurrent: number;
 
   constructor() {
@@ -32,19 +33,12 @@ export class BuildQueue {
 
   async addJob(repository: Repository, force: boolean = false): Promise<{ success: boolean; message: string }> {
     return new Promise((resolve, reject) => {
-      // Check if repository is already queued or building
-      const existingQueued = this.queue.find(job => job.repository.id === repository.id);
-      const existingRunning = this.running.get(repository.id);
-
-      if (existingQueued) {
-        resolve({ success: false, message: `Repository ${repository.name} is already queued for build` });
+      if (this.pendingRepositoryIds.has(repository.id)) {
+        resolve({ success: false, message: `Repository ${repository.name} is already queued or building` });
         return;
       }
 
-      if (existingRunning) {
-        resolve({ success: false, message: `Repository ${repository.name} is currently building` });
-        return;
-      }
+      this.pendingRepositoryIds.add(repository.id);
 
       const job: BuildJob = {
         id: `${repository.id}-${Date.now()}`,
@@ -110,6 +104,8 @@ export class BuildQueue {
       // Move job from running to completed
       this.running.delete(job.repository.id);
       this.completed.push(job);
+      this.pendingRepositoryIds.delete(job.repository.id);
+
 
       // Keep only last 50 completed jobs to prevent memory leak
       if (this.completed.length > 50) {
@@ -200,6 +196,7 @@ export class BuildQueue {
     const index = this.queue.findIndex(job => job.repository.id === repositoryId);
     if (index !== -1) {
       const job = this.queue.splice(index, 1)[0];
+      this.pendingRepositoryIds.delete(job.repository.id);
       if (job.resolve) {
         job.resolve({ success: false, message: 'Build cancelled by user' });
       }
