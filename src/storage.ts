@@ -10,11 +10,14 @@ const SETTINGS_FILE = path.join(UI_DATA_DIR, 'settings.json');
 export interface Repository {
   id: string;
   name: string;
-  url: string;
+  type: 'github' | 'compose';
+  url?: string;
   autoUpdate: boolean;
   autoUpdateInterval: number; // minutes
   apiUpdatesEnabled: boolean;
-  status: 'idle' | 'empty' | 'importing' | 'imported' | 'building' | 'success' | 'error' | 'uninstalling' | 'starting' | 'stopping';
+  status: 'idle' | 'empty' | 'importing' | 'imported' | 'building' | 'success' | 'error' | 'uninstalling' | 'starting' | 'stopping' | 'installing';
+  statusMessage?: string; // For real-time progress
+  progress?: number; // For progress bar (0-100)
   lastBuildTime?: string;
   lastUpdateCheck?: string;
   currentVersion?: string;
@@ -31,13 +34,26 @@ export interface GlobalSettings {
   globalApiUpdatesEnabled: boolean;
   defaultAutoUpdateInterval: number;
   maxConcurrentBuilds: number;
+  // New settings for App Store processing
+  puid: string;
+  pgid: string;
+  refDomain: string;
+  refScheme: string;
+  refPort: string;
+  refSeparator: string;
 }
 
 // Default settings
 const DEFAULT_SETTINGS: GlobalSettings = {
   globalApiUpdatesEnabled: true,
   defaultAutoUpdateInterval: 60, // 1 hour
-  maxConcurrentBuilds: 2
+  maxConcurrentBuilds: 2,
+  puid: "1000",
+  pgid: "1000",
+  refDomain: "local.casaos.io",
+  refScheme: "http",
+  refPort: "80",
+  refSeparator: "-",
 };
 
 // Ensure UI data directory exists
@@ -83,20 +99,43 @@ export function saveRepositories(repositories: Repository[]): void {
 export function loadSettings(): GlobalSettings {
   ensureUIDataDir();
   
+  let settingsFromFile: Partial<GlobalSettings> = {};
+  if (fs.existsSync(SETTINGS_FILE)) {
+    try {
+      const data = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+      settingsFromFile = JSON.parse(data);
+    } catch (error) {
+      console.error('❌ Error loading settings.json:', error);
+    }
+  }
+
+  // Dynamically load settings from environment variables, falling back to the file, then to defaults.
+  // This makes the compiler automatically adapt to the host CasaOS environment.
+  const finalSettings: GlobalSettings = {
+    ...DEFAULT_SETTINGS,
+    ...settingsFromFile,
+    puid: process.env.PUID || settingsFromFile.puid || DEFAULT_SETTINGS.puid,
+    pgid: process.env.PGID || settingsFromFile.pgid || DEFAULT_SETTINGS.pgid,
+    refDomain: process.env.REF_DOMAIN || settingsFromFile.refDomain || DEFAULT_SETTINGS.refDomain,
+    refScheme: process.env.REF_SCHEME || settingsFromFile.refScheme || DEFAULT_SETTINGS.refScheme,
+    refPort: process.env.REF_PORT || settingsFromFile.refPort || DEFAULT_SETTINGS.refPort,
+    refSeparator: process.env.REF_SEPARATOR || settingsFromFile.refSeparator || DEFAULT_SETTINGS.refSeparator,
+  };
+
+  console.log('⚙️ Loaded dynamic settings. Final values:', {
+    puid: finalSettings.puid,
+    pgid: finalSettings.pgid,
+    refDomain: finalSettings.refDomain,
+    refScheme: finalSettings.refScheme,
+    refPort: finalSettings.refPort,
+  });
+
+  // Save the combined settings back to the file to ensure it's created on first run.
   if (!fs.existsSync(SETTINGS_FILE)) {
-    saveSettings(DEFAULT_SETTINGS);
-    return DEFAULT_SETTINGS;
+    saveSettings(finalSettings);
   }
-  
-  try {
-    const data = fs.readFileSync(SETTINGS_FILE, 'utf-8');
-    const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
-    console.log('⚙️ Loaded global settings from storage');
-    return settings;
-  } catch (error) {
-    console.error('❌ Error loading settings:', error);
-    return DEFAULT_SETTINGS;
-  }
+
+  return finalSettings;
 }
 
 export function saveSettings(settings: GlobalSettings): void {
@@ -116,7 +155,7 @@ export function addRepository(repo: Omit<Repository, 'id'>): Repository {
   const repositories = loadRepositories();
   const newRepo: Repository = {
     ...repo,
-    id: generateRepositoryId(repo.url)
+    id: generateRepositoryId(repo.url || repo.name)
   };
   
   repositories.push(newRepo);
@@ -164,10 +203,9 @@ export function getRepository(id: string): Repository | null {
 }
 
 // Utility functions
-function generateRepositoryId(url: string): string {
-  // Extract repo name from URL and create a simple ID
-  const urlParts = url.replace(/\.git$/, '').split('/');
-  const repoName = urlParts[urlParts.length - 1];
+function generateRepositoryId(identifier: string): string {
+  // Extract repo name from URL or use identifier and create a simple ID
+  const namePart = identifier.replace(/\.git$/, '').split('/').pop()?.replace(/[^a-zA-Z0-9]/g, '') || 'repo';
   const timestamp = Date.now().toString(36);
-  return `${repoName}-${timestamp}`;
+  return `${namePart}-${timestamp}`;
 }

@@ -22,6 +22,19 @@ services:
       CASAOS_API_HOST: "localhost"
       CASAOS_API_PORT: "8080"
       DATA_ROOT: $DATA_ROOT
+      
+      # Pass through the host's CasaOS environment variables.
+      # These will be populated by the AppStore during installation.
+      PUID: $PUID
+      PGID: $PGID
+      REF_DOMAIN: $REF_DOMAIN
+      REF_NET: $REF_NET
+      REF_PORT: $REF_PORT
+      REF_SCHEME: $REF_SCHEME
+      REF_SEPARATOR: $REF_SEPARATOR
+      user: $user
+      default_pwd: $default_pwd
+      public_ip: $public_ip
 
     volumes:        
       # cloned repos
@@ -34,10 +47,15 @@ services:
         source: /DATA/AppData/yunderagithubcompiler/uidata
         target: /app/uidata
 
-      # Mount DATA directory as read-only
+      # Writable mount for app metadata
       - type: bind
-        source: /DATA
-        target: /DATA
+        source: /DATA/AppData
+        target: /DATA/AppData
+
+      # Bind mount for the main app directory
+      - type: bind
+        source: /DATA/AppData/casaos/apps/yunderagithubcompiler
+        target: /DATA/AppData/casaos/apps/yunderagithubcompiler
         read_only: true
 
       - type: bind

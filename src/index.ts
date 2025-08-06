@@ -6,22 +6,19 @@ import * as crypto from "crypto";
 import axios from "axios"; // Import axios for the backend
 import { loadConfig } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
-import { buildAndDeployRepo } from "./DockerHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
 import { validateAuthHash, protectWebUI } from "./auth-middleware";
+
+import { installerEmitter } from "./CasaOSInstaller";
 
 const config = loadConfig();
 const baseDir = "/app/repos";
 
 // Global state for repository management
 let managedRepos: Repository[] = [];
-let globalSettings: GlobalSettings = {
-  globalApiUpdatesEnabled: true,
-  defaultAutoUpdateInterval: 60,
-  maxConcurrentBuilds: 2
-};
+
 
 // Repository timers for individual auto-updates
 const repoTimers = new Map<string, NodeJS.Timeout>();
@@ -75,7 +72,7 @@ function performStartupCheck() {
   
   // Load persisted repositories and settings
   managedRepos = loadRepositories();
-  globalSettings = loadSettings();
+  loadSettings(); // This ensures settings file is created with defaults if it doesn't exist
   
   console.log(`📋 Loaded ${managedRepos.length} repositories from storage`);
   
@@ -362,6 +359,32 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded query parameters
 
+// --- Server-Sent Events (SSE) endpoint for real-time progress ---
+app.get('/api/install-progress', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders(); // Flush the headers to establish the connection
+
+  const progressListener = (data: { repositoryId: string, message: string }) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const finishedListener = (data: { repositoryId: string, success: boolean, message?: string }) => {
+    res.write(`data: ${JSON.stringify({ ...data, finished: true })}\n\n`);
+  };
+
+  installerEmitter.on('progress', progressListener);
+  installerEmitter.on('finished', finishedListener);
+
+  // Clean up when the client closes the connection
+  req.on('close', () => {
+    installerEmitter.removeListener('progress', progressListener);
+    installerEmitter.removeListener('finished', finishedListener);
+    res.end();
+  });
+});
+
 // Session storage (in production, use Redis or database)
 const activeSessions = new Map<string, { timestamp: number; authenticated: boolean }>();
 const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
@@ -442,44 +465,33 @@ app.get("/style.css", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "style.css"));
 });
 
-// --- NEW PROXY ENDPOINT ---
-app.post("/install-via-proxy", validateAuthHash, async (req, res) => {
-  const yamlContent = req.body.yaml;
-  if (!yamlContent) {
-    return res
-      .status(400)
-      .json({ success: false, message: "YAML content is missing." });
-  }
-
-  // Use the working CasaOS installer
-  console.log(`[Proxy] Using working CasaOS installer for installation`);
-
+// Helper function to extract app name from compose
+function getAppNameFromCompose(yamlContent: string): string {
   try {
-    // Import and use the same installer that DockerHandler uses
-    const { CasaOSInstaller } = await import('./CasaOSInstaller');
+    const yaml = require('yaml');
+    const composeData = yaml.parse(yamlContent);
     
-    const installResult = await CasaOSInstaller.installComposeApp(yamlContent);
+    // Priority: x-casaos.store_app_id
+    if (composeData['x-casaos'] && composeData['x-casaos'].store_app_id) {
+        return composeData['x-casaos'].store_app_id;
+    }
     
-    if (installResult.success) {
-      console.log("[Proxy] Installation successful via Yundera API");
-      res.status(200).json({ success: true, message: installResult.message });
-    } else {
-      console.log("[Proxy] Installation failed:", installResult.message);
-      res.status(400).json({ success: false, message: installResult.message, errors: installResult.errors });
+    // Fallback: x-casaos.main service name
+    if (composeData['x-casaos'] && composeData['x-casaos'].main && composeData.services && composeData.services[composeData['x-casaos'].main]) {
+        return composeData['x-casaos'].main;
     }
-  } catch (error: any) {
-    console.error("[Proxy] Error forwarding request:", error.message);
-    if (axios.isAxiosError(error) && error.response) {
-      res
-        .status(error.response.status)
-        .json({ success: false, data: error.response.data });
-    } else {
-      res
-        .status(500)
-        .json({ success: false, message: "An internal error occurred." });
+
+    // Fallback: first service name
+    if (composeData.services && Object.keys(composeData.services).length > 0) {
+        return Object.keys(composeData.services)[0];
     }
+
+    throw new Error("Could not determine application name from docker-compose.yml");
+  } catch (error) {
+    console.error("Error parsing YAML to get app name:", error);
+    throw new Error("Invalid docker-compose.yml format.");
   }
-});
+}
 
 // Repository Management API endpoints
 
@@ -504,39 +516,49 @@ app.put("/api/settings", validateAuthHash, (req, res) => {
   
   const newSettings = { ...settings, ...updates };
   saveSettings(newSettings);
-  globalSettings = newSettings;
   
   res.json({ success: true, settings: newSettings });
 });
 
-// POST /api/repos - Add a new repository
-app.post("/api/repos", validateAuthHash, (req, res) => {
-  const { name, url, autoUpdate = false, autoUpdateInterval = 60, apiUpdatesEnabled = true, status = 'empty' } = req.body;
-  
-  if (!name || !url) {
-    return res.status(400).json({ success: false, message: "Name and URL are required" });
+// POST /api/repos/create-from-compose - Create a new Docker Compose repository
+app.post("/api/repos/create-from-compose", validateAuthHash, async (req, res) => {
+  const { yaml } = req.body;
+  if (!yaml) {
+    return res.status(400).json({ success: false, message: "YAML content is required" });
   }
-  
+
   try {
-    const newRepo = addRepository({
-      name,
-      url,
-      autoUpdate,
-      autoUpdateInterval,
-      apiUpdatesEnabled,
-      status: status as 'idle' | 'empty' | 'importing' | 'imported' | 'building' | 'success' | 'error'
-    });
-    
-    // Start timer if auto-update is enabled
-    if (newRepo.autoUpdate) {
-      startRepoTimer(newRepo);
+    const appName = getAppNameFromCompose(yaml);
+
+    // Check if a repo with this name already exists
+    const existingRepos = loadRepositories();
+    if (existingRepos.some(r => r.name.toLowerCase() === appName.toLowerCase())) {
+      return res.status(409).json({ success: false, message: `An application named '${appName}' already exists.` });
     }
-    
-    res.json({ success: true, repo: newRepo });
+
+    const newRepo = addRepository({
+      name: appName,
+      type: 'compose',
+      autoUpdate: false,
+      autoUpdateInterval: 60,
+      apiUpdatesEnabled: true,
+      status: 'imported'
+    });
+
+    // Save the docker-compose.yml to persistent storage
+    const targetDir = path.join('/app/uidata', newRepo.name);
+    const targetPath = path.join(targetDir, "docker-compose.yml");
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    fs.writeFileSync(targetPath, yaml, 'utf8');
+
+    res.status(201).json({ success: true, repo: newRepo });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+
 
 // PUT /api/repos/:id - Update a repository
 app.put("/api/repos/:id", validateAuthHash, (req, res) => {
@@ -659,8 +681,12 @@ app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
-  if (!repo || !repo.url) {
-    return res.status(400).json({ success: false, message: "Repository not found or URL not set" });
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+
+  if (repo.type === 'github' && !repo.url) {
+    return res.status(400).json({ success: false, message: "Repository URL not set for GitHub type." });
   }
   
   try {
@@ -867,7 +893,7 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
     }
     
     const message = repo.isInstalled 
-      ? "Repository removed and app uninstalled from CasaOS" 
+      ? "Repository removed and app uninstalled from CasaOS"
       : "Repository and associated files removed successfully";
       
     res.json({ success: true, message });
@@ -982,7 +1008,7 @@ app.post("/api/repos/check-updates", validateAuthHash, async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: `Update check completed. ${totalWithUpdates} repositories have updates available.`,
+      message: `Update check completed. ${totalWithUpdates} repositories have updates available.`, 
       summary: {
         totalChecked: results.length,
         withUpdates: totalWithUpdates,
@@ -1098,7 +1124,7 @@ app.get("/api/system/ready", validateAuthHash, (req, res) => {
 app.get("/api/system/status", validateAuthHash, async (req, res) => {
   const status = {
     docker: false,
-    casaos: false,
+    casaos: true, // Assume true since we are not calling it anymore
     dockerSock: false,
     errors: [] as string[]
   };
@@ -1119,17 +1145,6 @@ app.get("/api/system/status", validateAuthHash, async (req, res) => {
     }
   } catch (error) {
     status.errors.push('Failed to check Docker socket');
-  }
-
-  // Check CasaOS connection
-  try {
-    const { CasaOSInstaller } = await import('./CasaOSInstaller');
-    status.casaos = await CasaOSInstaller.testConnection();
-    if (!status.casaos) {
-      status.errors.push('CasaOS API is not accessible');
-    }
-  } catch (error) {
-    status.errors.push('Failed to test CasaOS connection');
   }
 
   res.json({

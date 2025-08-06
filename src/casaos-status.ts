@@ -148,36 +148,44 @@ export async function checkCasaOSInstallationProgress(appName: string): Promise<
   return null;
 }
 
+// A precise check to see if a compose app is registered with CasaOS.
 export async function isAppInstalledInCasaOS(appName: string): Promise<boolean> {
   try {
-    const installedApps = await getCasaOSInstalledApps();
-    
-    // Exact match first
-    if (installedApps.includes(appName)) {
-      return true;
+    const command = `
+      docker exec casaos sh -c "
+        curl -s 'http://localhost:8080/v2/app_management/compose' \
+          -H 'Accept: application/json'
+      " 2>&1
+    `;
+    const { stdout } = await execAsync(command);
+
+    if (!stdout || stdout.includes('Connection refused') || stdout.includes('404')) {
+      console.error('❌ Could not connect to CasaOS API to verify installation.');
+      return false;
     }
-    
-    // Try fuzzy matching - check if any installed app contains the repo name or vice versa
-    const normalizedAppName = appName.toLowerCase().replace(/[-_]/g, '');
-    for (const installedApp of installedApps) {
-      const normalizedInstalled = installedApp.toLowerCase().replace(/[-_]/g, '');
-      
-      // Check if either name contains the other (accounting for common naming patterns)
-      if (normalizedAppName.includes(normalizedInstalled) || 
-          normalizedInstalled.includes(normalizedAppName) ||
-          normalizedAppName.replace('mirror', '') === normalizedInstalled ||
-          normalizedInstalled === normalizedAppName.replace('mirror', '')) {
-        console.log(`🔍 Found potential match: "${appName}" ≈ "${installedApp}"`);
-        return true;
+
+    const response = JSON.parse(stdout);
+
+    // The app name should exist as a key in the 'data' object.
+    const isInstalled = response.data && typeof response.data === 'object' && response.data.hasOwnProperty(appName);
+
+    if (isInstalled) {
+      console.log(`✅ Verification successful: App '${appName}' is installed in CasaOS.`);
+    } else {
+      console.log(`❌ Verification failed: App '${appName}' is not installed in CasaOS.`);
+      // Log the list of actual apps for debugging
+      if (response.data) {
+        console.log(`ℹ️ Available apps: [${Object.keys(response.data).join(', ')}]`);
       }
     }
-    
-    return false;
+
+    return isInstalled;
   } catch (error) {
     console.error(`❌ Error checking if app ${appName} is installed:`, error);
     return false;
   }
 }
+
 
 export async function getCasaOSAppStatus(appName: string): Promise<{
   isInstalled: boolean;

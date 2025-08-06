@@ -1,148 +1,133 @@
-import { Repository, updateRepository } from './storage';
+import { Repository, updateRepository, loadSettings } from './storage';
 import { cloneOrUpdateRepo } from './GitHandler';
-import { buildAndDeployRepo } from './DockerHandler';
-import { verifyCasaOSInstallation, checkCasaOSInstallationProgress } from './casaos-status';
+import { buildImageFromRepo } from './DockerHandler';
+import { isAppInstalledInCasaOS } from './casaos-status';
+import { executePreInstallCommand, preprocessAppstoreCompose } from './compose-processor';
+import { CasaOSInstaller, installerEmitter } from './CasaOSInstaller'; // Correctly import the emitter
 import * as fs from 'fs';
 import * as path from 'path';
+import * as yaml from 'yaml';
 
 const baseDir = "/app/repos";
 
-/** 
- * Process one repository: clone/pull + build/deploy with status verification
- * This function is extracted to avoid circular imports with build-queue
- */
+// This function is no longer needed with the new event-driven approach
+// async function pollInstallationJob(...) { ... }
+
 export async function processRepo(
   repository: Repository,
   force: boolean = false
-): Promise<{ success: boolean; message: string }> {
-  if (!force && !repository.autoUpdate) {
-    console.log(`🔕 Auto-update disabled for ${repository.name}`);
-    return { success: false, message: "Auto-update disabled" };
-  }
+): Promise<{ success: boolean; message:string }> {
   
   try {
-    // Update status to building
-    updateRepository(repository.id, { status: 'building' });
-    
-    // Create temporary repo config for compatibility with existing handlers
-    const repoConfig = {
-      url: repository.url,
-      path: repository.name,
-      autoUpdate: repository.autoUpdate
-    };
-    
-    console.log(`🔨 Building ${repository.name}...`);
-    
-    // Clone/update and build/deploy
-    cloneOrUpdateRepo(repoConfig, baseDir);
-    await buildAndDeployRepo(repoConfig, baseDir);
-    
-    // Build completed successfully - mark as success regardless of verification
-    updateRepository(repository.id, { 
-      status: 'success',
-      lastBuildTime: new Date().toISOString()
-    });
-    console.log(`✅ Build and deployment completed for ${repository.name}`);
-    
-    // Attempt verification using actual app name from docker-compose.yml
-    let appNameToVerify = repository.name;
-    
-    // Try to extract actual app name from docker-compose.yml
-    const composePath = path.join('/app/uidata', repository.name, 'docker-compose.yml');
-    if (fs.existsSync(composePath)) {
-      try {
-        const yaml = await import('yaml');
-        const composeContent = fs.readFileSync(composePath, 'utf8');
-        const composeData = yaml.parse(composeContent);
-        
-        // Get the first service name (which becomes the app name in CasaOS)
-        const services = composeData.services;
-        if (services && Object.keys(services).length > 0) {
-          appNameToVerify = Object.keys(services)[0];
-          console.log(`🔍 Using app name from docker-compose.yml: ${appNameToVerify}`);
-        }
-      } catch (error: any) {
-        console.log(`⚠️ Could not parse docker-compose.yml to extract app name: ${error.message}`);
-      }
-    }
-    
-    console.log(`🔍 Verifying installation of ${appNameToVerify} (repo: ${repository.name})...`);
-    
-    // First, investigate what installation progress endpoints might exist
-    console.log(`🔬 Investigating CasaOS installation progress endpoints...`);
-    await checkCasaOSInstallationProgress(appNameToVerify);
-    
-    // Wait a bit for CasaOS async installation to complete
-    console.log(`⏳ Waiting 5 seconds for CasaOS async installation to complete...`);
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Phase 0: Force clean any previous installations
+    console.log(`🧹 Force cleaning previous installation directories for ${repository.name}...`);
+    const hostMetadataDir = path.join('/DATA/AppData/casaos/apps', repository.name);
+    const hostDataDir = path.join('/DATA/AppData', repository.name);
     
     try {
-      const verification = await verifyCasaOSInstallation(appNameToVerify);
-      
-      if (verification.success && verification.isInstalled) {
-        // Check if the app is also running after installation
-        const { getCasaOSAppStatus } = await import('./casaos-status');
-        let isRunning = false;
-        try {
-          const runningStatus = await getCasaOSAppStatus(appNameToVerify);
-          isRunning = runningStatus?.isRunning || false;
-          console.log(`🔍 Post-install running status for ${appNameToVerify}: ${isRunning}`);
-        } catch (error: any) {
-          console.log(`⚠️ Could not check running status after install: ${error.message}`);
-        }
-        
-        updateRepository(repository.id, { 
-          isInstalled: true,
-          isRunning: isRunning
-        });
-        console.log(`✅ Installation verified for ${appNameToVerify} (running: ${isRunning})`);
-        return { 
-          success: true, 
-          message: `Build completed successfully. ${verification.message}` 
-        };
-      } else {
-        console.log(`⚠️ Could not verify installation: ${verification.message}`);
-        console.log(`ℹ️ This may be normal if app name differs from repository name`);
-        
-        // Since build was successful, assume app is installed even if verification failed
-        // Try to get running status anyway
-        const { getCasaOSAppStatus } = await import('./casaos-status');
-        let isRunning = false;
-        try {
-          const runningStatus = await getCasaOSAppStatus(appNameToVerify);
-          isRunning = runningStatus?.isRunning || false;
-          console.log(`🔍 Fallback running status check for ${appNameToVerify}: ${isRunning}`);
-        } catch (error: any) {
-          console.log(`⚠️ Could not check running status in fallback: ${error.message}`);
-        }
-        
-        updateRepository(repository.id, { 
-          isInstalled: true,
-          isRunning: isRunning
-        });
-        console.log(`📦 Marking as installed based on successful build (running: ${isRunning}) - sync will verify later`);
-        
-        return { 
-          success: true, 
-          message: `Build completed successfully. Note: Could not verify installation (${verification.message})` 
-        };
-      }
-    } catch (verifyError: any) {
-      console.log(`⚠️ Verification check failed: ${verifyError.message}`);
-      
-      // Since build was successful, assume app is installed even if verification failed
-      updateRepository(repository.id, { isInstalled: true });
-      console.log(`📦 Marking as installed based on successful build - sync will verify later`);
-      
-      return { 
-        success: true, 
-        message: `Build completed successfully. Note: Could not verify installation due to verification error` 
-      };
+      fs.rmSync(hostMetadataDir, { recursive: true, force: true });
+      fs.rmSync(hostDataDir, { recursive: true, force: true });
+    } catch (e: any) {
+      throw new Error(`Failed to clean up previous installation: ${e.message}`);
     }
+
+    // Phase 1: Build image if it's a GitHub repo
+    if (repository.type === 'github') {
+      updateRepository(repository.id, { status: 'building', statusMessage: 'Cloning repository...', progress: 0 });
+      const repoConfig = { url: repository.url!, path: repository.name, autoUpdate: repository.autoUpdate };
+      cloneOrUpdateRepo(repoConfig, baseDir);
+      
+      updateRepository(repository.id, { status: 'building', statusMessage: 'Building image...', progress: 25 });
+      await buildImageFromRepo(repoConfig, baseDir);
+    }
+
+    // Phase 2: Pre-process the compose file
+    updateRepository(repository.id, { status: 'installing', statusMessage: 'Processing compose file...', progress: 75 });
+    
+    const internalComposePath = path.join('/app/uidata', repository.name, 'docker-compose.yml');
+    if (!fs.existsSync(internalComposePath)) {
+        throw new Error(`Source docker-compose.yml not found at ${internalComposePath}.`);
+    }
+    const rawYaml = fs.readFileSync(internalComposePath, 'utf8');
+    const composeObject = yaml.parse(rawYaml);
+
+    await executePreInstallCommand(composeObject);
+    const settings = loadSettings();
+    const { rich } = preprocessAppstoreCompose(composeObject, settings);
+
+    // Step 3: Proactively create all host volume paths
+    console.log('🔧 Pre-creating host directories for app data volumes...');
+    if (rich.services) {
+        for (const serviceName in rich.services) {
+            const service = rich.services[serviceName];
+            if (service.volumes) {
+                for (const volume of service.volumes) {
+                    const hostPath = typeof volume === 'string' ? volume.split(':')[0] : volume.source;
+                    if (hostPath && hostPath.startsWith('/DATA/AppData')) {
+                        fs.mkdirSync(hostPath, { recursive: true });
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 4: Write the 'rich' compose file to the final destination
+    const hostComposePath = path.join(hostMetadataDir, 'docker-compose.yml');
+    console.log(`📝 Saving rich compose file to CasaOS metadata path: ${hostComposePath}`);
+    fs.mkdirSync(hostMetadataDir, { recursive: true });
+    fs.writeFileSync(hostComposePath, yaml.stringify(rich));
+
+    // Step 5: Install the containers by calling Docker Compose directly.
+    // This is now an async process handled by events.
+    updateRepository(repository.id, { status: 'installing', statusMessage: 'Starting container installation...', progress: 85 });
+    
+    // Define the listener for when the installation finishes
+    const onInstallFinished = async (data: { repositoryId: string, success: boolean, message?: string }) => {
+        if (data.repositoryId !== repository.id) {
+            return; // Not for us
+        }
+        
+        // IMPORTANT: Remove listener immediately to prevent duplicates
+        installerEmitter.removeListener('finished', onInstallFinished);
+
+        if (data.success) {
+            console.log(`✅ Installation finished successfully for ${repository.name}. Verifying...`);
+            // Brief delay to allow CasaOS to recognize the new container
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            const isRunning = await isAppInstalledInCasaOS(repository.name);
+            updateRepository(repository.id, { 
+                status: 'success',
+                isInstalled: true,
+                isRunning: isRunning,
+                statusMessage: 'Installation successful!',
+                progress: 100
+            });
+        } else {
+            console.error(`❌ Installation failed in background for ${repository.name}.`);
+            updateRepository(repository.id, { status: 'error', statusMessage: data.message || 'Installation failed in background.' });
+        }
+    };
+    
+    // Attach the listener BEFORE starting the installation
+    installerEmitter.on('finished', onInstallFinished);
+
+    // Start the installation
+    const installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id);
+
+    if (!installResult.success) {
+        // If it failed to even start, remove the listener and throw an error
+        installerEmitter.removeListener('finished', onInstallFinished);
+        throw new Error(installResult.message);
+    }
+
+    // The process has started successfully. The UI will get updates via SSE.
+    console.log(`✅ Installation process for ${repository.name} has been successfully initiated.`);
+    return { success: true, message: 'Installation process initiated.' };
     
   } catch (err: any) {
-    console.error(`❌ Error building ${repository.name}:`, err);
-    updateRepository(repository.id, { status: 'error' });
-    return { success: false, message: err.message || "Build/deployment failed" };
+    console.error(`❌ Error processing ${repository.name}:`, err);
+    updateRepository(repository.id, { status: 'error', statusMessage: err.message, progress: 0 });
+    const action = repository.type === 'compose' ? 'installation' : 'build/deployment';
+    return { success: false, message: err.message || `${action} failed` };
   }
 }
