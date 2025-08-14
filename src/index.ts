@@ -659,8 +659,6 @@ app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
     return res.status(400).json({ success: false, message: "Repository URL not set for GitHub type." });
   }
   
-  console.log(`🔧 Compile request for ${repo.name} with runAsUser: ${runAsUser || 'ubuntu (default)'}`);
-  
   try {
     const result = await buildQueue.addJob(repo, true, runAsUser);
     

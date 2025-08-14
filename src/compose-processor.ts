@@ -32,9 +32,6 @@ export async function executePreInstallCommand(composeObject: any, logCollector?
         // Execute on host using docker exec to casaos container - same level of access as CasaOS pre-install-cmd
         const crypto = await import('crypto');
         
-        // Test if we can access docker and the casaos container
-        log(`🐳 Testing Docker access and CasaOS container availability...`, 'info');
-        
         try {
             // Check if docker command is available and casaos container exists
             const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
@@ -46,7 +43,6 @@ export async function executePreInstallCommand(composeObject: any, logCollector?
                 throw new Error(`CasaOS container not found. Available containers: ${dockerTest.stdout}`);
             }
             
-            log(`✅ CasaOS container found and accessible`, 'info');
         } catch (error: any) {
             log(`❌ Docker access test failed: ${error.message}`, 'error');
             throw new Error(`Cannot access Docker or CasaOS container: ${error.message}`);
@@ -67,7 +63,6 @@ ${cmd}
         const scriptBase64 = Buffer.from(scriptContent).toString('base64');
         
         // Execute via docker exec to casaos container with selected user - this gives us the same access as CasaOS pre-install-cmd
-        log(`👤 Running pre-install command as user: ${runAsUser}`, 'info');
         const dockerCommand = `docker exec --user ${runAsUser} casaos bash -c '
 # Set permissive umask for all files created during this session
 umask 022
@@ -91,18 +86,14 @@ if [ ! -x "${tempScript}" ]; then
   exit 1
 fi
 
-# Execute the script as selected user
-echo "Executing pre-install script as ${runAsUser} user: ${tempScript}"
+# Execute the script
+echo "Executing pre-install script: ${tempScript}"
 bash ${tempScript}
 SCRIPT_EXIT_CODE=$?
-
-# Note: No cleanup - leave files for testing and future terminal interface
 
 # Exit with the same code as the script
 exit $SCRIPT_EXIT_CODE
 '`;
-        
-        log(`🐳 Docker exec execution to CasaOS container`, 'info');
         
         const result = await execAsync(dockerCommand, { 
             timeout: 300000, // 5 minute timeout
@@ -132,8 +123,6 @@ exit $SCRIPT_EXIT_CODE
 
     } catch (error: any) {
         log(`❌ Pre-install command execution failed: ${error.message}`, 'error');
-        log('💡 Pre-install commands should create files in host /tmp, not container /tmp.', 'info');
-        log('🔧 Make sure Docker socket is accessible and CasaOS container is running.', 'info');
         throw new Error(`Pre-install command failed: ${error.message}`);
     }
 }

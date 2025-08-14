@@ -77,9 +77,14 @@ export async function processRepo(
     const rawYaml = fs.readFileSync(internalComposePath, 'utf8');
     const composeObject = yaml.parse(rawYaml);
 
-    log(`🚀 Executing pre-install command...`, 'info');
-    await executePreInstallCommand(composeObject, logCollector, runAsUser);
-    log(`✅ Pre-install command completed successfully`, 'success');
+    // Only run pre-install command on FIRST installation, never on updates
+    if (repository.isInstalled) {
+        log(`⏭️ Skipping pre-install command - app is already installed (update mode)`, 'info');
+    } else {
+        log(`🚀 Executing pre-install command (first installation)...`, 'info');
+        await executePreInstallCommand(composeObject, logCollector, runAsUser);
+        log(`✅ Pre-install command completed successfully`, 'success');
+    }
     
     log(`🔧 Loading settings and preprocessing compose file...`, 'info');
     const settings = loadSettings();

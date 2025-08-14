@@ -448,16 +448,16 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
-        // Check if this repo has pre-install commands and show warning
+        // Check if this repo has pre-install commands and show warning (only for first installation)
         const hasPreInstall = await this.checkForPreInstallCommand(repoId);
         let selectedUser = 'ubuntu'; // Default user
-        if (hasPreInstall) {
+        if (hasPreInstall && !repo.isInstalled) {
+            // Only show warning for first installation, not updates
             const warningResult = await this.showPreInstallWarning(repo, hasPreInstall);
             if (!warningResult || !warningResult.proceed) {
                 return; // User cancelled
             }
             selectedUser = warningResult.runAsUser;
-            console.log(`👤 User selected to run pre-install as: ${selectedUser}`);
         }
 
         const action = repo.type === 'github' ? 'building' : 'installing';
@@ -469,7 +469,7 @@ class RepoManager {
         try {
             const requestData = this.addAuthToRequest({ runAsUser: selectedUser });
             await axios.post(`/api/repos/${repoId}/compile`, requestData);
-            console.log(`[${repo.name}] ${action} process initiated via API with user: ${selectedUser}`);
+            console.log(`[${repo.name}] ${action} process initiated via API.`);
             
             // Refresh the UI immediately after successful initiation, then again after a delay
             setTimeout(() => this.loadRepos(), 1000);
@@ -916,10 +916,8 @@ class RepoManager {
 
     async checkForPreInstallCommand(repoId) {
         try {
-            console.log(`🔍 Checking for pre-install command in repo: ${repoId}`);
             const response = await axios.get(`/api/repos/${repoId}/compose`, this.addAuthToRequest({}));
             const composeContent = response.data.yaml || response.data.content;
-            console.log(`📄 Got compose content for ${repoId}:`, composeContent?.substring(0, 200) + '...');
             
             // Parse YAML to check for pre-install-cmd
             const lines = composeContent.split('\n');
@@ -930,16 +928,13 @@ class RepoManager {
                 const trimmed = line.trim();
                 
                 if (trimmed === 'x-casaos:') {
-                    console.log(`✅ Found x-casaos section at line ${lineIndex + 1}`);
                     inXCasaOS = true;
                 } else if (inXCasaOS && trimmed.startsWith('pre-install-cmd:')) {
-                    console.log(`🚨 Found pre-install-cmd at line ${lineIndex + 1}!`);
                     // Extract the command content
                     let command = trimmed.substring('pre-install-cmd:'.length).trim();
                     
                     // Handle multiline commands
                     if (command === '|') {
-                        console.log(`📝 Multiline command detected, collecting lines...`);
                         // Multiline command, collect following indented lines
                         const commandLines = [];
                         for (let i = lineIndex + 1; i < lines.length; i++) {
@@ -953,7 +948,6 @@ class RepoManager {
                         command = commandLines.join('\n').trim();
                     }
                     
-                    console.log(`📜 Pre-install command found:`, command.substring(0, 100) + '...');
                     return command;
                 } else if (inXCasaOS && trimmed && !trimmed.startsWith('#')) {
                     // Check if this line has the same or less indentation than x-casaos (meaning we've left the section)
@@ -962,12 +956,10 @@ class RepoManager {
                     
                     if (currentIndentation <= xCasaOSIndentation && trimmed.endsWith(':') && !line.startsWith(' ')) {
                         // We've moved to another top-level key, stop looking
-                        console.log(`🔄 Left x-casaos section at line ${lineIndex + 1}: ${trimmed}`);
                         inXCasaOS = false;
                     }
                 }
             }
-            console.log(`❌ No pre-install-cmd found in ${repoId}`);
             return null;
         } catch (error) {
             console.error('Failed to check for pre-install command:', error);
