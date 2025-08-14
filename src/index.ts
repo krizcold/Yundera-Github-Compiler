@@ -1401,6 +1401,134 @@ app.get("/api/repos/:id/logs", validateAuthHash, (req, res) => {
   }, 30000);
 });
 
+// POST /api/terminal/execute - Execute command in interactive terminal
+app.post("/api/terminal/execute", validateAuthHash, async (req, res) => {
+  const { command, runAsUser = 'ubuntu', currentDir = '/', envVars = {} } = req.body;
+  
+  if (!command || typeof command !== 'string') {
+    return res.status(400).json({ success: false, message: "Command is required" });
+  }
+  
+  // Sanitize user input
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+  const safeCommand = command.trim();
+  
+  if (!safeCommand) {
+    return res.status(400).json({ success: false, message: "Command cannot be empty" });
+  }
+  
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Log the command execution
+    console.log(`🖥️ Terminal command executed by ${safeUser}: ${safeCommand}`);
+    
+    // Test Docker and CasaOS container access first
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 10000,
+        maxBuffer: 1024 * 1024
+      });
+      
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.status(500).json({ 
+          success: false, 
+          message: `CasaOS container not found. Available containers: ${dockerTest.stdout}` 
+        });
+      }
+    } catch (error: any) {
+      console.error('Docker access test failed:', error);
+      return res.status(500).json({ 
+        success: false, 
+        message: `Cannot access Docker or CasaOS container: ${error.message}` 
+      });
+    }
+    
+    // Build environment variables string
+    const envString = Object.entries(envVars)
+      .map(([key, value]) => `${key}="${value}"`)
+      .join(' ');
+    
+    // Execute command with session state (current directory and environment)
+    // We execute the command, then get the new working directory
+    const sessionCommand = `
+      cd "${currentDir}" 2>/dev/null || cd /;
+      ${envString ? `export ${envString};` : ''}
+      ${safeCommand};
+      echo "---PWD---";
+      pwd
+    `;
+    
+    const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${sessionCommand.replace(/'/g, "'\\''")}'`;
+    
+    const result = await execAsync(dockerCommand, {
+      timeout: 60000, // 1 minute timeout
+      maxBuffer: 1024 * 1024 * 5, // 5MB buffer
+      shell: '/bin/sh'
+    });
+    
+    // Extract the new directory from the output
+    let stdout = result.stdout || '';
+    let newDir = currentDir;
+    
+    // Look for our PWD marker and extract the directory
+    const pwdMarkerIndex = stdout.lastIndexOf('---PWD---');
+    if (pwdMarkerIndex !== -1) {
+      const afterMarker = stdout.substring(pwdMarkerIndex + 9);
+      const newDirMatch = afterMarker.trim().split('\n')[0];
+      if (newDirMatch && newDirMatch.startsWith('/')) {
+        newDir = newDirMatch.trim();
+        // Remove the PWD section from the output
+        stdout = stdout.substring(0, pwdMarkerIndex).trim();
+      }
+    }
+    
+    res.json({
+      success: true,
+      stdout: stdout,
+      stderr: result.stderr || '',
+      command: safeCommand,
+      user: safeUser,
+      newDir: newDir,
+      envVars: envVars // Return current env vars (could be enhanced to detect changes)
+    });
+    
+  } catch (error: any) {
+    console.error(`❌ Terminal command execution failed:`, error);
+    
+    // Extract useful error information
+    let errorMessage = error.message || 'Unknown error';
+    let stdout = '';
+    let stderr = '';
+    
+    // If it's an exec error, we might have partial output
+    if (error.stdout) stdout = error.stdout;
+    if (error.stderr) stderr = error.stderr;
+    
+    // Handle specific error cases
+    if (error.message.includes('ENOENT')) {
+      errorMessage = 'Command not found or shell unavailable';
+    } else if (error.message.includes('timeout')) {
+      errorMessage = 'Command timed out (60 second limit)';
+    } else if (error.message.includes('killed')) {
+      errorMessage = 'Command was killed or interrupted';
+    }
+    
+    res.json({
+      success: false,
+      message: errorMessage,
+      stdout: stdout,
+      stderr: stderr,
+      command: safeCommand,
+      user: safeUser,
+      newDir: currentDir, // Keep current directory on error
+      envVars: envVars
+    });
+  }
+});
+
 // Environment-based force update API has been removed
 // Use the web UI or POST /api/repos/:id/compile for manual builds
 

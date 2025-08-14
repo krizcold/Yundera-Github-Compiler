@@ -79,6 +79,11 @@ class RepoManager {
             saveSettingsBtn.addEventListener('click', () => this.saveGlobalSettings());
         }
         
+        const terminalBtn = document.getElementById('terminal-btn');
+        if (terminalBtn) {
+            terminalBtn.addEventListener('click', () => this.openInteractiveTerminal());
+        }
+        
         console.log('✅ Events bound successfully');
 
         document.querySelectorAll('.modal').forEach(modal => {
@@ -1848,6 +1853,372 @@ class RepoManager {
             localStorage.setItem('yundera-risks-accepted', 'true');
             popup.remove();
         });
+    }
+
+    openInteractiveTerminal() {
+        // Initialize terminal session state
+        this.terminalSession = {
+            currentDir: '/',
+            envVars: {},
+            user: 'ubuntu'
+        };
+        
+        // Create terminal popup
+        let terminal = document.getElementById('interactive-terminal-popup');
+        if (terminal) {
+            terminal.remove();
+        }
+
+        terminal = document.createElement('div');
+        terminal.id = 'interactive-terminal-popup';
+        terminal.innerHTML = `
+            <div class="terminal-backdrop" onclick="this.parentElement.remove()"></div>
+            <div class="terminal-container">
+                <div class="terminal-header">
+                    <div class="terminal-title">
+                        <i class="fas fa-terminal"></i>
+                        Interactive Terminal
+                    </div>
+                    <div class="terminal-controls">
+                        <div class="user-selector">
+                            <label for="terminal-user">Run as:</label>
+                            <select id="terminal-user">
+                                <option value="ubuntu">Ubuntu</option>
+                                <option value="root">Root</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                            <input type="text" id="custom-user" placeholder="Enter username" style="display: none; margin-left: 5px; padding: 2px 5px;">
+                        </div>
+                        <button class="terminal-btn" onclick="document.getElementById('interactive-terminal-popup').remove()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="terminal-body">
+                    <div class="terminal-content" id="terminal-output">
+                        <div class="log-line system">🖥️ Interactive Terminal Ready</div>
+                        <div class="log-line info">💡 Persistent session: cd, environment variables, and directory changes are maintained!</div>
+                    </div>
+                </div>
+                <div class="terminal-input-section">
+                    <div class="terminal-prompt">
+                        <span id="terminal-prompt-text">ubuntu@casaos:/$</span>
+                        <input type="text" id="terminal-command-input" placeholder="Enter command..." autocomplete="off">
+                        <button id="terminal-execute-btn" class="terminal-btn">
+                            <i class="fas fa-play"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add enhanced styles for interactive terminal
+        const style = document.createElement('style');
+        style.textContent = `
+            #interactive-terminal-popup {
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.2s ease;
+            }
+            
+            #interactive-terminal-popup .terminal-backdrop {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(4px);
+            }
+            
+            #interactive-terminal-popup .terminal-container {
+                position: relative;
+                width: 90%;
+                max-width: 1000px;
+                height: 70%;
+                max-height: 600px;
+                background: #1a1a1a;
+                border-radius: 12px;
+                border: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            }
+            
+            #interactive-terminal-popup .terminal-header {
+                background: #2d2d2d;
+                padding: 12px 16px;
+                border-radius: 12px 12px 0 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid #333;
+            }
+            
+            #interactive-terminal-popup .terminal-title {
+                color: #fff;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            #interactive-terminal-popup .terminal-controls {
+                display: flex;
+                align-items: center;
+                gap: 15px;
+            }
+            
+            #interactive-terminal-popup .user-selector {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                color: #ccc;
+                font-size: 12px;
+            }
+            
+            #interactive-terminal-popup .user-selector select {
+                background: #333;
+                color: #fff;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 2px 5px;
+                font-size: 12px;
+            }
+            
+            #interactive-terminal-popup .user-selector input {
+                background: #333;
+                color: #fff;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: 12px;
+                width: 100px;
+            }
+            
+            #interactive-terminal-popup .terminal-btn {
+                background: transparent;
+                border: none;
+                color: #888;
+                padding: 4px 8px;
+                cursor: pointer;
+                border-radius: 4px;
+                transition: all 0.2s;
+            }
+            
+            #interactive-terminal-popup .terminal-btn:hover {
+                background: #444;
+                color: #fff;
+            }
+            
+            #interactive-terminal-popup .terminal-body {
+                flex: 1;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            #interactive-terminal-popup .terminal-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                background: #1a1a1a;
+                color: #e0e0e0;
+            }
+            
+            #interactive-terminal-popup .terminal-input-section {
+                background: #2d2d2d;
+                border-top: 1px solid #333;
+                padding: 12px 16px;
+            }
+            
+            #interactive-terminal-popup .terminal-prompt {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+            }
+            
+            #interactive-terminal-popup .terminal-prompt span {
+                color: #81c784;
+                white-space: nowrap;
+            }
+            
+            #interactive-terminal-popup .terminal-prompt input {
+                flex: 1;
+                background: transparent;
+                border: none;
+                color: #e0e0e0;
+                font-family: inherit;
+                font-size: inherit;
+                outline: none;
+                padding: 4px 0;
+            }
+            
+            #interactive-terminal-popup .log-line {
+                margin: 2px 0;
+                word-break: break-all;
+                white-space: pre-wrap;
+            }
+            
+            #interactive-terminal-popup .log-line.system { color: #64b5f6; }
+            #interactive-terminal-popup .log-line.success { color: #81c784; }
+            #interactive-terminal-popup .log-line.error { color: #e57373; }
+            #interactive-terminal-popup .log-line.warning { color: #ffb74d; }
+            #interactive-terminal-popup .log-line.info { color: #90caf9; }
+            #interactive-terminal-popup .log-line.command { color: #81c784; }
+            #interactive-terminal-popup .log-line.output { color: #e0e0e0; }
+        `;
+
+        if (!document.getElementById('interactive-terminal-styles')) {
+            style.id = 'interactive-terminal-styles';
+            document.head.appendChild(style);
+        }
+
+        document.body.appendChild(terminal);
+
+        // Set up event handlers
+        this.setupInteractiveTerminalHandlers();
+    }
+
+    setupInteractiveTerminalHandlers() {
+        const userSelect = document.getElementById('terminal-user');
+        const customUserInput = document.getElementById('custom-user');
+        const commandInput = document.getElementById('terminal-command-input');
+        const executeBtn = document.getElementById('terminal-execute-btn');
+        const promptText = document.getElementById('terminal-prompt-text');
+
+        // Handle user selection
+        userSelect.addEventListener('change', () => {
+            if (userSelect.value === 'custom') {
+                customUserInput.style.display = 'inline-block';
+                customUserInput.focus();
+            } else {
+                customUserInput.style.display = 'none';
+                this.terminalSession.user = userSelect.value;
+                this.updateTerminalPrompt();
+            }
+        });
+
+        customUserInput.addEventListener('input', () => {
+            const customUser = customUserInput.value.trim() || 'user';
+            this.terminalSession.user = customUser;
+            this.updateTerminalPrompt();
+        });
+
+        // Handle command execution
+        const executeCommand = () => {
+            const command = commandInput.value.trim();
+            if (!command) return;
+
+            let runAsUser = userSelect.value;
+            if (runAsUser === 'custom') {
+                runAsUser = customUserInput.value.trim() || 'user';
+            }
+
+            this.executeTerminalCommand(command, runAsUser);
+            commandInput.value = '';
+        };
+
+        executeBtn.addEventListener('click', executeCommand);
+        commandInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                executeCommand();
+            }
+        });
+
+        // Focus command input
+        commandInput.focus();
+        
+        // Initialize prompt
+        this.updateTerminalPrompt();
+    }
+
+    updateTerminalPrompt() {
+        const promptText = document.getElementById('terminal-prompt-text');
+        if (promptText) {
+            // Format directory for prompt (shorten long paths)
+            let displayDir = this.terminalSession.currentDir;
+            if (displayDir.length > 25) {
+                displayDir = '...' + displayDir.substring(displayDir.length - 22);
+            }
+            promptText.textContent = `${this.terminalSession.user}@casaos:${displayDir}$`;
+        }
+    }
+
+    async executeTerminalCommand(command, runAsUser) {
+        const output = document.getElementById('terminal-output');
+        const promptText = document.getElementById('terminal-prompt-text').textContent;
+        
+        // Add command line to output
+        const commandLine = document.createElement('div');
+        commandLine.className = 'log-line command';
+        commandLine.textContent = `${promptText} ${command}`;
+        output.appendChild(commandLine);
+        
+        // Show executing message
+        const executingLine = document.createElement('div');
+        executingLine.className = 'log-line info';
+        executingLine.textContent = '⏳ Executing...';
+        output.appendChild(executingLine);
+        
+        output.scrollTop = output.scrollHeight;
+
+        try {
+            const response = await axios.post('/api/terminal/execute', this.addAuthToRequest({
+                command: command,
+                runAsUser: runAsUser,
+                currentDir: this.terminalSession.currentDir,
+                envVars: this.terminalSession.envVars
+            }));
+
+            // Remove executing message
+            executingLine.remove();
+
+            if (response.data.success) {
+                if (response.data.stdout) {
+                    const outputLine = document.createElement('div');
+                    outputLine.className = 'log-line output';
+                    outputLine.textContent = response.data.stdout;
+                    output.appendChild(outputLine);
+                }
+                
+                if (response.data.stderr) {
+                    const errorLine = document.createElement('div');
+                    errorLine.className = 'log-line warning';
+                    errorLine.textContent = response.data.stderr;
+                    output.appendChild(errorLine);
+                }
+                
+                // Update session state from backend response
+                if (response.data.newDir) {
+                    this.terminalSession.currentDir = response.data.newDir;
+                    this.updateTerminalPrompt();
+                }
+                if (response.data.envVars) {
+                    this.terminalSession.envVars = response.data.envVars;
+                }
+            } else {
+                const errorLine = document.createElement('div');
+                errorLine.className = 'log-line error';
+                errorLine.textContent = `❌ ${response.data.message}`;
+                output.appendChild(errorLine);
+            }
+        } catch (error) {
+            // Remove executing message
+            executingLine.remove();
+            
+            const errorLine = document.createElement('div');
+            errorLine.className = 'log-line error';
+            errorLine.textContent = `❌ Command failed: ${error.response?.data?.message || error.message}`;
+            output.appendChild(errorLine);
+        }
+
+        output.scrollTop = output.scrollHeight;
     }
 
     showNotification(message, type = 'info') {
