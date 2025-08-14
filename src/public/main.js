@@ -1401,11 +1401,11 @@ class RepoManager {
                                     <input type="checkbox" id="preserve-app-data" ${!repo.isInstalled ? 'disabled' : ''}>
                                     <span class="data-checkmark"></span>
                                     <div class="data-content">
-                                        <strong>Preserve application data and configuration files</strong>
+                                        <strong>Delete application data and configuration files</strong>
                                         <div class="data-description">
                                             ${repo.isInstalled ? 
-                                                'Keep files in /DATA/AppData/' + repo.name + '/ so they can be restored if you reinstall this app later.' : 
-                                                'No application data to preserve (app is not installed).'
+                                                'Remove all files in /DATA/AppData/' + repo.name + '/ permanently. Leave unchecked to keep your data.' : 
+                                                'No application data to delete (app is not installed).'
                                             }
                                         </div>
                                     </div>
@@ -1625,7 +1625,8 @@ class RepoManager {
             });
 
             confirmBtn.addEventListener('click', () => {
-                const preserveData = preserveDataCheckbox.checked;
+                // Invert logic: unchecked = preserve (safer default), checked = delete
+                const preserveData = !preserveDataCheckbox.checked;
                 popup.remove();
                 resolve({ proceed: true, preserveData: preserveData });
             });
@@ -1897,7 +1898,6 @@ class RepoManager {
                 <div class="terminal-body">
                     <div class="terminal-content" id="terminal-output">
                         <div class="log-line system">🖥️ Interactive Terminal Ready</div>
-                        <div class="log-line info">💡 Persistent session: cd, environment variables, and directory changes are maintained!</div>
                     </div>
                 </div>
                 <div class="terminal-input-section">

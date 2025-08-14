@@ -298,11 +298,35 @@ export async function verifyCasaOSInstallation(appName: string): Promise<{
 }
 
 // Uninstall an app from CasaOS
-export async function uninstallCasaOSApp(appName: string): Promise<{
+export async function uninstallCasaOSApp(appName: string, preserveData: boolean = false): Promise<{
   success: boolean;
   message: string;
 }> {
   try {
+    if (preserveData) {
+      // When preserving data, manually stop containers instead of using CasaOS API
+      // This prevents CasaOS from automatically deleting AppData directories
+      console.log(`🛡️ Preserving data - manually stopping containers for ${appName}`);
+      
+      // Stop and remove the app containers manually (but preserve data volumes)
+      const stopCommand = `
+        docker exec casaos sh -c "
+          docker-compose -f /DATA/AppData/casaos/apps/${appName}/docker-compose.yml down --remove-orphans 2>/dev/null || 
+          (docker stop \\\$(docker ps -q --filter name=${appName}) 2>/dev/null && docker rm \\\$(docker ps -aq --filter name=${appName}) 2>/dev/null) ||
+          echo 'No containers found to stop'
+        " 2>&1
+      `;
+      
+      const { stdout: stopOutput } = await execAsync(stopCommand);
+      console.log(`📦 Container stop result: ${stopOutput}`);
+      
+      return {
+        success: true,
+        message: `App ${appName} stopped (data preserved)`
+      };
+    }
+    
+    // Normal uninstall - use CasaOS API (will remove data)
     const command = `
       docker exec casaos sh -c "
         curl -s -X DELETE 'http://localhost:8080/v2/app_management/compose/${appName}' \\

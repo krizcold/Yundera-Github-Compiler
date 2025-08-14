@@ -766,6 +766,7 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const { preserveData } = req.body || {};
   
+  
   // Get repository info before removing it
   const repo = getRepository(id);
   if (!repo) {
@@ -794,36 +795,41 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
       }
       
       console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS before removing repository...`);
-      const result = await uninstallCasaOSApp(appNameToUninstall);
+      const result = await uninstallCasaOSApp(appNameToUninstall, preserveData);
       
       if (result.success) {
-        console.log(`✅ App ${appNameToUninstall} uninstall initiated - waiting for completion...`);
-        
-        // Wait for actual uninstall completion (up to 30 seconds)
-        let attempts = 0;
-        const maxAttempts = 6; // 30 seconds total (5s intervals)
-        let uninstallComplete = false;
-        
-        while (attempts < maxAttempts && !uninstallComplete) {
-          await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-          attempts++;
+        // If data was preserved, we manually stopped containers - no need to poll CasaOS
+        if (result.message.includes('(data preserved)')) {
+          console.log(`✅ App ${appNameToUninstall} containers stopped manually - skipping CasaOS polling`);
+        } else {
+          console.log(`✅ App ${appNameToUninstall} uninstall initiated - waiting for completion...`);
           
-          try {
-            const installedApps = await getCasaOSInstalledApps(true);
-            uninstallComplete = !installedApps.includes(appNameToUninstall);
+          // Wait for actual uninstall completion (up to 30 seconds)
+          let attempts = 0;
+          const maxAttempts = 6; // 30 seconds total (5s intervals)
+          let uninstallComplete = false;
+          
+          while (attempts < maxAttempts && !uninstallComplete) {
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+            attempts++;
             
-            if (uninstallComplete) {
-              console.log(`✅ App ${appNameToUninstall} successfully uninstalled after ${attempts * 5}s`);
-            } else {
-              console.log(`⏳ Waiting for ${appNameToUninstall} uninstall completion (${attempts}/${maxAttempts})`);
+            try {
+              const installedApps = await getCasaOSInstalledApps(true);
+              uninstallComplete = !installedApps.includes(appNameToUninstall);
+              
+              if (uninstallComplete) {
+                console.log(`✅ App ${appNameToUninstall} successfully uninstalled after ${attempts * 5}s`);
+              } else {
+                console.log(`⏳ Waiting for ${appNameToUninstall} uninstall completion (${attempts}/${maxAttempts})`);
+              }
+            } catch (error) {
+              console.log(`⚠️ Error checking uninstall status: ${error}`);
             }
-          } catch (error) {
-            console.log(`⚠️ Error checking uninstall status: ${error}`);
           }
-        }
-        
-        if (!uninstallComplete) {
-          console.log(`⏰ Uninstall verification timeout for ${appNameToUninstall} - proceeding with repository removal`);
+          
+          if (!uninstallComplete) {
+            console.log(`⏰ Uninstall verification timeout for ${appNameToUninstall} - proceeding with repository removal`);
+          }
         }
       } else {
         console.log(`⚠️ Failed to uninstall ${appNameToUninstall}: ${result.message}`);
@@ -852,22 +858,16 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
         console.error(`⚠️ Failed to clean up persistent storage for ${repo.name}:`, error.message);
       }
       
-      // Clean up CasaOS app data directory unless user chose to preserve it
+      // Note: When preserveData=false, CasaOS API already removes /DATA/AppData/appname
+      // When preserveData=true, we manually stopped containers and want to keep the data
       const appDataDir = path.join('/DATA/AppData', repo.name);
-      if (!preserveData) {
-        try {
-          if (fs.existsSync(appDataDir)) {
-            fs.rmSync(appDataDir, { recursive: true, force: true });
-            console.log(`🗑️ Cleaned up app data directory: ${appDataDir}`);
-          }
-        } catch (error: any) {
-          console.error(`⚠️ Failed to clean up app data directory for ${repo.name}:`, error.message);
-        }
-      } else {
+      if (preserveData) {
         console.log(`💾 Preserving app data directory: ${appDataDir}`);
+      } else {
+        console.log(`🗑️ App data directory removed by CasaOS: ${appDataDir}`);
       }
       
-      // Clean up CasaOS metadata directory (always remove)
+      // Clean up CasaOS metadata directory (always remove - CasaOS needs this to know app is uninstalled)
       const appMetadataDir = path.join('/DATA/AppData/casaos/apps', repo.name);
       try {
         if (fs.existsSync(appMetadataDir)) {

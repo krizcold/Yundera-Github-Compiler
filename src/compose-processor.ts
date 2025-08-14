@@ -202,29 +202,70 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 }
             }
 
-            // Process template substitutions
+            // Helper function to replace template variables in strings
+            const replaceTemplateVars = (value: string): string => {
+                const originalValue = value;
+                const webUiPort = richCompose['x-casaos']?.webui_port || 80;
+                const domainValue = webUiPort === 80 
+                    ? `${appId}${settings.refSeparator}${settings.refDomain}`
+                    : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
+                
+                return value
+                    .replace(/\$\{?PUID\}?/g, settings.puid)
+                    .replace(/\$\{?PGID\}?/g, settings.pgid)
+                    .replace(/\$\{?APP_ID\}?/g, appId)
+                    .replace(/\$AppID/g, appId)  // Handle $AppID without braces
+                    .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
+                    .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme)
+                    .replace(/\$\{?REF_PORT\}?/g, settings.refPort);
+            };
+
+            // Process template substitutions in environment variables
             if (service.environment) {
                 for (const key in service.environment) {
                     let value = service.environment[key];
                     if (typeof value === 'string') {
-                        // Replace template variables
-                        value = value.replace(/\$\{?PUID\}?/g, settings.puid);
-                        value = value.replace(/\$\{?PGID\}?/g, settings.pgid);
-                        value = value.replace(/\$\{?APP_ID\}?/g, appId);
-                        
-                        // Handle domain construction
-                        const webUiPort = richCompose['x-casaos']?.webui_port || 80;
-                        const domainValue = webUiPort === 80 
-                            ? `${appId}${settings.refSeparator}${settings.refDomain}`
-                            : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
-                        
-                        value = value.replace(/\$\{?REF_DOMAIN\}?/g, domainValue);
-                        value = value.replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme);
-                        value = value.replace(/\$\{?REF_PORT\}?/g, settings.refPort);
-                        
-                        service.environment[key] = value;
+                        service.environment[key] = replaceTemplateVars(value);
                     }
                 }
+            }
+
+            // Process template substitutions in volumes
+            if (service.volumes && Array.isArray(service.volumes)) {
+                service.volumes = service.volumes.map((volume: any) => {
+                    if (typeof volume === 'string') {
+                        // Handle string format like "/host/path:/container/path"
+                        return replaceTemplateVars(volume);
+                    } else if (typeof volume === 'object' && volume.source) {
+                        // Handle object format with source property
+                        return {
+                            ...volume,
+                            source: replaceTemplateVars(volume.source)
+                        };
+                    }
+                    return volume;
+                });
+            }
+
+            // Process template substitutions in other string fields
+            if (typeof service.command === 'string') {
+                service.command = replaceTemplateVars(service.command);
+            }
+            if (typeof service.entrypoint === 'string') {
+                service.entrypoint = replaceTemplateVars(service.entrypoint);
+            }
+            if (typeof service.working_dir === 'string') {
+                service.working_dir = replaceTemplateVars(service.working_dir);
+            }
+
+            // Process template substitutions in labels
+            if (service.labels && Array.isArray(service.labels)) {
+                service.labels = service.labels.map((label: any) => {
+                    if (typeof label === 'string') {
+                        return replaceTemplateVars(label);
+                    }
+                    return label;
+                });
             }
 
             // Extract icon from service labels if available

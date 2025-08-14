@@ -29,21 +29,8 @@ export async function processRepo(
   };
   
   try {
-    // Phase 0: Force clean any previous installations
-    log(`🧹 Force cleaning previous installation directories for ${repository.name}...`, 'info');
     const hostMetadataDir = path.join('/DATA/AppData/casaos/apps', repository.name);
-    const hostDataDir = path.join('/DATA/AppData', repository.name);
     
-    try {
-      fs.rmSync(hostMetadataDir, { recursive: true, force: true });
-      fs.rmSync(hostDataDir, { recursive: true, force: true });
-      log(`✅ Cleaned up previous installation directories`, 'success');
-    } catch (e: any) {
-      const errorMsg = `Failed to clean up previous installation: ${e.message}`;
-      log(`❌ ${errorMsg}`, 'error');
-      throw new Error(errorMsg);
-    }
-
     // Phase 1: Build image if it's a GitHub repo
     if (repository.type === 'github') {
       log(`🔄 Updating repository status to 'building'...`, 'info');
@@ -91,18 +78,55 @@ export async function processRepo(
     const { rich } = preprocessAppstoreCompose(composeObject, settings);
     log(`✅ Compose file preprocessing completed`, 'success');
 
-    // Step 3: Proactively create all host volume paths
-    log('📁 Pre-creating host directories for app data volumes...', 'info');
+    // Step 3: Create all host volume paths
+    log('📁 Creating host directories for app data volumes...', 'info');
     let volumeCount = 0;
+    const createdPaths = new Set<string>(); // Track unique paths to avoid duplicates
+    
     if (rich.services) {
         for (const serviceName in rich.services) {
             const service = rich.services[serviceName];
             if (service.volumes) {
                 for (const volume of service.volumes) {
                     const hostPath = typeof volume === 'string' ? volume.split(':')[0] : volume.source;
-                    if (hostPath && hostPath.startsWith('/DATA/AppData')) {
-                        fs.mkdirSync(hostPath, { recursive: true });
-                        volumeCount++;
+                    if (hostPath && hostPath.startsWith('/DATA/AppData') && !createdPaths.has(hostPath)) {
+                        try {
+                            // Create directory using docker exec
+                            const { exec } = await import('child_process');
+                            const { promisify } = require('util');
+                            const execAsync = promisify(exec);
+                            
+                            // Create directory as ubuntu user via CasaOS container
+                            await execAsync(`docker exec --user ubuntu casaos mkdir -p "${hostPath}"`, {
+                                timeout: 10000,
+                                maxBuffer: 1024 * 1024
+                            });
+                            
+                            // Set ownership and permissions
+                            await execAsync(`docker exec casaos chown -R ubuntu:ubuntu "${hostPath}"`, {
+                                timeout: 10000,
+                                maxBuffer: 1024 * 1024
+                            });
+                            
+                            await execAsync(`docker exec casaos chmod -R 755 "${hostPath}"`, {
+                                timeout: 10000,
+                                maxBuffer: 1024 * 1024
+                            });
+                            
+                            createdPaths.add(hostPath);
+                            volumeCount++;
+                            
+                        } catch (error: any) {
+                            log(`⚠️ Failed to create directory ${hostPath}: ${error.message}`, 'warning');
+                            // Fallback to Node.js mkdir if docker exec fails
+                            try {
+                                fs.mkdirSync(hostPath, { recursive: true });
+                                createdPaths.add(hostPath);
+                                volumeCount++;
+                            } catch (fallbackError: any) {
+                                log(`❌ Failed to create directory: ${fallbackError.message}`, 'error');
+                            }
+                        }
                     }
                 }
             }
@@ -113,7 +137,27 @@ export async function processRepo(
     // Step 4: Write the 'rich' compose file to the final destination
     const hostComposePath = path.join(hostMetadataDir, 'docker-compose.yml');
     log(`📝 Saving compose file to CasaOS metadata path: ${hostComposePath}`, 'info');
-    fs.mkdirSync(hostMetadataDir, { recursive: true });
+    
+    // Create metadata directory with proper ownership
+    try {
+        const { exec } = await import('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+        
+        await execAsync(`docker exec --user ubuntu casaos mkdir -p "${hostMetadataDir}"`, {
+            timeout: 10000,
+            maxBuffer: 1024 * 1024
+        });
+        
+        await execAsync(`docker exec casaos chown -R ubuntu:ubuntu "${hostMetadataDir}"`, {
+            timeout: 10000,
+            maxBuffer: 1024 * 1024
+        });
+    } catch (error: any) {
+        // Fallback to Node.js mkdir
+        fs.mkdirSync(hostMetadataDir, { recursive: true });
+    }
+    
     fs.writeFileSync(hostComposePath, yaml.stringify(rich));
     log(`✅ Compose file saved successfully`, 'success');
 
