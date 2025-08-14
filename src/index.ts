@@ -800,7 +800,7 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
       if (result.success) {
         // If data was preserved, we manually stopped containers - no need to poll CasaOS
         if (result.message.includes('(data preserved)')) {
-          console.log(`✅ App ${appNameToUninstall} containers stopped manually - skipping CasaOS polling`);
+          console.log(`✅ App ${appNameToUninstall} containers stopped`);
         } else {
           console.log(`✅ App ${appNameToUninstall} uninstall initiated - waiting for completion...`);
           
@@ -863,16 +863,13 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
       const appDataDir = path.join('/DATA/AppData', repo.name);
       if (preserveData) {
         console.log(`💾 Preserving app data directory: ${appDataDir}`);
-      } else {
-        console.log(`🗑️ App data directory removed by CasaOS: ${appDataDir}`);
       }
       
-      // Clean up CasaOS metadata directory (always remove - CasaOS needs this to know app is uninstalled)
+      // Clean up CasaOS metadata directory (always remove)
       const appMetadataDir = path.join('/DATA/AppData/casaos/apps', repo.name);
       try {
         if (fs.existsSync(appMetadataDir)) {
           fs.rmSync(appMetadataDir, { recursive: true, force: true });
-          console.log(`🧹 Cleaned up app metadata directory: ${appMetadataDir}`);
         }
       } catch (error: any) {
         console.error(`⚠️ Failed to clean up app metadata directory for ${repo.name}:`, error.message);

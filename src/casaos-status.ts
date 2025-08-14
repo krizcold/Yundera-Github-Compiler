@@ -304,9 +304,7 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
 }> {
   try {
     if (preserveData) {
-      // When preserving data, manually stop containers instead of using CasaOS API
-      // This prevents CasaOS from automatically deleting AppData directories
-      console.log(`🛡️ Preserving data - manually stopping containers for ${appName}`);
+      console.log(`🛡️ Preserving data - stopping containers for ${appName}`);
       
       // Stop and remove the app containers manually (but preserve data volumes)
       const stopCommand = `
@@ -317,8 +315,7 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
         " 2>&1
       `;
       
-      const { stdout: stopOutput } = await execAsync(stopCommand);
-      console.log(`📦 Container stop result: ${stopOutput}`);
+      await execAsync(stopCommand);
       
       return {
         success: true,
