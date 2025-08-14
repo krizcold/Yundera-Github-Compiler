@@ -47,6 +47,7 @@ class RepoManager {
         this.loadRepos();
         this.loadGlobalSettings();
         this.startAutoRefresh();
+        this.checkFirstTimeUser();
     }
 
     startAutoRefresh() {
@@ -447,13 +448,28 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
+        // Check if this repo has pre-install commands and show warning
+        const hasPreInstall = await this.checkForPreInstallCommand(repoId);
+        let selectedUser = 'ubuntu'; // Default user
+        if (hasPreInstall) {
+            const warningResult = await this.showPreInstallWarning(repo, hasPreInstall);
+            if (!warningResult || !warningResult.proceed) {
+                return; // User cancelled
+            }
+            selectedUser = warningResult.runAsUser;
+            console.log(`👤 User selected to run pre-install as: ${selectedUser}`);
+        }
+
         const action = repo.type === 'github' ? 'building' : 'installing';
         this.updateRepoStatus(repoId, action); // This will re-render and disable the button
         
+        // Open terminal log popup
+        this.openTerminalPopup(repo.name, repoId, action);
 
         try {
-            await axios.post(`/api/repos/${repoId}/compile`, this.addAuthToRequest({}));
-            console.log(`[${repo.name}] ${action} process initiated via API.`);
+            const requestData = this.addAuthToRequest({ runAsUser: selectedUser });
+            await axios.post(`/api/repos/${repoId}/compile`, requestData);
+            console.log(`[${repo.name}] ${action} process initiated via API with user: ${selectedUser}`);
             
             // Refresh the UI immediately after successful initiation, then again after a delay
             setTimeout(() => this.loadRepos(), 1000);
@@ -652,6 +668,927 @@ class RepoManager {
         }
         
         this.closeModal('yaml-modal');
+    }
+
+    openTerminalPopup(appName, repoId, action) {
+        // Create terminal popup if it doesn't exist
+        let terminal = document.getElementById('terminal-popup');
+        if (terminal) {
+            terminal.remove();
+        }
+
+        terminal = document.createElement('div');
+        terminal.id = 'terminal-popup';
+        terminal.innerHTML = `
+            <div class="terminal-backdrop" onclick="this.parentElement.remove()"></div>
+            <div class="terminal-container">
+                <div class="terminal-header">
+                    <div class="terminal-title">
+                        <i class="fas fa-terminal"></i>
+                        ${appName} - ${action.charAt(0).toUpperCase() + action.slice(1)} Logs
+                    </div>
+                    <div class="terminal-controls">
+                        <button class="terminal-btn" onclick="document.getElementById('terminal-popup').remove()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="terminal-body">
+                    <div class="terminal-content" id="terminal-content">
+                        <div class="log-line system">🚀 Starting ${action} process for ${appName}...</div>
+                        <div class="log-line system">📡 Connecting to build system...</div>
+                    </div>
+                </div>
+                <div class="terminal-footer">
+                    <div class="terminal-status">
+                        <div class="status-indicator active"></div>
+                        <span>Live streaming logs</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add styles
+        const style = document.createElement('style');
+        style.textContent = `
+            #terminal-popup {
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.2s ease;
+            }
+            
+            .terminal-backdrop {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(4px);
+            }
+            
+            .terminal-container {
+                position: relative;
+                width: 90%;
+                max-width: 1000px;
+                height: 70%;
+                max-height: 600px;
+                background: #1a1a1a;
+                border-radius: 12px;
+                border: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            }
+            
+            .terminal-header {
+                background: #2d2d2d;
+                padding: 12px 16px;
+                border-radius: 12px 12px 0 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid #333;
+            }
+            
+            .terminal-title {
+                color: #fff;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .terminal-btn {
+                background: transparent;
+                border: none;
+                color: #888;
+                padding: 4px 8px;
+                cursor: pointer;
+                border-radius: 4px;
+                transition: all 0.2s;
+            }
+            
+            .terminal-btn:hover {
+                background: #444;
+                color: #fff;
+            }
+            
+            .terminal-body {
+                flex: 1;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .terminal-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                background: #1a1a1a;
+                color: #e0e0e0;
+            }
+            
+            .log-line {
+                margin: 2px 0;
+                word-break: break-all;
+                white-space: pre-wrap;
+            }
+            
+            .log-line.system { color: #64b5f6; }
+            .log-line.success { color: #81c784; }
+            .log-line.error { color: #e57373; }
+            .log-line.warning { color: #ffb74d; }
+            .log-line.info { color: #90caf9; }
+            
+            .terminal-footer {
+                background: #2d2d2d;
+                padding: 8px 16px;
+                border-top: 1px solid #333;
+                border-radius: 0 0 12px 12px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            .terminal-status {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                color: #888;
+                font-size: 12px;
+            }
+            
+            .status-indicator {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #666;
+            }
+            
+            .status-indicator.active {
+                background: #4caf50;
+                animation: pulse 2s infinite;
+            }
+            
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+            
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+            }
+        `;
+        
+        document.head.appendChild(style);
+        document.body.appendChild(terminal);
+        
+        // Start streaming logs
+        this.streamLogs(repoId);
+        
+        // Auto-scroll to bottom
+        const content = document.getElementById('terminal-content');
+        content.scrollTop = content.scrollHeight;
+    }
+
+    async streamLogs(repoId) {
+        const content = document.getElementById('terminal-content');
+        if (!content) return;
+
+        try {
+            // Use EventSource for real-time log streaming
+            const eventSource = new EventSource(`/api/repos/${repoId}/logs?hash=${this.authHash}`);
+            
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    // Skip empty ping messages and messages with no content
+                    if (data.type === 'ping' || !data.message || data.message.trim() === '') {
+                        return;
+                    }
+                    this.addLogLine(data.message, data.type || 'info');
+                } catch (e) {
+                    // Skip empty raw messages too
+                    if (event.data && event.data.trim() !== '') {
+                        this.addLogLine(event.data, 'info');
+                    }
+                }
+            };
+
+            eventSource.onerror = () => {
+                this.addLogLine('❌ Log stream disconnected', 'error');
+                eventSource.close();
+                
+                // Update status indicator
+                const indicator = document.querySelector('.status-indicator');
+                if (indicator) {
+                    indicator.classList.remove('active');
+                    indicator.style.background = '#f44336';
+                }
+            };
+
+            // Store reference for cleanup
+            if (!this.activeLogStreams) this.activeLogStreams = new Set();
+            this.activeLogStreams.add(eventSource);
+            
+        } catch (error) {
+            this.addLogLine(`❌ Failed to connect to log stream: ${error.message}`, 'error');
+        }
+    }
+
+    addLogLine(message, type = 'info') {
+        const content = document.getElementById('terminal-content');
+        if (!content) return;
+
+        const line = document.createElement('div');
+        line.className = `log-line ${type}`;
+        line.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+        
+        content.appendChild(line);
+        content.scrollTop = content.scrollHeight;
+    }
+
+    async checkForPreInstallCommand(repoId) {
+        try {
+            console.log(`🔍 Checking for pre-install command in repo: ${repoId}`);
+            const response = await axios.get(`/api/repos/${repoId}/compose`, this.addAuthToRequest({}));
+            const composeContent = response.data.yaml || response.data.content;
+            console.log(`📄 Got compose content for ${repoId}:`, composeContent?.substring(0, 200) + '...');
+            
+            // Parse YAML to check for pre-install-cmd
+            const lines = composeContent.split('\n');
+            let inXCasaOS = false;
+            
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const line = lines[lineIndex];
+                const trimmed = line.trim();
+                
+                if (trimmed === 'x-casaos:') {
+                    console.log(`✅ Found x-casaos section at line ${lineIndex + 1}`);
+                    inXCasaOS = true;
+                } else if (inXCasaOS && trimmed.startsWith('pre-install-cmd:')) {
+                    console.log(`🚨 Found pre-install-cmd at line ${lineIndex + 1}!`);
+                    // Extract the command content
+                    let command = trimmed.substring('pre-install-cmd:'.length).trim();
+                    
+                    // Handle multiline commands
+                    if (command === '|') {
+                        console.log(`📝 Multiline command detected, collecting lines...`);
+                        // Multiline command, collect following indented lines
+                        const commandLines = [];
+                        for (let i = lineIndex + 1; i < lines.length; i++) {
+                            const nextLine = lines[i];
+                            if (nextLine.trim() === '' || nextLine.startsWith('    ')) {
+                                commandLines.push(nextLine.substring(4)); // Remove indentation
+                            } else {
+                                break;
+                            }
+                        }
+                        command = commandLines.join('\n').trim();
+                    }
+                    
+                    console.log(`📜 Pre-install command found:`, command.substring(0, 100) + '...');
+                    return command;
+                } else if (inXCasaOS && trimmed && !trimmed.startsWith('#')) {
+                    // Check if this line has the same or less indentation than x-casaos (meaning we've left the section)
+                    const currentIndentation = line.length - line.trimLeft().length;
+                    const xCasaOSIndentation = 0; // x-casaos: is at root level
+                    
+                    if (currentIndentation <= xCasaOSIndentation && trimmed.endsWith(':') && !line.startsWith(' ')) {
+                        // We've moved to another top-level key, stop looking
+                        console.log(`🔄 Left x-casaos section at line ${lineIndex + 1}: ${trimmed}`);
+                        inXCasaOS = false;
+                    }
+                }
+            }
+            console.log(`❌ No pre-install-cmd found in ${repoId}`);
+            return null;
+        } catch (error) {
+            console.error('Failed to check for pre-install command:', error);
+            return null;
+        }
+    }
+
+    async showPreInstallWarning(repo, preInstallCommand) {
+        return new Promise((resolve) => {
+            // Create warning popup
+            const popup = document.createElement('div');
+            popup.id = 'pre-install-warning';
+            popup.innerHTML = `
+                <div class="warning-backdrop"></div>
+                <div class="warning-container">
+                    <div class="warning-header">
+                        <div class="warning-icon">⚠️</div>
+                        <h2>Security Warning</h2>
+                    </div>
+                    <div class="warning-content">
+                        <p><strong>${repo.name}</strong> uses pre-installation commands that will execute with full system privileges.</p>
+                        
+                        <div class="warning-explanation">
+                            <h3>Why pre-install commands are sometimes needed:</h3>
+                            <ul>
+                                <li>Creating host directories with specific permissions</li>
+                                <li>Installing system dependencies</li>
+                                <li>Configuring network settings</li>
+                                <li>Setting up SSL certificates or keys</li>
+                            </ul>
+                        </div>
+
+                        <div class="command-preview">
+                            <h3>Command to be executed:</h3>
+                            <textarea readonly class="command-text">${preInstallCommand}</textarea>
+                        </div>
+
+                        <div class="user-selection">
+                            <h3>Run pre-install command as:</h3>
+                            <div class="radio-group">
+                                <label class="radio-option">
+                                    <input type="radio" name="run-as-user" value="ubuntu" checked>
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>Ubuntu User (Recommended)</strong>
+                                        <div class="radio-description">Run with standard user permissions - safer option</div>
+                                    </div>
+                                </label>
+                                <label class="radio-option">
+                                    <input type="radio" name="run-as-user" value="root">
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>Root User</strong>
+                                        <div class="radio-description">Run with administrator privileges - use only if required</div>
+                                    </div>
+                                </label>
+                                <label class="radio-option">
+                                    <input type="radio" name="run-as-user" value="custom">
+                                    <span class="radio-mark"></span>
+                                    <div class="radio-content">
+                                        <strong>Custom User</strong>
+                                        <div class="radio-description">
+                                            Specify a custom username:
+                                            <input type="text" id="custom-username" placeholder="Enter username" disabled>
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="risk-warning">
+                            <p><strong>⚠️ These commands have full access to your system and can:</strong></p>
+                            <ul>
+                                <li>Modify any files on your server</li>
+                                <li>Install software or change system settings</li>
+                                <li>Access sensitive data or credentials</li>
+                                <li>Potentially compromise system security</li>
+                            </ul>
+                        </div>
+
+                        <div class="consent-section">
+                            <label class="consent-checkbox">
+                                <input type="checkbox" id="understand-risks">
+                                <span class="checkmark"></span>
+                                I understand the risks and have reviewed the command above. I trust the developer of this application.
+                            </label>
+                        </div>
+                    </div>
+                    <div class="warning-actions">
+                        <button class="btn btn-secondary" id="cancel-install">Cancel</button>
+                        <button class="btn btn-danger" id="proceed-install" disabled>Install Anyway</button>
+                    </div>
+                </div>
+            `;
+
+            // Add styles
+            const style = document.createElement('style');
+            style.textContent = `
+                #pre-install-warning {
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    z-index: 10000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                
+                .warning-backdrop {
+                    position: absolute;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0, 0, 0, 0.8);
+                    backdrop-filter: blur(4px);
+                }
+                
+                .warning-container {
+                    position: relative;
+                    width: 90%;
+                    max-width: 600px;
+                    max-height: 80vh;
+                    background: white;
+                    border-radius: 12px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                    overflow: hidden;
+                    display: flex;
+                    flex-direction: column;
+                }
+                
+                .warning-header {
+                    background: #dc2626;
+                    color: white;
+                    padding: 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+                
+                .warning-icon {
+                    font-size: 24px;
+                }
+                
+                .warning-header h2 {
+                    margin: 0;
+                    font-size: 20px;
+                }
+                
+                .warning-content {
+                    padding: 20px;
+                    overflow-y: auto;
+                    flex: 1;
+                }
+                
+                .warning-explanation {
+                    background: #f3f4f6;
+                    padding: 16px;
+                    border-radius: 8px;
+                    margin: 16px 0;
+                }
+                
+                .warning-explanation h3 {
+                    margin: 0 0 12px 0;
+                    color: #374151;
+                    font-size: 14px;
+                }
+                
+                .warning-explanation ul {
+                    margin: 0;
+                    padding-left: 20px;
+                    color: #6b7280;
+                    font-size: 13px;
+                }
+                
+                .command-preview {
+                    margin: 16px 0;
+                }
+                
+                .command-preview h3 {
+                    margin: 0 0 8px 0;
+                    color: #374151;
+                    font-size: 14px;
+                }
+                
+                .command-text {
+                    width: 100%;
+                    height: 120px;
+                    padding: 12px;
+                    border: 1px solid #d1d5db;
+                    border-radius: 6px;
+                    font-family: 'Monaco', 'Menlo', monospace;
+                    font-size: 12px;
+                    background: #f9fafb;
+                    resize: none;
+                }
+                
+                .risk-warning {
+                    background: #fef2f2;
+                    border: 1px solid #fecaca;
+                    padding: 16px;
+                    border-radius: 8px;
+                    margin: 16px 0;
+                }
+                
+                .risk-warning p {
+                    margin: 0 0 8px 0;
+                    color: #dc2626;
+                    font-weight: 600;
+                }
+                
+                .risk-warning ul {
+                    margin: 0;
+                    padding-left: 20px;
+                    color: #dc2626;
+                }
+                
+                .consent-section {
+                    margin: 20px 0;
+                }
+                
+                .consent-checkbox {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    cursor: pointer;
+                    user-select: none;
+                }
+                
+                .consent-checkbox input[type="checkbox"] {
+                    width: 18px;
+                    height: 18px;
+                    cursor: pointer;
+                }
+                
+                .user-selection {
+                    background: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin: 16px 0;
+                }
+                
+                .user-selection h3 {
+                    margin: 0 0 12px 0;
+                    color: #374151;
+                    font-size: 16px;
+                }
+                
+                .radio-group {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+                
+                .radio-option {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    padding: 12px;
+                    border: 2px solid #e5e7eb;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                
+                .radio-option:hover {
+                    border-color: #3b82f6;
+                    background: #f0f9ff;
+                }
+                
+                .radio-option input[type="radio"]:checked + .radio-mark + .radio-content {
+                    color: #1e40af;
+                }
+                
+                .radio-option input[type="radio"]:checked {
+                    border-color: #3b82f6;
+                    background: #3b82f6;
+                }
+                
+                .radio-mark {
+                    width: 16px;
+                    height: 16px;
+                    border: 2px solid #d1d5db;
+                    border-radius: 50%;
+                    background: white;
+                    flex-shrink: 0;
+                    position: relative;
+                }
+                
+                .radio-option input[type="radio"] {
+                    display: none;
+                }
+                
+                .radio-option input[type="radio"]:checked + .radio-mark {
+                    border-color: #3b82f6;
+                    background: #3b82f6;
+                }
+                
+                .radio-option input[type="radio"]:checked + .radio-mark::after {
+                    content: '';
+                    position: absolute;
+                    top: 2px;
+                    left: 2px;
+                    width: 8px;
+                    height: 8px;
+                    background: white;
+                    border-radius: 50%;
+                }
+                
+                .radio-content {
+                    flex: 1;
+                }
+                
+                .radio-content strong {
+                    display: block;
+                    margin-bottom: 4px;
+                    font-weight: 600;
+                }
+                
+                .radio-description {
+                    font-size: 14px;
+                    color: #6b7280;
+                    line-height: 1.4;
+                }
+                
+                #custom-username {
+                    margin-top: 8px;
+                    padding: 6px 8px;
+                    border: 1px solid #d1d5db;
+                    border-radius: 4px;
+                    width: 200px;
+                    font-size: 14px;
+                }
+                
+                #custom-username:disabled {
+                    background: #f3f4f6;
+                    color: #9ca3af;
+                }
+                
+                .warning-actions {
+                    padding: 16px 20px;
+                    border-top: 1px solid #e5e7eb;
+                    display: flex;
+                    gap: 12px;
+                    justify-content: flex-end;
+                }
+                
+                .btn:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+            `;
+            
+            document.head.appendChild(style);
+            document.body.appendChild(popup);
+
+            // Handle radio button state and custom username input
+            const radioButtons = document.querySelectorAll('input[name="run-as-user"]');
+            const customUsernameInput = document.getElementById('custom-username');
+            
+            radioButtons.forEach(radio => {
+                radio.addEventListener('change', () => {
+                    customUsernameInput.disabled = radio.value !== 'custom';
+                    if (radio.value !== 'custom') {
+                        customUsernameInput.value = '';
+                    }
+                });
+            });
+            
+            // Handle checkbox state and button clicks
+            const checkbox = document.getElementById('understand-risks');
+            const proceedBtn = document.getElementById('proceed-install');
+            const cancelBtn = document.getElementById('cancel-install');
+            
+            checkbox.addEventListener('change', () => {
+                proceedBtn.disabled = !checkbox.checked;
+            });
+
+            cancelBtn.addEventListener('click', () => {
+                popup.remove();
+                resolve(false);
+            });
+
+            proceedBtn.addEventListener('click', () => {
+                // Get selected user option
+                const selectedUser = document.querySelector('input[name="run-as-user"]:checked').value;
+                let runAsUser = selectedUser;
+                
+                if (selectedUser === 'custom') {
+                    const customUsername = customUsernameInput.value.trim();
+                    if (!customUsername) {
+                        alert('Please enter a custom username or select a different option.');
+                        return;
+                    }
+                    runAsUser = customUsername;
+                }
+                
+                popup.remove();
+                resolve({ proceed: true, runAsUser: runAsUser });
+            });
+        });
+    }
+
+    checkFirstTimeUser() {
+        const hasAcceptedRisks = localStorage.getItem('yundera-risks-accepted');
+        if (!hasAcceptedRisks) {
+            this.showFirstTimeRiskWarning();
+        }
+    }
+
+    showFirstTimeRiskWarning() {
+        const popup = document.createElement('div');
+        popup.id = 'first-time-warning';
+        popup.innerHTML = `
+            <div class="first-time-backdrop"></div>
+            <div class="first-time-container">
+                <div class="first-time-header">
+                    <div class="first-time-icon">⚠️</div>
+                    <h2>Risks of Using Unreviewed Yundera Custom Apps</h2>
+                </div>
+                <div class="first-time-content">
+                    <div class="overview">
+                        <h3>Overview</h3>
+                        <p>Custom CasaOS compose applications that have not undergone security review pose significant risks to system stability and security.</p>
+                    </div>
+
+                    <div class="risks-section">
+                        <h3>Key Risks:</h3>
+                        
+                        <div class="risk-item">
+                            <h4>1. Resource Management Issues</h4>
+                            <ul>
+                                <li>Unreviewed applications may lack proper resource limit configurations</li>
+                                <li>Applications without resource limits can consume excessive RAM and CPU resources</li>
+                                <li>This can lead to system-wide Denial of Service (DOS), affecting all running services</li>
+                                <li>When resource limits are properly configured, only the problematic application is affected</li>
+                            </ul>
+                        </div>
+
+                        <div class="risk-item">
+                            <h4>2. File Permission Corruption</h4>
+                            <ul>
+                                <li>Unreviewed applications may incorrectly modify file access permissions</li>
+                                <li>This can render the Personal Cloud Server (PCS) inaccessible through the standard user interface</li>
+                                <li>Recovery requires SSH access for manual permission correction</li>
+                            </ul>
+                        </div>
+
+                        <div class="risk-item">
+                            <h4>3. Data Loss Risk</h4>
+                            <ul>
+                                <li>Unreviewed applications may not have persistent data volumes properly configured</li>
+                                <li>Without correct persistence settings, application data may be stored in ephemeral containers</li>
+                                <li>Container updates, restarts, or crashes can result in permanent data loss</li>
+                                <li>Critical user data and configurations may be irretrievably lost</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="best-practice">
+                        <h3>Best Practice</h3>
+                        <p><strong>Only install reviewed and approved applications on production systems. Use dedicated test environments for evaluating new applications before deployment.</strong></p>
+                    </div>
+
+                    <div class="consent-section">
+                        <label class="consent-checkbox">
+                            <input type="checkbox" id="accept-risks">
+                            <span class="checkmark"></span>
+                            I understand these risks and accept responsibility for any damage that may occur to my system or data.
+                        </label>
+                    </div>
+                </div>
+                <div class="first-time-actions">
+                    <button class="btn btn-danger" id="accept-risks-btn" disabled>I Accept the Risks</button>
+                </div>
+            </div>
+        `;
+
+        // Add styles
+        const style = document.createElement('style');
+        style.textContent = `
+            #first-time-warning {
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                z-index: 10001;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
+            .first-time-backdrop {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0, 0, 0, 0.9);
+                backdrop-filter: blur(4px);
+            }
+            
+            .first-time-container {
+                position: relative;
+                width: 95%;
+                max-width: 800px;
+                max-height: 90vh;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .first-time-header {
+                background: #dc2626;
+                color: white;
+                padding: 20px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            
+            .first-time-icon {
+                font-size: 28px;
+            }
+            
+            .first-time-header h2 {
+                margin: 0;
+                font-size: 22px;
+            }
+            
+            .first-time-content {
+                padding: 24px;
+                overflow-y: auto;
+                flex: 1;
+            }
+            
+            .overview {
+                margin-bottom: 24px;
+            }
+            
+            .overview h3 {
+                margin: 0 0 12px 0;
+                color: #dc2626;
+                font-size: 18px;
+            }
+            
+            .overview p {
+                margin: 0;
+                color: #374151;
+                line-height: 1.6;
+            }
+            
+            .risks-section h3 {
+                margin: 0 0 16px 0;
+                color: #dc2626;
+                font-size: 18px;
+            }
+            
+            .risk-item {
+                margin-bottom: 20px;
+                padding: 16px;
+                background: #fef2f2;
+                border: 1px solid #fecaca;
+                border-radius: 8px;
+            }
+            
+            .risk-item h4 {
+                margin: 0 0 8px 0;
+                color: #dc2626;
+                font-size: 16px;
+            }
+            
+            .risk-item ul {
+                margin: 0;
+                padding-left: 20px;
+                color: #374151;
+            }
+            
+            .risk-item li {
+                margin-bottom: 4px;
+                line-height: 1.5;
+            }
+            
+            .best-practice {
+                margin: 24px 0;
+                padding: 16px;
+                background: #f0f9ff;
+                border: 1px solid #bae6fd;
+                border-radius: 8px;
+            }
+            
+            .best-practice h3 {
+                margin: 0 0 8px 0;
+                color: #0369a1;
+                font-size: 16px;
+            }
+            
+            .best-practice p {
+                margin: 0;
+                color: #0369a1;
+                line-height: 1.6;
+            }
+            
+            .first-time-actions {
+                padding: 20px 24px;
+                border-top: 1px solid #e5e7eb;
+                display: flex;
+                justify-content: center;
+            }
+        `;
+        
+        document.head.appendChild(style);
+        document.body.appendChild(popup);
+
+        // Handle acceptance
+        const checkbox = document.getElementById('accept-risks');
+        const acceptBtn = document.getElementById('accept-risks-btn');
+        
+        checkbox.addEventListener('change', () => {
+            acceptBtn.disabled = !checkbox.checked;
+        });
+
+        acceptBtn.addEventListener('click', () => {
+            localStorage.setItem('yundera-risks-accepted', 'true');
+            popup.remove();
+        });
     }
 
     showNotification(message, type = 'info') {

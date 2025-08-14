@@ -1,9 +1,52 @@
 import { Repository, loadSettings } from './storage';
+import { EventEmitter } from 'events';
+
+export interface LogEntry {
+  message: string;
+  type: 'system' | 'info' | 'warning' | 'error' | 'success';
+  timestamp: number;
+}
+
+export class LogCollector extends EventEmitter {
+  private logs: LogEntry[] = [];
+  private maxLogs: number = 1000;
+
+  constructor(public repositoryId: string) {
+    super();
+  }
+
+  addLog(message: string, type: LogEntry['type'] = 'info'): void {
+    const logEntry: LogEntry = {
+      message,
+      type,
+      timestamp: Date.now()
+    };
+
+    this.logs.push(logEntry);
+
+    // Keep only recent logs to prevent memory issues
+    if (this.logs.length > this.maxLogs) {
+      this.logs.splice(0, this.logs.length - this.maxLogs);
+    }
+
+    // Emit the log entry to any connected streams
+    this.emit('log', logEntry);
+  }
+
+  getLogs(): LogEntry[] {
+    return [...this.logs];
+  }
+
+  clear(): void {
+    this.logs = [];
+  }
+}
 
 export interface BuildJob {
   id: string;
   repository: Repository;
   force: boolean;
+  runAsUser?: string;
   timestamp: number;
   status: 'queued' | 'building' | 'completed' | 'failed';
   startTime?: number;
@@ -19,6 +62,7 @@ export class BuildQueue {
   private completed: BuildJob[] = [];
   private pendingRepositoryIds: Set<string> = new Set();
   private maxConcurrent: number;
+  private logCollectors: Map<string, LogCollector> = new Map();
 
   constructor() {
     this.maxConcurrent = 2; // Default value
@@ -31,7 +75,7 @@ export class BuildQueue {
     console.log(`🔧 Build queue max concurrent builds set to: ${this.maxConcurrent}`);
   }
 
-  async addJob(repository: Repository, force: boolean = false): Promise<{ success: boolean; message: string }> {
+  async addJob(repository: Repository, force: boolean = false, runAsUser?: string): Promise<{ success: boolean; message: string }> {
     return new Promise((resolve, reject) => {
       if (this.pendingRepositoryIds.has(repository.id)) {
         resolve({ success: false, message: `Repository ${repository.name} is already queued or building` });
@@ -44,6 +88,7 @@ export class BuildQueue {
         id: `${repository.id}-${Date.now()}`,
         repository,
         force,
+        runAsUser,
         timestamp: Date.now(),
         status: 'queued',
         resolve,
@@ -75,16 +120,28 @@ export class BuildQueue {
     this.running.set(job.repository.id, job);
 
     console.log(`🚀 Starting build job for ${job.repository.name} (${this.running.size}/${this.maxConcurrent} slots used)`);
+    
+    // Get log collector for this repository
+    const logCollector = this.getLogCollector(job.repository.id);
+    logCollector.clear(); // Clear previous logs
+    
+    logCollector.addLog(`🚀 Build process started for ${job.repository.name}`, 'system');
+    logCollector.addLog(`⚙️ Job queued at ${new Date(job.timestamp).toLocaleTimeString()}`, 'info');
+    logCollector.addLog(`🔧 Build started at ${new Date(job.startTime).toLocaleTimeString()}`, 'info');
 
     try {
       // Import the processRepo function dynamically to avoid circular imports
       const { processRepo } = await import('./repository-processor');
-      const result = await processRepo(job.repository, job.force);
+      
+      // Pass the log collector to the processRepo function for real-time logging
+      const result = await processRepo(job.repository, job.force, logCollector, job.runAsUser);
 
       job.status = 'completed';
       job.endTime = Date.now();
       
-      console.log(`✅ Build job completed for ${job.repository.name} in ${job.endTime - job.startTime!}ms`);
+      const duration = job.endTime - job.startTime!;
+      console.log(`✅ Build job completed for ${job.repository.name} in ${duration}ms`);
+      logCollector.addLog(`✅ Build completed successfully in ${duration}ms`, 'success');
       
       if (job.resolve) {
         job.resolve(result);
@@ -96,6 +153,7 @@ export class BuildQueue {
       job.error = error.message;
 
       console.error(`❌ Build job failed for ${job.repository.name}:`, error);
+      logCollector.addLog(`❌ Build failed: ${error.message}`, 'error');
 
       if (job.reject) {
         job.reject(error);
@@ -105,7 +163,6 @@ export class BuildQueue {
       this.running.delete(job.repository.id);
       this.completed.push(job);
       this.pendingRepositoryIds.delete(job.repository.id);
-
 
       // Keep only last 50 completed jobs to prevent memory leak
       if (this.completed.length > 50) {
@@ -204,6 +261,20 @@ export class BuildQueue {
       return true;
     }
     return false;
+  }
+
+  getLogCollector(repositoryId: string): LogCollector {
+    if (!this.logCollectors.has(repositoryId)) {
+      this.logCollectors.set(repositoryId, new LogCollector(repositoryId));
+    }
+    return this.logCollectors.get(repositoryId)!;
+  }
+
+  clearLogs(repositoryId: string): void {
+    const collector = this.logCollectors.get(repositoryId);
+    if (collector) {
+      collector.clear();
+    }
   }
 }
 

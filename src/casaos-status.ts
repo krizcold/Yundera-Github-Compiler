@@ -1,5 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { isAppLoggingEnabled } from './config';
 
 const execAsync = promisify(exec);
 
@@ -37,10 +38,10 @@ export async function getCasaOSInstalledApps(forceRefresh: boolean = false): Pro
       try {
         const response = JSON.parse(stdout);
         
-        // Only log when apps are found (remove verbose debugging)
+        // Only log when apps are found and beacon is enabled
         if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
           const keys = Object.keys(response.data);
-          if (keys.length > 0) {
+          if (keys.length > 0 && isAppLoggingEnabled()) {
             console.log(`📱 Found ${keys.length} apps in CasaOS`);
           }
         }
@@ -81,11 +82,15 @@ export async function getCasaOSInstalledApps(forceRefresh: boolean = false): Pro
         }
         
         if (appNames.length > 0) {
-          console.log(`📱 CasaOS installed apps from ${endpoint}: [${appNames.join(', ')}]`);
+          if (isAppLoggingEnabled()) {
+            console.log(`📱 CasaOS installed apps from ${endpoint}: [${appNames.join(', ')}]`);
+          }
           return appNames;
         }
         
-        console.log(`📱 ${endpoint} returned no apps`);
+        if (isAppLoggingEnabled()) {
+          console.log(`📱 ${endpoint} returned no apps`);
+        }
       } catch (parseError) {
         console.log(`📱 Failed to parse response from ${endpoint}`);
         continue;
@@ -221,12 +226,14 @@ export async function getCasaOSAppStatus(appName: string): Promise<{
                          appData.state === 'running' ||
                          appData.running === true;
               
-              console.log(`🔍 App ${appName} status check:`, {
-                status: appData.status,
-                state: appData.state, 
-                running: appData.running,
-                isRunning
-              });
+              if (isAppLoggingEnabled()) {
+                console.log(`🔍 App ${appName} status check:`, {
+                  status: appData.status,
+                  state: appData.state, 
+                  running: appData.running,
+                  isRunning
+                });
+              }
             }
             
             return {
@@ -392,7 +399,9 @@ export async function toggleCasaOSApp(appName: string, start: boolean): Promise<
     `;
     
     const { stdout } = await execAsync(command);
-    console.log(`📡 CasaOS ${action} response for ${appName}:`, stdout);
+    if (isAppLoggingEnabled()) {
+      console.log(`📡 CasaOS ${action} response for ${appName}:`, stdout);
+    }
     
     if (stdout.includes('Connection refused') || stdout.includes('404')) {
       console.log(`❌ Failed to connect to CasaOS API`);

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { isAppLoggingEnabled } from './config';
 
 // Storage paths
 const UI_DATA_DIR = '/app/uidata';
@@ -73,7 +74,9 @@ export function loadRepositories(): Repository[] {
   try {
     const data = fs.readFileSync(REPOSITORIES_FILE, 'utf-8');
     const repos = JSON.parse(data);
-    console.log(`📋 Loaded ${repos.length} repositories from storage`);
+    if (isAppLoggingEnabled()) {
+      console.log(`📋 Loaded ${repos.length} repositories from storage`);
+    }
     return repos;
   } catch (error) {
     console.error('❌ Error loading repositories:', error);

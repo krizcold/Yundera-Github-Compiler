@@ -7,7 +7,7 @@ export interface CasaOSResult {
 
 
 export class CasaOSInstaller {
-  static installComposeAppDirectly(composeFilePath: string, repositoryId: string): Promise<CasaOSResult> {
+  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any): Promise<CasaOSResult> {
     return new Promise((resolve) => {
       const projectName = composeFilePath.split('/').slice(-2, -1)[0];
       if (!projectName) {
@@ -28,6 +28,11 @@ export class CasaOSInstaller {
         lines.forEach(line => {
           if (!line) return;
           console.log(`[${projectName} log]: ${line}`);
+          
+          // Also send to log collector for terminal display
+          if (logCollector) {
+            logCollector.addLog(`🐳 ${line}`, 'info');
+          }
         });
       };
 

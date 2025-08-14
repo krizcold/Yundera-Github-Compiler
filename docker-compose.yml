@@ -23,6 +23,21 @@ services:
       CASAOS_API_PORT: "8080"
       DATA_ROOT: $DATA_ROOT
       
+      # Yundera platform integration
+      DOMAIN: $DOMAIN
+      PROVIDER_STR: $PROVIDER_STR
+      UID: $UID
+      DEFAULT_PWD: $DEFAULT_PWD
+      PUBLIC_IP: $PUBLIC_IP
+      DEFAULT_USER: $DEFAULT_USER
+      
+      # Authentication and paths
+      JWT_SECRET: $JWT_SECRET
+      AUTHORITY_ENDPOINT: $AUTHORITY_ENDPOINT
+      COMPOSE_FOLDER_PATH: $COMPOSE_FOLDER_PATH
+      BASE_PATH: $BASE_PATH
+      MOCK: $MOCK
+      
       # Pass through the host's CasaOS environment variables.
       # These will be populated by the AppStore during installation.
       PUID: $PUID
@@ -32,6 +47,10 @@ services:
       REF_PORT: $REF_PORT
       REF_SCHEME: $REF_SCHEME
       REF_SEPARATOR: $REF_SEPARATOR
+      
+      # Debug/logging settings
+      LOG_APPS_BEACON: $LOG_APPS_BEACON
+      
       user: $user
       default_pwd: $default_pwd
       public_ip: $public_ip
@@ -109,11 +128,40 @@ x-casaos:
   webui_port: 3000
   pre-install-cmd: |
     # Generate the hash value that will be embedded into the background script.
-    AUTH_HASH=$(openssl rand -hex 64)
+    if command -v openssl >/dev/null 2>&1; then
+      AUTH_HASH=$(openssl rand -hex 64)
+    else
+      AUTH_HASH=$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    fi
     
-    # Create a simplified watcher that waits for compose file and fixes docker.sock
-    # We use `EOF` without quotes to allow the parent shell to expand ${AUTH_HASH} into the script's text.
-    # All other dollar signs are escaped (\$) to be treated as literal characters by the background script.
+    echo "🚀 Yundera GitHub Compiler pre-install starting..."
+    
+    # Setup directories for Docker exec approach
+    echo "📁 Setting up GitHub Compiler directories..."
+    
+    # Create basic directory structure for GitHub Compiler
+    mkdir -p /DATA/AppData/yunderagithubcompiler/repos 2>/dev/null
+    mkdir -p /DATA/AppData/yunderagithubcompiler/uidata 2>/dev/null
+    
+    # Set proper permissions (ubuntu user with docker group)
+    chown -R ubuntu:988 /DATA/AppData/yunderagithubcompiler/ 2>/dev/null || true
+    chmod -R 755 /DATA/AppData/yunderagithubcompiler/ 2>/dev/null || true
+    
+    echo "✅ GitHub Compiler directories created with proper permissions"
+    
+    # Test Docker access to ensure docker exec approach will work
+    if command -v docker >/dev/null 2>&1 && timeout 5 docker ps >/dev/null 2>&1; then
+        echo "✅ Docker access confirmed - pre-install commands will use docker exec approach"
+        if docker ps --filter "name=casaos" --format "{{.Names}}" | grep -q "casaos"; then
+            echo "✅ CasaOS container found - host command execution ready"
+        else
+            echo "⚠️ CasaOS container not found - may affect pre-install command execution"
+        fi
+    else
+        echo "⚠️ Docker access not available - pre-install commands may not work properly"
+    fi
+    
+    # Create the watcher
     cat > /tmp/yundera-docker-sock-fixer.sh << EOF
     #!/bin/bash
     echo "🔄 Yundera docker.sock fixer started at \$(date)"
@@ -123,6 +171,9 @@ x-casaos:
     
     echo "📁 Target compose file: \$COMPOSE_FILE"
     echo "🐳 Target container: \$CONTAINER_NAME"
+
+    # Wait briefly for system to stabilize
+    sleep 2
     
     # Get Docker group ID from host system
     echo "🔍 Detecting Docker group ID..."
@@ -137,7 +188,7 @@ x-casaos:
     # Step 1: Wait for compose file to exist
     echo "🔍 Step 1: Waiting for compose file to exist..."
     counter=0
-    max_wait=120  # 120 seconds max wait (2 minutes)
+    max_wait=120
     
     while [ \$counter -lt \$max_wait ]; do
       if [ -f "\$COMPOSE_FILE" ]; then
@@ -181,17 +232,13 @@ x-casaos:
         }' "\$COMPOSE_FILE"
         
         echo "🔧 Adding Docker group ID and AUTH_HASH to environment variables..."
-        
         sed -i "s/WEBUI_PORT: \".*\"/&\\n            DOCKER_GID: \"\$DOCKER_GID\"\\n            AUTH_HASH: \"${AUTH_HASH}\"/" "\$COMPOSE_FILE"
-        
-        echo "✅ Added docker.sock mount and environment variables to existing sections."
       else
         echo "📁 No volumes section found in service, adding one"
         
         sed -i '/^[[:space:]]*yunderagithubcompiler:/,/^[[:space:]]*networks:/ {
           /^[[:space:]]*networks:/ i\    volumes:\n        - type: bind\n          source: /var/run/docker.sock\n          target: /var/run/docker.sock\n
         }' "\$COMPOSE_FILE"
-        echo "✅ Added volumes section with docker.sock mount"
       fi
 
       # Modify the index line to include the hash
@@ -205,7 +252,7 @@ x-casaos:
     # Step 4: Wait for container to be created
     echo "🔍 Step 4: Waiting for container to be created..."
     counter=0
-    max_wait=60  # 60 seconds max wait
+    max_wait=60
     
     while [ \$counter -lt \$max_wait ]; do
       if docker ps -a --filter "name=\$CONTAINER_NAME" --format "{{.Names}}" | grep -q "^\$CONTAINER_NAME\$"; then
@@ -223,12 +270,24 @@ x-casaos:
       docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
       exit 1
     fi
+
+    # Adopt CasaOS compose project to avoid name conflicts
+    PROJECT=\$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "\$CONTAINER_NAME" 2>/dev/null || true)
+    [ -z "\$PROJECT" ] && PROJECT=\$(basename "/DATA/AppData/casaos/apps/yunderagithubcompiler")
+    echo "🔧 Using compose project: \$PROJECT"
     
     # Step 5: Restart the container with new compose file
     echo "🔄 Step 5: Restarting container with updated compose file..."
     
     cd "/DATA/AppData/casaos/apps/yunderagithubcompiler"
-    docker compose up -d --force-recreate
+    if docker compose version >/dev/null 2>&1; then
+      docker compose -p "\$PROJECT" up -d --force-recreate
+    elif command -v docker-compose >/dev/null 2>&1; then
+      docker-compose -p "\$PROJECT" up -d --force-recreate
+    else
+      echo "⚠️ No docker compose binary found; skipping restart"
+      exit 0
+    fi
     
     # Step 6: Verify the restart
     echo "✅ Step 6: Verifying restart..."

@@ -4,7 +4,7 @@ import path from "path";
 import * as fs from "fs";
 import * as crypto from "crypto";
 import axios from "axios"; // Import axios for the backend
-import { loadConfig } from "./config";
+import { loadConfig, isAppLoggingEnabled } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
@@ -73,7 +73,9 @@ function performStartupCheck() {
   managedRepos = loadRepositories();
   loadSettings(); // This ensures settings file is created with defaults if it doesn't exist
   
-  console.log(`📋 Loaded ${managedRepos.length} repositories from storage`);
+  if (isAppLoggingEnabled()) {
+    console.log(`📋 Loaded ${managedRepos.length} repositories from storage`);
+  }
   
   // Start individual timers for repositories with auto-update enabled
   managedRepos.forEach(repo => {
@@ -81,6 +83,8 @@ function performStartupCheck() {
       startRepoTimer(repo);
     }
   });
+  
+  // Docker exec approach is used for pre-install commands
   
   // Sync installation status with CasaOS
   await syncWithCasaOS();
@@ -377,10 +381,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Basic request logging (reduced verbosity)
+// Basic request logging (controlled by beacon)
 app.use((req, res, next) => {
-  // Only log non-static requests to reduce noise
-  if (!req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+  // Only log non-static requests and only when beacon is enabled
+  if (isAppLoggingEnabled() && !req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
     console.log(`📡 ${req.method} ${req.originalUrl}`);
   }
   next();
@@ -644,6 +648,7 @@ app.post("/api/repos/:id/import", validateAuthHash, async (req, res) => {
 // POST /api/repos/:id/compile - Compile/build a repository
 app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
   const { id } = req.params;
+  const { runAsUser } = req.body;
   const repo = getRepository(id);
   
   if (!repo) {
@@ -654,8 +659,10 @@ app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
     return res.status(400).json({ success: false, message: "Repository URL not set for GitHub type." });
   }
   
+  console.log(`🔧 Compile request for ${repo.name} with runAsUser: ${runAsUser || 'ubuntu (default)'}`);
+  
   try {
-    const result = await buildQueue.addJob(repo, true);
+    const result = await buildQueue.addJob(repo, true, runAsUser);
     
     if (result.success) {
       res.json({ success: true, message: result.message });
@@ -1123,6 +1130,7 @@ app.get("/api/system/status", validateAuthHash, async (req, res) => {
   });
 });
 
+
 // POST /api/repos/:id/uninstall - Uninstall app from CasaOS
 app.post("/api/repos/:id/uninstall", validateAuthHash, async (req, res) => {
   const { id } = req.params;
@@ -1301,6 +1309,64 @@ app.get("/api/repos/:id/debug", validateAuthHash, async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
+});
+
+// Log streaming endpoint for real-time terminal output
+app.get("/api/repos/:id/logs", validateAuthHash, (req, res) => {
+  const { id } = req.params;
+  const repo = getRepository(id);
+  
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+
+  // Set up Server-Sent Events
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ 
+    message: `Connected to logs for ${repo.name}`, 
+    type: 'system' 
+  })}\n\n`);
+
+  // Get or create log collector for this repository
+  const logCollector = buildQueue.getLogCollector(id);
+  
+  // Send any existing logs
+  const existingLogs = logCollector.getLogs();
+  existingLogs.forEach(log => {
+    res.write(`data: ${JSON.stringify(log)}\n\n`);
+  });
+
+  // Listen for new logs
+  const onLog = (log: any) => {
+    if (res.writable) {
+      res.write(`data: ${JSON.stringify(log)}\n\n`);
+    }
+  };
+
+  logCollector.on('log', onLog);
+
+  // Handle client disconnect
+  req.on('close', () => {
+    logCollector.removeListener('log', onLog);
+    res.end();
+  });
+
+  // Keep connection alive
+  const keepAlive = setInterval(() => {
+    if (res.writable) {
+      res.write(`data: ${JSON.stringify({ message: '', type: 'ping' })}\n\n`);
+    } else {
+      clearInterval(keepAlive);
+    }
+  }, 30000);
 });
 
 // Environment-based force update API has been removed
