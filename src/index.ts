@@ -764,6 +764,7 @@ app.put("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
 // DELETE /api/repos/:id - Remove a repository (and uninstall app if installed)
 app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
   const { id } = req.params;
+  const { preserveData } = req.body || {};
   
   // Get repository info before removing it
   const repo = getRepository(id);
@@ -851,6 +852,32 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
         console.error(`⚠️ Failed to clean up persistent storage for ${repo.name}:`, error.message);
       }
       
+      // Clean up CasaOS app data directory unless user chose to preserve it
+      const appDataDir = path.join('/DATA/AppData', repo.name);
+      if (!preserveData) {
+        try {
+          if (fs.existsSync(appDataDir)) {
+            fs.rmSync(appDataDir, { recursive: true, force: true });
+            console.log(`🗑️ Cleaned up app data directory: ${appDataDir}`);
+          }
+        } catch (error: any) {
+          console.error(`⚠️ Failed to clean up app data directory for ${repo.name}:`, error.message);
+        }
+      } else {
+        console.log(`💾 Preserving app data directory: ${appDataDir}`);
+      }
+      
+      // Clean up CasaOS metadata directory (always remove)
+      const appMetadataDir = path.join('/DATA/AppData/casaos/apps', repo.name);
+      try {
+        if (fs.existsSync(appMetadataDir)) {
+          fs.rmSync(appMetadataDir, { recursive: true, force: true });
+          console.log(`🧹 Cleaned up app metadata directory: ${appMetadataDir}`);
+        }
+      } catch (error: any) {
+        console.error(`⚠️ Failed to clean up app metadata directory for ${repo.name}:`, error.message);
+      }
+      
       // Also clean up cloned repo directory if it exists
       if (repo.url) {
         const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
@@ -866,9 +893,16 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
       }
     }
     
-    const message = repo.isInstalled 
-      ? "Repository removed and app uninstalled from CasaOS"
-      : "Repository and associated files removed successfully";
+    let message = "";
+    if (repo.isInstalled) {
+      if (preserveData) {
+        message = "Repository removed, app uninstalled from CasaOS, and application data preserved";
+      } else {
+        message = "Repository removed and app uninstalled from CasaOS";
+      }
+    } else {
+      message = "Repository and associated files removed successfully";
+    }
       
     res.json({ success: true, message });
     

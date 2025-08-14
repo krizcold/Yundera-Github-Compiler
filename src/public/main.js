@@ -520,10 +520,15 @@ class RepoManager {
     }
 
     async removeRepo(repoId) {
-        if (confirm('Are you sure you want to remove this repository? This will also uninstall the app if it is installed.')) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo) return;
+        
+        const result = await this.showUninstallConfirmation(repo);
+        if (result.proceed) {
             try {
                 const url = this.authHash ? `/api/repos/${repoId}?hash=${this.authHash}` : `/api/repos/${repoId}`;
-                await axios.delete(url);
+                const requestData = this.addAuthToRequest({ preserveData: result.preserveData });
+                await axios.delete(url, { data: requestData });
                 await this.loadRepos();
                 this.showNotification('Repository removed successfully', 'success');
             } catch (error) {
@@ -1356,6 +1361,268 @@ class RepoManager {
                 
                 popup.remove();
                 resolve({ proceed: true, runAsUser: runAsUser });
+            });
+        });
+    }
+
+    async showUninstallConfirmation(repo) {
+        return new Promise((resolve) => {
+            // Create uninstall confirmation popup
+            const popup = document.createElement('div');
+            popup.id = 'uninstall-confirmation';
+            popup.innerHTML = `
+                <div class="uninstall-backdrop"></div>
+                <div class="uninstall-container">
+                    <div class="uninstall-header">
+                        <div class="uninstall-icon">🗑️</div>
+                        <h2>Remove Repository</h2>
+                    </div>
+                    <div class="uninstall-content">
+                        <p><strong>Are you sure you want to remove "${repo.name}"?</strong></p>
+                        
+                        ${repo.isInstalled ? 
+                            `<div class="uninstall-notice">
+                                <p><i class="fas fa-info-circle"></i> This will uninstall the app from CasaOS and remove the repository.</p>
+                            </div>` : 
+                            `<div class="uninstall-notice">
+                                <p><i class="fas fa-info-circle"></i> This will remove the repository and associated configuration files.</p>
+                            </div>`
+                        }
+
+                        <div class="data-preservation">
+                            <h3>Application Data</h3>
+                            <div class="data-option">
+                                <label class="data-checkbox">
+                                    <input type="checkbox" id="preserve-app-data" ${!repo.isInstalled ? 'disabled' : ''}>
+                                    <span class="data-checkmark"></span>
+                                    <div class="data-content">
+                                        <strong>Preserve application data and configuration files</strong>
+                                        <div class="data-description">
+                                            ${repo.isInstalled ? 
+                                                'Keep files in /DATA/AppData/' + repo.name + '/ so they can be restored if you reinstall this app later.' : 
+                                                'No application data to preserve (app is not installed).'
+                                            }
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="uninstall-warning">
+                            <p><strong>⚠️ This action cannot be undone</strong></p>
+                            <ul>
+                                <li>Repository configuration will be permanently removed</li>
+                                ${repo.isInstalled ? '<li>Application will be uninstalled from CasaOS</li>' : ''}
+                                <li>Without data preservation, all settings and user data will be lost</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="uninstall-actions">
+                        <button class="btn btn-secondary" id="cancel-uninstall">Cancel</button>
+                        <button class="btn btn-danger" id="confirm-uninstall">Remove Repository</button>
+                    </div>
+                </div>
+            `;
+
+            // Add styles
+            const style = document.createElement('style');
+            style.textContent = `
+                #uninstall-confirmation {
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    z-index: 10000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                
+                .uninstall-backdrop {
+                    position: absolute;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0, 0, 0, 0.8);
+                    backdrop-filter: blur(4px);
+                }
+                
+                .uninstall-container {
+                    position: relative;
+                    width: 90%;
+                    max-width: 500px;
+                    max-height: 80vh;
+                    background: white;
+                    border-radius: 12px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                    display: flex;
+                    flex-direction: column;
+                }
+                
+                .uninstall-header {
+                    background: #dc2626;
+                    color: white;
+                    padding: 20px;
+                    border-radius: 12px 12px 0 0;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+                
+                .uninstall-icon {
+                    font-size: 24px;
+                }
+                
+                .uninstall-header h2 {
+                    margin: 0;
+                    font-size: 20px;
+                }
+                
+                .uninstall-content {
+                    padding: 20px;
+                    overflow-y: auto;
+                    flex: 1;
+                }
+                
+                .uninstall-notice {
+                    background: #f0f9ff;
+                    border: 1px solid #0ea5e9;
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 16px 0;
+                    color: #0c4a6e;
+                }
+                
+                .uninstall-notice i {
+                    margin-right: 8px;
+                }
+                
+                .data-preservation {
+                    background: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin: 16px 0;
+                }
+                
+                .data-preservation h3 {
+                    margin: 0 0 12px 0;
+                    color: #374151;
+                    font-size: 16px;
+                }
+                
+                .data-option {
+                    display: flex;
+                    align-items: flex-start;
+                }
+                
+                .data-checkbox {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    cursor: pointer;
+                    width: 100%;
+                }
+                
+                .data-checkbox input[type="checkbox"] {
+                    display: none;
+                }
+                
+                .data-checkmark {
+                    width: 18px;
+                    height: 18px;
+                    border: 2px solid #d1d5db;
+                    border-radius: 4px;
+                    background: white;
+                    flex-shrink: 0;
+                    position: relative;
+                    margin-top: 2px;
+                }
+                
+                .data-checkbox input[type="checkbox"]:checked + .data-checkmark {
+                    border-color: #059669;
+                    background: #059669;
+                }
+                
+                .data-checkbox input[type="checkbox"]:checked + .data-checkmark::after {
+                    content: '✓';
+                    position: absolute;
+                    top: -2px;
+                    left: 2px;
+                    color: white;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                
+                .data-checkbox input[type="checkbox"]:disabled + .data-checkmark {
+                    background: #f3f4f6;
+                    border-color: #d1d5db;
+                    cursor: not-allowed;
+                }
+                
+                .data-checkbox:has(input:disabled) {
+                    cursor: not-allowed;
+                    opacity: 0.6;
+                }
+                
+                .data-content {
+                    flex: 1;
+                }
+                
+                .data-content strong {
+                    display: block;
+                    margin-bottom: 4px;
+                    font-weight: 600;
+                }
+                
+                .data-description {
+                    font-size: 14px;
+                    color: #6b7280;
+                    line-height: 1.4;
+                }
+                
+                .uninstall-warning {
+                    background: #fef2f2;
+                    border: 1px solid #fecaca;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin: 16px 0;
+                }
+                
+                .uninstall-warning p {
+                    margin: 0 0 8px 0;
+                    color: #dc2626;
+                    font-weight: 600;
+                }
+                
+                .uninstall-warning ul {
+                    margin: 0;
+                    padding-left: 20px;
+                    color: #dc2626;
+                }
+                
+                .uninstall-actions {
+                    padding: 16px 20px;
+                    border-top: 1px solid #e5e7eb;
+                    display: flex;
+                    gap: 12px;
+                    justify-content: flex-end;
+                }
+            `;
+            
+            document.head.appendChild(style);
+            document.body.appendChild(popup);
+
+            // Handle button clicks
+            const cancelBtn = document.getElementById('cancel-uninstall');
+            const confirmBtn = document.getElementById('confirm-uninstall');
+            const preserveDataCheckbox = document.getElementById('preserve-app-data');
+
+            cancelBtn.addEventListener('click', () => {
+                popup.remove();
+                resolve({ proceed: false });
+            });
+
+            confirmBtn.addEventListener('click', () => {
+                const preserveData = preserveDataCheckbox.checked;
+                popup.remove();
+                resolve({ proceed: true, preserveData: preserveData });
             });
         });
     }
