@@ -75,7 +75,7 @@ export async function processRepo(
     
     log(`🔧 Loading settings and preprocessing compose file...`, 'info');
     const settings = loadSettings();
-    const { rich } = preprocessAppstoreCompose(composeObject, settings);
+    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings);
     log(`✅ Compose file preprocessing completed`, 'success');
 
     // Step 3: Create all host volume paths
@@ -83,9 +83,9 @@ export async function processRepo(
     let volumeCount = 0;
     const createdPaths = new Set<string>(); // Track unique paths to avoid duplicates
     
-    if (rich.services) {
-        for (const serviceName in rich.services) {
-            const service = rich.services[serviceName];
+    if (clean.services) {
+        for (const serviceName in clean.services) {
+            const service = clean.services[serviceName];
             if (service.volumes) {
                 for (const volume of service.volumes) {
                     const hostPath = typeof volume === 'string' ? volume.split(':')[0] : volume.source;
@@ -158,7 +158,7 @@ export async function processRepo(
         fs.mkdirSync(hostMetadataDir, { recursive: true });
     }
     
-    fs.writeFileSync(hostComposePath, yaml.stringify(rich));
+    fs.writeFileSync(hostComposePath, yaml.stringify(clean));
     log(`✅ Compose file saved successfully`, 'success');
 
     // Step 5: Install the containers by calling Docker Compose directly.

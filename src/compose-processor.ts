@@ -158,12 +158,6 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
         for (const serviceName in richCompose.services) {
             const service = richCompose.services[serviceName];
 
-            // Add AppID to environment for all services
-            if (!service.environment) {
-                service.environment = {};
-            }
-            service.environment.AppID = appId;
-
             // Convert ports to expose for CasaOS AppStore compatibility
             if (service.ports && Array.isArray(service.ports)) {
                 // Extract container ports from ports array and convert to expose
@@ -322,6 +316,24 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 richCompose['x-casaos'].scheme = settings.refScheme || 'https';
                 richCompose['x-casaos'].port_map = settings.refScheme === 'https' ? "443" : "80";
             }
+        }
+
+        // Process template variables in x-casaos volumes
+        if (richCompose['x-casaos'].volumes && Array.isArray(richCompose['x-casaos'].volumes)) {
+            richCompose['x-casaos'].volumes = richCompose['x-casaos'].volumes.map((volume: string) => {
+                if (typeof volume === 'string') {
+                    return volume
+                        .replace(/\$\{?PUID\}?/g, settings.puid)
+                        .replace(/\$\{?PGID\}?/g, settings.pgid)
+                        .replace(/\$\{?APP_ID\}?/g, appId)
+                        .replace(/\$AppID/g, appId)
+                        .replace(/\$\{?REF_DOMAIN\}?/g, settings.refDomain || '')
+                        .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme || '')
+                        .replace(/\$\{?REF_PORT\}?/g, settings.refPort || '');
+                }
+                return volume;
+            });
+            console.log(`🔄 Processed template variables in x-casaos volumes`);
         }
 
         console.log(`✅ Added CasaOS metadata to x-casaos section for ${appId}`);
