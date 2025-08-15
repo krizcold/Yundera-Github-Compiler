@@ -164,42 +164,53 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             }
             service.environment.AppID = appId;
 
-            // Only process the main service for port handling
-            if (serviceName === mainServiceKey && useDynamicWebUIPort) {
-                // Generate random WebUI port for this service only
-                const randomPort = 30000 + Math.floor(Math.random() * 35000);
-                richCompose['x-casaos'].webui_port = randomPort;
-
-                console.log(`🎲 Generated random WebUI port for ${appId}: ${randomPort}`);
-
-                // Find and update port mappings
-                if (service.ports && Array.isArray(service.ports)) {
-                    const updatedPorts = service.ports.map((portMapping: any) => {
-                        if (typeof portMapping === 'string') {
-                            // Handle string format like "8080:8080"
-                            const [hostPort, containerPort] = portMapping.split(':');
-                            if (hostPort && containerPort) {
-                                return `${randomPort}:${containerPort}`;
-                            }
-                        } else if (typeof portMapping === 'object' && portMapping.target) {
-                            // Handle object format
-                            return {
-                                ...portMapping,
-                                published: randomPort
-                            };
+            // Convert ports to expose for CasaOS AppStore compatibility
+            if (service.ports && Array.isArray(service.ports)) {
+                // Extract container ports from ports array and convert to expose
+                const exposedPorts: string[] = [];
+                
+                service.ports.forEach((portMapping: any) => {
+                    if (typeof portMapping === 'string') {
+                        // Handle string format like "8080:8080" or "8080"
+                        const parts = portMapping.split(':');
+                        const containerPort = parts.length > 1 ? parts[1] : parts[0];
+                        if (containerPort && !exposedPorts.includes(containerPort)) {
+                            exposedPorts.push(containerPort);
                         }
-                        return portMapping;
-                    });
-                    
-                    service.ports = updatedPorts;
-                    console.log(`🔄 Updated port mappings for service ${serviceName}`);
+                    } else if (typeof portMapping === 'object' && portMapping.target) {
+                        // Handle object format
+                        const containerPort = portMapping.target.toString();
+                        if (!exposedPorts.includes(containerPort)) {
+                            exposedPorts.push(containerPort);
+                        }
+                    }
+                });
+
+                // Convert ports to expose for CasaOS compatibility
+                if (exposedPorts.length > 0) {
+                    service.expose = exposedPorts;
+                    delete service.ports; // Remove ports array
+                    console.log(`🔄 Converted ports to expose for ${serviceName}: [${exposedPorts.join(', ')}]`);
+                }
+            }
+
+            // Add required CasaOS metadata for main service
+            if (serviceName === mainServiceKey) {
+                // Add hostname
+                service.hostname = appId;
+
+                // Add proper user (PUID:PGID from settings)
+                service.user = `${settings.puid}:${settings.pgid}`;
+
+                // Add icon as label if available from x-casaos
+                if (richCompose['x-casaos']?.icon) {
+                    if (!service.labels) {
+                        service.labels = {};
+                    }
+                    service.labels.icon = richCompose['x-casaos'].icon;
                 }
 
-                // Update expose section if it exists
-                if (service.expose && Array.isArray(service.expose)) {
-                    // Keep expose as-is, it's for inter-container communication
-                    console.log(`ℹ️ Keeping expose unchanged for service ${serviceName}`);
-                }
+                console.log(`✅ Added CasaOS metadata for main service ${serviceName}`);
             }
 
             // Helper function to replace template variables in strings
@@ -259,28 +270,61 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             }
 
             // Process template substitutions in labels
-            if (service.labels && Array.isArray(service.labels)) {
-                service.labels = service.labels.map((label: any) => {
-                    if (typeof label === 'string') {
-                        return replaceTemplateVars(label);
-                    }
-                    return label;
-                });
-            }
-
-            // Extract icon from service labels if available
             if (service.labels) {
-                for (const label of service.labels) {
-                    if (typeof label === 'string' && label.includes('icon=')) {
-                        const iconMatch = label.match(/icon=(.+)/);
-                        if (iconMatch) {
-                            richCompose['x-casaos'].icon = iconMatch[1];
-                            break;
+                if (Array.isArray(service.labels)) {
+                    // Handle labels as array
+                    service.labels = service.labels.map((label: any) => {
+                        if (typeof label === 'string') {
+                            return replaceTemplateVars(label);
                         }
+                        return label;
+                    });
+                    
+                    // Extract icon from array labels if available
+                    for (const label of service.labels) {
+                        if (typeof label === 'string' && label.includes('icon=')) {
+                            const iconMatch = label.match(/icon=(.+)/);
+                            if (iconMatch) {
+                                richCompose['x-casaos'].icon = iconMatch[1];
+                                break;
+                            }
+                        }
+                    }
+                } else if (typeof service.labels === 'object') {
+                    // Handle labels as object (most common)
+                    for (const [key, value] of Object.entries(service.labels)) {
+                        if (typeof value === 'string') {
+                            service.labels[key] = replaceTemplateVars(value);
+                        }
+                    }
+                    
+                    // Extract icon from object labels if available
+                    if (service.labels.icon) {
+                        richCompose['x-casaos'].icon = service.labels.icon;
                     }
                 }
             }
         }
+    }
+
+    // Add required CasaOS metadata to x-casaos section
+    if (richCompose['x-casaos']) {
+        // Add missing required fields for CasaOS compatibility
+        richCompose['x-casaos'].is_uncontrolled = false;
+        richCompose['x-casaos'].store_app_id = appId;
+
+        // Generate hostname using REF_DOMAIN format if available
+        if (settings.refDomain) {
+            const mainService = richCompose.services[mainServiceKey];
+            if (mainService && mainService.expose && mainService.expose.length > 0) {
+                const port = mainService.expose[0];
+                richCompose['x-casaos'].hostname = `${port}-${appId}-${settings.refDomain}`;
+                richCompose['x-casaos'].scheme = settings.refScheme || 'https';
+                richCompose['x-casaos'].port_map = settings.refScheme === 'https' ? "443" : "80";
+            }
+        }
+
+        console.log(`✅ Added CasaOS metadata to x-casaos section for ${appId}`);
     }
 
     // Create clean version by removing pre-install-cmd and other CasaOS-specific stuff
