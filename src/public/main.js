@@ -1050,6 +1050,8 @@ class RepoManager {
                             </ul>
                         </div>
 
+                    </div>
+                    <div class="warning-actions">
                         <div class="consent-section">
                             <label class="consent-checkbox">
                                 <input type="checkbox" id="understand-risks">
@@ -1057,10 +1059,10 @@ class RepoManager {
                                 I understand the risks and have reviewed the command above. I trust the developer of this application.
                             </label>
                         </div>
-                    </div>
-                    <div class="warning-actions">
-                        <button class="btn btn-secondary" id="cancel-install">Cancel</button>
-                        <button class="btn btn-danger" id="proceed-install" disabled>Install Anyway</button>
+                        <div class="action-buttons">
+                            <button class="btn btn-secondary" id="cancel-install">Cancel</button>
+                            <button class="btn btn-danger" id="proceed-install" disabled>Install Anyway</button>
+                        </div>
                     </div>
                 </div>
             `;
@@ -1153,7 +1155,7 @@ class RepoManager {
                 
                 .command-text {
                     width: 100%;
-                    height: 120px;
+                    height: 200px;
                     padding: 12px;
                     border: 1px solid #d1d5db;
                     border-radius: 6px;
@@ -1184,7 +1186,8 @@ class RepoManager {
                 }
                 
                 .consent-section {
-                    margin: 20px 0;
+                    margin: 0;
+                    flex: 1;
                 }
                 
                 .consent-checkbox {
@@ -1310,8 +1313,14 @@ class RepoManager {
                     padding: 16px 20px;
                     border-top: 1px solid #e5e7eb;
                     display: flex;
+                    align-items: center;
+                    gap: 20px;
+                    justify-content: space-between;
+                }
+                
+                .action-buttons {
+                    display: flex;
                     gap: 12px;
-                    justify-content: flex-end;
                 }
                 
                 .btn:disabled {
