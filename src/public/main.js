@@ -1870,7 +1870,10 @@ class RepoManager {
         this.terminalSession = {
             currentDir: '/',
             envVars: {},
-            user: 'ubuntu'
+            user: 'ubuntu',
+            commandHistory: [],
+            historyIndex: -1,
+            directoryCache: new Map() // Cache directory listings for faster autocomplete
         };
         
         // Create terminal popup
@@ -1905,6 +1908,18 @@ class RepoManager {
                     </div>
                 </div>
                 <div class="terminal-body">
+                    <div class="terminal-sidebar" id="terminal-sidebar">
+                        <div class="sidebar-header">
+                            <span class="sidebar-title">Files</span>
+                            <button id="refresh-files-btn" class="terminal-btn" title="Refresh directory listing">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                        <div class="sidebar-path" id="sidebar-current-path">/</div>
+                        <div class="file-list" id="file-browser">
+                            <div class="loading-files">Loading...</div>
+                        </div>
+                    </div>
                     <div class="terminal-content" id="terminal-output">
                         <div class="log-line system">🖥️ Interactive Terminal Ready</div>
                     </div>
@@ -1913,9 +1928,17 @@ class RepoManager {
                     <div class="terminal-prompt">
                         <span id="terminal-prompt-text">ubuntu@casaos:/$</span>
                         <input type="text" id="terminal-command-input" placeholder="Enter command..." autocomplete="off">
-                        <button id="terminal-execute-btn" class="terminal-btn">
-                            <i class="fas fa-play"></i>
-                        </button>
+                        <div class="terminal-controls">
+                            <button id="history-prev-btn" class="terminal-btn" title="Previous command (↑)" disabled>
+                                <i class="fas fa-chevron-up"></i>
+                            </button>
+                            <button id="history-next-btn" class="terminal-btn" title="Next command (↓)" disabled>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <button id="terminal-execute-btn" class="terminal-btn" title="Execute command (Enter)">
+                                <i class="fas fa-play"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1943,10 +1966,10 @@ class RepoManager {
             
             #interactive-terminal-popup .terminal-container {
                 position: relative;
-                width: 90%;
-                max-width: 1000px;
-                height: 70%;
-                max-height: 600px;
+                width: 95%;
+                max-width: 1400px;
+                height: 80%;
+                max-height: 800px;
                 background: #1a1a1a;
                 border-radius: 12px;
                 border: 1px solid #333;
@@ -2024,7 +2047,7 @@ class RepoManager {
                 flex: 1;
                 overflow: hidden;
                 display: flex;
-                flex-direction: column;
+                flex-direction: row;
             }
             
             #interactive-terminal-popup .terminal-content {
@@ -2050,6 +2073,12 @@ class RepoManager {
                 gap: 8px;
                 font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
                 font-size: 13px;
+            }
+            
+            #interactive-terminal-popup .terminal-controls {
+                display: flex;
+                align-items: center;
+                gap: 4px;
             }
             
             #interactive-terminal-popup .terminal-prompt span {
@@ -2081,6 +2110,160 @@ class RepoManager {
             #interactive-terminal-popup .log-line.info { color: #90caf9; }
             #interactive-terminal-popup .log-line.command { color: #81c784; }
             #interactive-terminal-popup .log-line.output { color: #e0e0e0; }
+            
+            /* Sidebar styles */
+            #interactive-terminal-popup .terminal-sidebar {
+                width: 280px;
+                min-width: 280px;
+                background: #2d2d2d;
+                border-right: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            
+            #interactive-terminal-popup .sidebar-header {
+                padding: 8px 12px;
+                background: #333;
+                border-bottom: 1px solid #444;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            #interactive-terminal-popup .sidebar-title {
+                color: #fff;
+                font-weight: 600;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            
+            #interactive-terminal-popup .sidebar-path {
+                padding: 8px 12px;
+                background: #262626;
+                border-bottom: 1px solid #333;
+                color: #888;
+                font-size: 11px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                word-break: break-all;
+            }
+            
+            #interactive-terminal-popup .file-list {
+                flex: 1;
+                overflow-y: auto;
+                padding: 4px 0;
+            }
+            
+            #interactive-terminal-popup .file-item {
+                padding: 4px 12px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                color: #ccc;
+                font-size: 12px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                border-bottom: 1px solid transparent;
+                transition: all 0.1s;
+                user-select: none;
+                -webkit-user-select: none;
+                -moz-user-select: none;
+                -ms-user-select: none;
+            }
+            
+            #interactive-terminal-popup .file-item:hover {
+                background: #333;
+                color: #fff;
+            }
+            
+            #interactive-terminal-popup .file-item.directory {
+                color: #64b5f6;
+            }
+            
+            #interactive-terminal-popup .file-item.file {
+                color: #e0e0e0;
+            }
+            
+            #interactive-terminal-popup .file-item.executable {
+                color: #81c784;
+            }
+            
+            #interactive-terminal-popup .file-icon {
+                width: 14px;
+                text-align: center;
+                flex-shrink: 0;
+            }
+            
+            #interactive-terminal-popup .file-name {
+                flex: 1;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            
+            #interactive-terminal-popup .file-details {
+                font-size: 10px;
+                color: #666;
+                flex-shrink: 0;
+            }
+            
+            #interactive-terminal-popup .loading-files {
+                padding: 20px;
+                text-align: center;
+                color: #888;
+                font-size: 12px;
+            }
+            
+            /* File item selection and context menu */
+            #interactive-terminal-popup .file-item.selected {
+                background: #2563eb;
+                color: white;
+            }
+            
+            #interactive-terminal-popup .context-menu {
+                position: absolute;
+                background: #2d2d2d;
+                border: 1px solid #555;
+                border-radius: 6px;
+                padding: 4px 0;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                z-index: 100;
+                min-width: 150px;
+                display: none;
+            }
+            
+            #interactive-terminal-popup .context-menu-item {
+                padding: 8px 16px;
+                color: #ccc;
+                cursor: pointer;
+                font-size: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                transition: background 0.1s;
+            }
+            
+            #interactive-terminal-popup .context-menu-item:hover {
+                background: #444;
+                color: white;
+            }
+            
+            #interactive-terminal-popup .context-menu-item.disabled {
+                color: #666;
+                cursor: not-allowed;
+            }
+            
+            #interactive-terminal-popup .context-menu-item.disabled:hover {
+                background: transparent;
+                color: #666;
+            }
+            
+            #interactive-terminal-popup .context-menu-separator {
+                height: 1px;
+                background: #555;
+                margin: 4px 0;
+            }
         `;
 
         if (!document.getElementById('interactive-terminal-styles')) {
@@ -2134,17 +2317,41 @@ class RepoManager {
         };
 
         executeBtn.addEventListener('click', executeCommand);
-        commandInput.addEventListener('keypress', (e) => {
+        
+        // Handle keyboard events for command input
+        commandInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 executeCommand();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.navigateHistory('prev');
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.navigateHistory('next');
+            } else if (e.key === 'Tab') {
+                e.preventDefault();
+                this.handleTabCompletion();
             }
         });
+        
+        // Handle history navigation buttons
+        const historyPrevBtn = document.getElementById('history-prev-btn');
+        const historyNextBtn = document.getElementById('history-next-btn');
+        
+        historyPrevBtn.addEventListener('click', () => this.navigateHistory('prev'));
+        historyNextBtn.addEventListener('click', () => this.navigateHistory('next'));
 
         // Focus command input
         commandInput.focus();
         
         // Initialize prompt
         this.updateTerminalPrompt();
+        
+        // Set up sidebar event handlers
+        this.setupSidebarHandlers();
+        
+        // Cache initial directory listing and update sidebar
+        this.initializeSidebar();
     }
 
     updateTerminalPrompt() {
@@ -2157,11 +2364,820 @@ class RepoManager {
             }
             promptText.textContent = `${this.terminalSession.user}@casaos:${displayDir}$`;
         }
+        
+        // Update sidebar path display
+        const sidebarPath = document.getElementById('sidebar-current-path');
+        if (sidebarPath) {
+            sidebarPath.textContent = this.terminalSession.currentDir;
+        }
+    }
+
+    setupSidebarHandlers() {
+        const refreshBtn = document.getElementById('refresh-files-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                this.updateSidebar();
+            });
+        }
+    }
+
+    async initializeSidebar() {
+        try {
+            // Wait for initial directory caching to complete
+            await this.cacheDirectoryListing(this.terminalSession.currentDir, 'ubuntu');
+            // Then update the sidebar with the cached data
+            this.updateSidebar();
+        } catch (error) {
+            console.error('Failed to initialize sidebar:', error);
+            // Still try to update sidebar even if caching failed
+            this.updateSidebar();
+        }
+    }
+
+    async updateSidebar() {
+        const fileBrowser = document.getElementById('file-browser');
+        if (!fileBrowser) return;
+
+        // Check cache first
+        const cached = this.terminalSession.directoryCache.get(this.terminalSession.currentDir);
+        if (cached && (Date.now() - cached.timestamp < 30000)) { // 30 second cache
+            console.log('Using cached directory listing for sidebar');
+            this.renderFileList(cached.files);
+            return;
+        }
+
+        // Show loading
+        fileBrowser.innerHTML = '<div class="loading-files">Loading...</div>';
+
+        try {
+            const userSelect = document.getElementById('terminal-user');
+            let runAsUser = userSelect ? userSelect.value : 'ubuntu';
+            if (runAsUser === 'custom') {
+                const customUserInput = document.getElementById('custom-user');
+                runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
+            }
+
+            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+                path: '',
+                currentDir: this.terminalSession.currentDir,
+                runAsUser: runAsUser
+            }));
+
+            if (response.data.success && response.data.completions) {
+                console.log('Received directory listing:', response.data.completions);
+                // Update cache
+                this.terminalSession.directoryCache.set(this.terminalSession.currentDir, {
+                    files: response.data.completions,
+                    timestamp: Date.now()
+                });
+
+                this.renderFileList(response.data.completions);
+            } else {
+                fileBrowser.innerHTML = '<div class="loading-files">No files found</div>';
+            }
+        } catch (error) {
+            console.error('Failed to load directory:', error);
+            fileBrowser.innerHTML = '<div class="loading-files">Error loading files</div>';
+        }
+    }
+
+    renderFileList(files) {
+        const fileBrowser = document.getElementById('file-browser');
+        if (!fileBrowser) return;
+
+        // Sort files: directories first, then files, alphabetically
+        const sortedFiles = files.sort((a, b) => {
+            if (a.type !== b.type) {
+                return a.type === 'directory' ? -1 : 1;
+            }
+            return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        });
+
+        fileBrowser.innerHTML = '';
+
+        // Add parent directory entry if not in root
+        if (this.terminalSession.currentDir !== '/') {
+            const parentItem = document.createElement('div');
+            parentItem.className = 'file-item directory';
+            parentItem.innerHTML = `
+                <span class="file-icon">📁</span>
+                <span class="file-name">..</span>
+                <span class="file-details">parent</span>
+            `;
+            parentItem.addEventListener('dblclick', () => {
+                this.navigateToDirectory('..');
+            });
+            fileBrowser.appendChild(parentItem);
+        }
+
+        sortedFiles.forEach((file, index) => {
+            const fileItem = document.createElement('div');
+            fileItem.className = `file-item ${file.type}`;
+            fileItem.dataset.fileName = file.name;
+            fileItem.dataset.fileType = file.type;
+            fileItem.dataset.index = index;
+            
+            let icon = '📄';
+            if (file.type === 'directory') {
+                icon = '📁';
+            } else if (file.permissions && file.permissions.includes('x')) {
+                icon = '⚡';
+                fileItem.classList.add('executable');
+            }
+
+            fileItem.innerHTML = `
+                <span class="file-icon">${icon}</span>
+                <span class="file-name" title="${file.name}">${file.name}</span>
+                <span class="file-details">${file.size || ''}</span>
+            `;
+
+            // Add click handler for selection
+            fileItem.addEventListener('click', (e) => {
+                this.handleFileItemClick(fileItem, e);
+            });
+
+            // Add double-click handler for directories
+            if (file.type === 'directory') {
+                fileItem.addEventListener('dblclick', () => {
+                    this.navigateToDirectory(file.name);
+                });
+            }
+
+            // Add right-click context menu
+            fileItem.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                this.showContextMenu(e, fileItem);
+            });
+
+            fileBrowser.appendChild(fileItem);
+        });
+
+        // Add context menu HTML if not exists
+        this.createContextMenu();
+    }
+
+    handleFileItemClick(fileItem, event) {
+        const fileBrowser = document.getElementById('file-browser');
+        
+        if (event.shiftKey) {
+            // Multi-selection with Shift
+            const selectedItems = fileBrowser.querySelectorAll('.file-item.selected');
+            const allItems = Array.from(fileBrowser.querySelectorAll('.file-item'));
+            
+            if (selectedItems.length > 0) {
+                const lastSelected = selectedItems[selectedItems.length - 1];
+                const startIndex = allItems.indexOf(lastSelected);
+                const endIndex = allItems.indexOf(fileItem);
+                const minIndex = Math.min(startIndex, endIndex);
+                const maxIndex = Math.max(startIndex, endIndex);
+                
+                // Select range
+                for (let i = minIndex; i <= maxIndex; i++) {
+                    allItems[i].classList.add('selected');
+                }
+            } else {
+                fileItem.classList.add('selected');
+            }
+        } else if (event.ctrlKey || event.metaKey) {
+            // Toggle selection with Ctrl/Cmd
+            fileItem.classList.toggle('selected');
+        } else {
+            // Single selection
+            fileBrowser.querySelectorAll('.file-item.selected').forEach(item => {
+                item.classList.remove('selected');
+            });
+            fileItem.classList.add('selected');
+        }
+    }
+
+    createContextMenu() {
+        let contextMenu = document.getElementById('file-context-menu');
+        if (contextMenu) return;
+
+        contextMenu = document.createElement('div');
+        contextMenu.id = 'file-context-menu';
+        contextMenu.className = 'context-menu';
+        contextMenu.innerHTML = `
+            <div class="context-menu-item" data-action="open">
+                <span>📁</span>
+                <span>Open</span>
+            </div>
+            <div class="context-menu-separator"></div>
+            <div class="context-menu-item" data-action="rename">
+                <span>✏️</span>
+                <span>Rename</span>
+            </div>
+            <div class="context-menu-item" data-action="delete">
+                <span>🗑️</span>
+                <span>Delete</span>
+            </div>
+        `;
+
+        // Add click handlers
+        contextMenu.addEventListener('click', (e) => {
+            const item = e.target.closest('.context-menu-item');
+            if (item && !item.classList.contains('disabled')) {
+                const action = item.dataset.action;
+                this.handleContextMenuAction(action);
+            }
+            this.hideContextMenu();
+        });
+
+        // Append to terminal container instead of body
+        const terminalContainer = document.querySelector('#interactive-terminal-popup .terminal-container');
+        if (terminalContainer) {
+            terminalContainer.appendChild(contextMenu);
+        } else {
+            document.body.appendChild(contextMenu);
+        }
+
+        // Hide context menu when clicking elsewhere
+        document.addEventListener('click', () => {
+            this.hideContextMenu();
+        });
+    }
+
+    showContextMenu(event, fileItem) {
+        const contextMenu = document.getElementById('file-context-menu');
+        if (!contextMenu) return;
+
+        // Select the right-clicked item if not already selected
+        if (!fileItem.classList.contains('selected')) {
+            document.querySelectorAll('.file-item.selected').forEach(item => {
+                item.classList.remove('selected');
+            });
+            fileItem.classList.add('selected');
+        }
+
+        // Show context menu at cursor position relative to the terminal container
+        const terminalContainer = document.querySelector('#interactive-terminal-popup .terminal-container');
+        const containerRect = terminalContainer.getBoundingClientRect();
+        
+        contextMenu.style.display = 'block';
+        contextMenu.style.left = (event.clientX - containerRect.left) + 'px';
+        contextMenu.style.top = (event.clientY - containerRect.top) + 'px';
+
+        // Update menu items based on selection
+        const selectedItems = document.querySelectorAll('.file-item.selected');
+        const openItem = contextMenu.querySelector('[data-action="open"]');
+        
+        if (selectedItems.length === 1 && selectedItems[0].dataset.fileType === 'directory') {
+            openItem.classList.remove('disabled');
+        } else {
+            openItem.classList.add('disabled');
+        }
+    }
+
+    hideContextMenu() {
+        const contextMenu = document.getElementById('file-context-menu');
+        if (contextMenu) {
+            contextMenu.style.display = 'none';
+        }
+    }
+
+    handleContextMenuAction(action) {
+        const selectedItems = Array.from(document.querySelectorAll('.file-item.selected'));
+        
+        switch (action) {
+            case 'open':
+                if (selectedItems.length === 1 && selectedItems[0].dataset.fileType === 'directory') {
+                    this.navigateToDirectory(selectedItems[0].dataset.fileName);
+                }
+                break;
+            case 'rename':
+                if (selectedItems.length === 1) {
+                    this.renameFile(selectedItems[0].dataset.fileName);
+                }
+                break;
+            case 'delete':
+                if (selectedItems.length > 0) {
+                    this.showDeleteConfirmation(selectedItems);
+                }
+                break;
+        }
+    }
+
+    showDeleteConfirmation(selectedItems) {
+        const fileNames = selectedItems.map(item => item.dataset.fileName);
+        
+        // Hide context menu first
+        this.hideContextMenu();
+        
+        // Create delete confirmation modal
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.id = 'delete-confirmation-modal';
+        modal.style.zIndex = '10002'; // Higher than context menu (z-index: 100)
+        modal.innerHTML = `
+            <div class="modal-content" style="width: 500px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h3>⚠️ Confirm Delete</h3>
+                    <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>Are you sure you want to delete the following ${fileNames.length} item(s)?</strong></p>
+                    <p style="color: #dc2626; font-size: 14px; margin: 10px 0;">This action cannot be undone!</p>
+                    <div style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 10px; background: #f9f9f9;">
+                        ${fileNames.map(name => `<div style="padding: 2px 0; font-family: monospace;">${name}</div>`).join('')}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancel</button>
+                    <button class="btn" style="background: #dc2626; color: white;" onclick="repoManager.confirmDelete(['${fileNames.join("', '")}']); this.closest('.modal').remove();">
+                        🗑️ Delete ${fileNames.length} item(s)
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        modal.style.display = 'block';
+        document.body.appendChild(modal);
+    }
+
+    async confirmDelete(fileNames) {
+        // Clear selections
+        document.querySelectorAll('.file-item.selected').forEach(item => {
+            item.classList.remove('selected');
+        });
+
+        try {
+            const userSelect = document.getElementById('terminal-user');
+            let runAsUser = userSelect ? userSelect.value : 'ubuntu';
+            if (runAsUser === 'custom') {
+                const customUserInput = document.getElementById('custom-user');
+                runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
+            }
+
+            const response = await axios.post('/api/terminal/delete', this.addAuthToRequest({
+                fileNames: fileNames,
+                currentDir: this.terminalSession.currentDir,
+                runAsUser: runAsUser
+            }));
+
+            // Add to terminal history
+            this.addToTerminalHistory(`rm ${fileNames.map(f => `"${f}"`).join(' ')}`, response.data.success ? response.data.message : `❌ ${response.data.message}`);
+
+            if (response.data.success) {
+                this.showNotification(`✅ ${response.data.message}`, 'success');
+                // Clear cache and refresh sidebar after a small delay
+                this.terminalSession.directoryCache.delete(this.terminalSession.currentDir);
+                setTimeout(() => {
+                    this.updateSidebar();
+                }, 500);
+            } else {
+                this.showNotification(`❌ ${response.data.message}`, 'error');
+            }
+        } catch (error) {
+            console.error('Delete failed:', error);
+            this.showNotification(`❌ Delete failed: ${error.message}`, 'error');
+        }
+    }
+
+    async renameFile(fileName) {
+        const newName = prompt(`Rename "${fileName}" to:`, fileName);
+        if (newName && newName !== fileName) {
+            try {
+                const userSelect = document.getElementById('terminal-user');
+                let runAsUser = userSelect ? userSelect.value : 'ubuntu';
+                if (runAsUser === 'custom') {
+                    const customUserInput = document.getElementById('custom-user');
+                    runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
+                }
+
+                const response = await axios.post('/api/terminal/rename', this.addAuthToRequest({
+                    oldName: fileName,
+                    newName: newName,
+                    currentDir: this.terminalSession.currentDir,
+                    runAsUser: runAsUser
+                }));
+
+                // Add to terminal history
+                this.addToTerminalHistory(`mv "${fileName}" "${newName}"`, response.data.success ? response.data.message : `❌ ${response.data.message}`);
+
+                if (response.data.success) {
+                    this.showNotification(`✅ ${response.data.message}`, 'success');
+                    // Clear cache and refresh sidebar after a small delay
+                    this.terminalSession.directoryCache.delete(this.terminalSession.currentDir);
+                    setTimeout(() => {
+                        this.updateSidebar();
+                    }, 500);
+                } else {
+                    this.showNotification(`❌ ${response.data.message}`, 'error');
+                }
+            } catch (error) {
+                console.error('Rename failed:', error);
+                this.showNotification(`❌ Rename failed: ${error.message}`, 'error');
+            }
+        }
+    }
+
+    async navigateToDirectory(dirName) {
+        try {
+            const userSelect = document.getElementById('terminal-user');
+            let runAsUser = userSelect ? userSelect.value : 'ubuntu';
+            if (runAsUser === 'custom') {
+                const customUserInput = document.getElementById('custom-user');
+                runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
+            }
+
+            // Build the cd command
+            let targetDir;
+            if (dirName === '..') {
+                targetDir = this.terminalSession.currentDir.split('/').slice(0, -1).join('/') || '/';
+            } else {
+                targetDir = this.terminalSession.currentDir === '/' ? 
+                    `/${dirName}` : 
+                    `${this.terminalSession.currentDir}/${dirName}`;
+            }
+
+            const response = await axios.post('/api/terminal/execute', this.addAuthToRequest({
+                command: `cd "${targetDir}"`,
+                runAsUser: runAsUser,
+                currentDir: this.terminalSession.currentDir,
+                envVars: this.terminalSession.envVars
+            }));
+
+            if (response.data.success && response.data.newDir) {
+                this.terminalSession.currentDir = response.data.newDir;
+                this.updateTerminalPrompt();
+                this.updateSidebar();
+            }
+        } catch (error) {
+            console.error('Failed to navigate to directory:', error);
+        }
+    }
+
+    navigateHistory(direction) {
+        const commandInput = document.getElementById('terminal-command-input');
+        const history = this.terminalSession.commandHistory;
+        
+        if (history.length === 0) return;
+        
+        if (direction === 'prev') {
+            if (this.terminalSession.historyIndex === -1) {
+                // Save current input before starting history navigation
+                this.terminalSession.currentInput = commandInput.value;
+                this.terminalSession.historyIndex = history.length - 1;
+                commandInput.value = history[this.terminalSession.historyIndex];
+            } else if (this.terminalSession.historyIndex > 0) {
+                this.terminalSession.historyIndex--;
+                commandInput.value = history[this.terminalSession.historyIndex];
+            }
+            // Don't loop - stop at first command
+        } else if (direction === 'next') {
+            if (this.terminalSession.historyIndex === -1) {
+                // Already at current input, don't do anything
+                return;
+            } else if (this.terminalSession.historyIndex < history.length - 1) {
+                this.terminalSession.historyIndex++;
+                commandInput.value = history[this.terminalSession.historyIndex];
+            } else {
+                // Return to current input (what user was typing)
+                this.terminalSession.historyIndex = -1;
+                commandInput.value = this.terminalSession.currentInput || '';
+            }
+        }
+        
+        this.updateHistoryButtons();
+    }
+
+    updateHistoryButtons() {
+        const historyPrevBtn = document.getElementById('history-prev-btn');
+        const historyNextBtn = document.getElementById('history-next-btn');
+        const history = this.terminalSession.commandHistory;
+        
+        if (historyPrevBtn && historyNextBtn) {
+            // Disable prev button if no history or at oldest command
+            historyPrevBtn.disabled = history.length === 0 || this.terminalSession.historyIndex === 0;
+            
+            // Disable next button if no history or at current input
+            historyNextBtn.disabled = history.length === 0 || this.terminalSession.historyIndex === -1;
+        }
+    }
+
+    async handleTabCompletion() {
+        const commandInput = document.getElementById('terminal-command-input');
+        const command = commandInput.value;
+        const cursorPosition = commandInput.selectionStart;
+        
+        // TAB completion triggered
+        
+        // Find the word at cursor position
+        const beforeCursor = command.substring(0, cursorPosition);
+        const afterCursor = command.substring(cursorPosition);
+        
+        // Extract the current word (file/folder path)
+        const lastSpaceIndex = beforeCursor.lastIndexOf(' ');
+        const currentWord = beforeCursor.substring(lastSpaceIndex + 1);
+        
+        if (!currentWord) {
+            // No current word, show cached directory listing if available
+            const cached = this.terminalSession.directoryCache.get(this.terminalSession.currentDir);
+            if (cached && (Date.now() - cached.timestamp < 30000)) { // 30 second cache
+                const allFiles = cached.files.map(file => file.name || file);
+                this.showCompletionsInOutput(allFiles, 'All files in current directory:');
+                return;
+            }
+        }
+        
+        // Determine the directory we're completing in
+        let searchDir = this.terminalSession.currentDir;
+        let filePrefix = currentWord;
+        
+        if (currentWord.startsWith('/')) {
+            // Absolute path
+            const lastSlash = currentWord.lastIndexOf('/');
+            if (lastSlash > 0) {
+                searchDir = currentWord.substring(0, lastSlash);
+                filePrefix = currentWord.substring(lastSlash + 1);
+            } else {
+                searchDir = '/';
+                filePrefix = currentWord.substring(1);
+            }
+        } else if (currentWord.includes('/')) {
+            // Relative path with subdirectory
+            const lastSlash = currentWord.lastIndexOf('/');
+            const relativeDir = currentWord.substring(0, lastSlash);
+            searchDir = this.terminalSession.currentDir === '/' ? `/${relativeDir}` : `${this.terminalSession.currentDir}/${relativeDir}`;
+            filePrefix = currentWord.substring(lastSlash + 1);
+        }
+        
+        // Clean up the search directory path
+        searchDir = searchDir.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+        
+        // Fast TAB completion processing
+        
+        // Check if we have a cached listing for this directory
+        const cached = this.terminalSession.directoryCache.get(searchDir);
+        // Check cache (removed debug for performance)
+        
+        if (cached && (Date.now() - cached.timestamp < 30000)) { // 30 second cache
+            // Fast path for cached completions - minimal processing
+            const filteredCompletions = cached.files
+                .map(file => typeof file === 'object' && file.name ? file.name : String(file))
+                .filter(filename => filename.toLowerCase().startsWith(filePrefix.toLowerCase()));
+            
+            if (filteredCompletions.length > 0) {
+                this.processCompletions(filteredCompletions, beforeCursor, afterCursor, lastSpaceIndex, currentWord, commandInput);
+                return;
+            }
+        }
+        
+        // Fall back to server-side autocomplete
+        try {
+            let runAsUser = document.getElementById('terminal-user').value;
+            if (runAsUser === 'custom') {
+                runAsUser = document.getElementById('custom-user').value.trim() || 'user';
+            }
+            
+            
+            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+                path: currentWord,
+                currentDir: this.terminalSession.currentDir,
+                runAsUser: runAsUser
+            }));
+            
+            
+            if (response.data.success && response.data.completions.length > 0) {
+                // If this was for a subdirectory, cache the results for future use
+                if (searchDir !== this.terminalSession.currentDir) {
+                    // Normalize the completions to just filenames (remove path prefixes)
+                    const normalizedFiles = response.data.completions.map(completion => {
+                        // If completion contains a path, extract just the filename
+                        const filename = completion.includes('/') ? completion.split('/').pop() : completion;
+                        return { name: filename, type: completion.endsWith('/') ? 'directory' : 'file' };
+                    });
+                    
+                    const cacheEntry = {
+                        files: normalizedFiles,
+                        timestamp: Date.now()
+                    };
+                    this.terminalSession.directoryCache.set(searchDir, cacheEntry);
+                }
+                
+                this.processCompletions(response.data.completions, beforeCursor, afterCursor, lastSpaceIndex, currentWord, commandInput);
+            }
+        } catch (error) {
+            console.error('Tab completion failed:', error);
+        }
+    }
+
+    processCompletions(completions, beforeCursor, afterCursor, lastSpaceIndex, currentWord, commandInput) {
+        if (completions.length === 1) {
+            // Single completion - auto-complete
+            const completion = completions[0];
+            
+            // Handle path completion properly
+            if (currentWord.includes('/')) {
+                // Replace only the filename part after the last slash
+                const lastSlash = currentWord.lastIndexOf('/');
+                const pathPart = currentWord.substring(0, lastSlash + 1);
+                const beforeWord = beforeCursor.substring(0, lastSpaceIndex + 1);
+                
+                const newValue = beforeWord + pathPart + completion + afterCursor;
+                commandInput.value = newValue;
+                
+                // Set cursor position after completion
+                const newCursorPos = beforeWord.length + pathPart.length + completion.length;
+                commandInput.setSelectionRange(newCursorPos, newCursorPos);
+                
+                // If this completed to a directory, proactively cache it for faster future completions
+                this.proactivelyCacheDirectory(pathPart + completion);
+            } else {
+                // Simple case - no path, just replace the word
+                const beforeWord = beforeCursor.substring(0, lastSpaceIndex + 1);
+                const newValue = beforeWord + completion + afterCursor;
+                commandInput.value = newValue;
+                
+                // Set cursor position after completion
+                const newCursorPos = beforeWord.length + completion.length;
+                commandInput.setSelectionRange(newCursorPos, newCursorPos);
+                
+                // If this completed to a directory, proactively cache it for faster future completions
+                this.proactivelyCacheDirectory(completion);
+            }
+        } else {
+            // Multiple completions - show in output
+            const output = document.getElementById('terminal-output');
+            const completionLine = document.createElement('div');
+            completionLine.className = 'log-line info';
+            completionLine.textContent = `📁 Completions: ${completions.map(c => c.split('/').pop()).join('  ')}`;
+            output.appendChild(completionLine);
+            output.scrollTop = output.scrollHeight;
+            
+            // Find common prefix and auto-complete that part
+            const commonPrefix = this.findCommonPrefix(completions);
+            if (commonPrefix.length > currentWord.length) {
+                const beforeWord = beforeCursor.substring(0, lastSpaceIndex + 1);
+                const newValue = beforeWord + commonPrefix + afterCursor;
+                commandInput.value = newValue;
+                
+                const newCursorPos = beforeWord.length + commonPrefix.length;
+                commandInput.setSelectionRange(newCursorPos, newCursorPos);
+            }
+        }
+    }
+
+    validateCacheEntry(key, data) {
+        console.log(`[DEBUG] VALIDATE CACHE - Validating cache entry for ${key}`);
+        if (!data || !data.files || !Array.isArray(data.files)) {
+            console.error(`[DEBUG] VALIDATE CACHE - Invalid cache structure for ${key}:`, data);
+            return false;
+        }
+        
+        data.files.forEach((item, index) => {
+            if (typeof item === 'string') {
+                console.warn(`[DEBUG] VALIDATE CACHE - String format detected at ${key}[${index}]:`, item);
+                if (item.includes('/') && !item.startsWith('./') && !item.startsWith('../')) {
+                    console.error(`[DEBUG] VALIDATE CACHE - CORRUPTED: Full path in cache at ${key}[${index}]:`, item);
+                }
+            } else if (typeof item === 'object') {
+                if (!item.name) {
+                    console.error(`[DEBUG] VALIDATE CACHE - Object missing name at ${key}[${index}]:`, item);
+                }
+            } else {
+                console.error(`[DEBUG] VALIDATE CACHE - Unknown format at ${key}[${index}]:`, typeof item, item);
+            }
+        });
+        return true;
+    }
+
+    async proactivelyCacheDirectory(directoryPath) {
+        // Only cache if it looks like a directory (ends with / or is a known directory from completion)
+        let fullPath = directoryPath.startsWith('/') ? directoryPath : 
+                      (this.terminalSession.currentDir === '/' ? `/${directoryPath}` : 
+                       `${this.terminalSession.currentDir}/${directoryPath}`);
+        
+        // Normalize path: remove trailing slash for consistency
+        fullPath = fullPath.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+        
+        // Check if we already have this cached
+        if (this.terminalSession.directoryCache.has(fullPath)) {
+            return;
+        }
+        
+        
+        try {
+            const userSelect = document.getElementById('terminal-user');
+            let runAsUser = userSelect ? userSelect.value : 'ubuntu';
+            if (runAsUser === 'custom') {
+                const customUserInput = document.getElementById('custom-user');
+                runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
+            }
+
+            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+                path: '',
+                currentDir: fullPath,
+                runAsUser: runAsUser
+            }));
+
+            if (response.data.success && response.data.completions) {
+                console.log('[DEBUG] PROACTIVE CACHE - Raw response for', fullPath, ':', response.data.completions);
+                // Validate cache format
+                response.data.completions.forEach((item, index) => {
+                    console.log(`[DEBUG] PROACTIVE CACHE - Item ${index}:`, typeof item, item);
+                });
+                
+                const cacheEntry = {
+                    files: response.data.completions,
+                    timestamp: Date.now()
+                };
+                this.terminalSession.directoryCache.set(fullPath, cacheEntry);
+                console.log('[DEBUG] PROACTIVE CACHE - Successfully cached', response.data.completions.length, 'items for', fullPath);
+                this.validateCacheEntry(fullPath, cacheEntry);
+            }
+        } catch (error) {
+            console.log('[DEBUG] Failed to proactively cache directory:', fullPath, error);
+        }
+    }
+
+    showCachedCompletions(files) {
+        const output = document.getElementById('terminal-output');
+        const completionLine = document.createElement('div');
+        completionLine.className = 'log-line info';
+        completionLine.textContent = `📁 ${files.length} items: ${files.map(f => f.split('/').pop()).join('  ')}`;
+        output.appendChild(completionLine);
+        output.scrollTop = output.scrollHeight;
+    }
+
+    showCompletionsInOutput(files, title = 'Completions:') {
+        const output = document.getElementById('terminal-output');
+        const completionLine = document.createElement('div');
+        completionLine.className = 'log-line info';
+        completionLine.textContent = `📁 ${title} ${files.join('  ')}`;
+        output.appendChild(completionLine);
+        output.scrollTop = output.scrollHeight;
+    }
+
+    findCommonPrefix(strings) {
+        if (strings.length === 0) return '';
+        if (strings.length === 1) return strings[0];
+        
+        let prefix = '';
+        const firstString = strings[0];
+        
+        for (let i = 0; i < firstString.length; i++) {
+            const char = firstString[i];
+            if (strings.every(str => str[i] === char)) {
+                prefix += char;
+            } else {
+                break;
+            }
+        }
+        
+        return prefix;
+    }
+
+    async cacheDirectoryListing(directory, runAsUser) {
+        try {
+            let actualUser = runAsUser;
+            const userSelect = document.getElementById('terminal-user');
+            const customUserInput = document.getElementById('custom-user');
+            
+            if (userSelect && userSelect.value === 'custom' && customUserInput) {
+                actualUser = customUserInput.value.trim() || 'user';
+            }
+            
+            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+                path: '',
+                currentDir: directory,
+                runAsUser: actualUser
+            }));
+            
+            if (response.data.success) {
+                // Cache the directory listing with a timestamp
+                this.terminalSession.directoryCache.set(directory, {
+                    files: response.data.completions,
+                    timestamp: Date.now()
+                });
+                
+                // Limit cache size to prevent memory issues
+                if (this.terminalSession.directoryCache.size > 20) {
+                    const oldestKey = this.terminalSession.directoryCache.keys().next().value;
+                    this.terminalSession.directoryCache.delete(oldestKey);
+                }
+            }
+        } catch (error) {
+            console.log('Failed to cache directory listing:', error);
+        }
     }
 
     async executeTerminalCommand(command, runAsUser) {
         const output = document.getElementById('terminal-output');
         const promptText = document.getElementById('terminal-prompt-text').textContent;
+        
+        // Add command to history (avoid duplicates of the last command)
+        const trimmedCommand = command.trim();
+        if (trimmedCommand && 
+            (this.terminalSession.commandHistory.length === 0 || 
+             this.terminalSession.commandHistory[this.terminalSession.commandHistory.length - 1] !== trimmedCommand)) {
+            this.terminalSession.commandHistory.push(trimmedCommand);
+        }
+        
+        // Reset history navigation
+        this.terminalSession.historyIndex = -1;
+        this.terminalSession.currentInput = '';
+        this.updateHistoryButtons();
         
         // Add command line to output
         const commandLine = document.createElement('div');
@@ -2205,8 +3221,17 @@ class RepoManager {
                 
                 // Update session state from backend response
                 if (response.data.newDir) {
+                    const oldDir = this.terminalSession.currentDir;
                     this.terminalSession.currentDir = response.data.newDir;
                     this.updateTerminalPrompt();
+                    
+                    // If this was a cd command and directory changed, cache the new directory listing
+                    if (trimmedCommand.startsWith('cd ') && oldDir !== response.data.newDir) {
+                        // Wait for caching to complete before updating sidebar
+                        this.cacheDirectoryListing(response.data.newDir, runAsUser).then(() => {
+                            this.updateSidebar();
+                        });
+                    }
                 }
                 if (response.data.envVars) {
                     this.terminalSession.envVars = response.data.envVars;
@@ -2227,6 +3252,28 @@ class RepoManager {
             output.appendChild(errorLine);
         }
 
+        output.scrollTop = output.scrollHeight;
+    }
+
+    addToTerminalHistory(command, result) {
+        const output = document.getElementById('terminal-output');
+        if (!output) return;
+        
+        const promptText = document.getElementById('terminal-prompt-text')?.textContent || '$';
+        
+        // Add command line to output
+        const commandLine = document.createElement('div');
+        commandLine.className = 'log-line command';
+        commandLine.textContent = `${promptText} ${command}`;
+        output.appendChild(commandLine);
+        
+        // Add result line to output
+        const resultLine = document.createElement('div');
+        resultLine.className = result.startsWith('❌') ? 'log-line error' : 'log-line success';
+        resultLine.textContent = result;
+        output.appendChild(resultLine);
+        
+        // Scroll to bottom
         output.scrollTop = output.scrollHeight;
     }
 

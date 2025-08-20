@@ -1526,6 +1526,350 @@ app.post("/api/terminal/execute", validateAuthHash, async (req, res) => {
   }
 });
 
+// POST /api/terminal/autocomplete - Provide file/folder autocomplete for terminal
+app.post("/api/terminal/autocomplete", validateAuthHash, async (req, res) => {
+  const { path: inputPath, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
+  
+  // Handle empty path - list current directory
+  if (!inputPath || typeof inputPath !== 'string' || inputPath.trim() === '') {
+    const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+    
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+      
+      // Test Docker and CasaOS container access first
+      try {
+        const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+          timeout: 5000,
+          maxBuffer: 1024 * 1024
+        });
+        
+        if (dockerTest.stdout.trim() !== 'casaos') {
+          return res.json({ success: false, message: 'CasaOS container not found' });
+        }
+      } catch (error: any) {
+        return res.json({ success: false, message: 'Cannot access Docker or CasaOS container' });
+      }
+      
+      // List all files in current directory with detailed info
+      const listCommand = `cd "${currentDir}" && ls -1a | grep -v '^\\.$' | grep -v '^\\.\\.$' | while read file; do
+        if [ -d "\$file" ]; then
+          echo "directory|\$file||"
+        else
+          size=\$(ls -l "\$file" 2>/dev/null | awk '{print \$5}' || echo "")
+          echo "file|\$file|\$size|"
+        fi
+      done`;
+      
+      const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${listCommand.replace(/'/g, "'\\''")}'`;
+      
+      console.log(`[DEBUG] Autocomplete - currentDir: ${currentDir}, user: ${safeUser}`);
+      console.log(`[DEBUG] Docker command: ${dockerCommand}`);
+      
+      const result = await execAsync(dockerCommand, {
+        timeout: 10000,
+        maxBuffer: 1024 * 1024,
+        shell: '/bin/sh'
+      });
+      
+      console.log(`[DEBUG] Raw output: ${result.stdout}`);
+      
+      const completions: any[] = [];
+      if (result.stdout) {
+        const lines = result.stdout.trim().split('\n').filter((line: string) => line.trim());
+        
+        for (const line of lines) {
+          if (line.trim()) {
+            const [type, name, size, permissions] = line.split('|');
+            if (name && name.trim()) {
+              completions.push({
+                name: name.trim(),
+                type: type,
+                size: size !== '-' ? size : '',
+                permissions: permissions
+              });
+            }
+          }
+        }
+      }
+      
+      return res.json({ success: true, completions });
+    } catch (error: any) {
+      console.error('Directory listing failed:', error);
+      return res.json({ success: false, message: 'Failed to list directory contents' });
+    }
+  }
+  
+  // Sanitize user input
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+  const safePath = inputPath.trim();
+  
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Test Docker and CasaOS container access first
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 5000,
+        maxBuffer: 1024 * 1024
+      });
+      
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.json({ success: false, message: 'CasaOS container not found' });
+      }
+    } catch (error: any) {
+      console.error('Docker access test failed for autocomplete:', error);
+      return res.json({ success: false, message: 'Cannot access Docker or CasaOS container' });
+    }
+    
+    // Determine the directory to search in and the prefix to match
+    let searchDir = currentDir;
+    let filePrefix = safePath;
+    
+    // Handle absolute vs relative paths
+    if (safePath.startsWith('/')) {
+      // Absolute path
+      const lastSlash = safePath.lastIndexOf('/');
+      if (lastSlash > 0) {
+        searchDir = safePath.substring(0, lastSlash);
+        filePrefix = safePath.substring(lastSlash + 1);
+      } else {
+        searchDir = '/';
+        filePrefix = safePath.substring(1);
+      }
+    } else {
+      // Relative path
+      const lastSlash = safePath.lastIndexOf('/');
+      if (lastSlash >= 0) {
+        const relativeDir = safePath.substring(0, lastSlash);
+        searchDir = currentDir === '/' ? `/${relativeDir}` : `${currentDir}/${relativeDir}`;
+        filePrefix = safePath.substring(lastSlash + 1);
+      }
+    }
+    
+    // Clean up the search directory path
+    searchDir = searchDir.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+    
+    // Build the autocomplete command
+    // Use ls with specific formatting and grep to filter
+    const autocompleteCommand = `
+      cd "${searchDir}" 2>/dev/null || exit 1;
+      ls -1a 2>/dev/null | grep -i "^${filePrefix}" | head -20
+    `;
+    
+    const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${autocompleteCommand.replace(/'/g, "'\\''")}'`;
+    
+    const result = await execAsync(dockerCommand, {
+      timeout: 10000, // 10 second timeout
+      maxBuffer: 1024 * 1024,
+      shell: '/bin/sh'
+    });
+    
+    // Parse the output to get completions
+    const completions: string[] = [];
+    if (result.stdout) {
+      const files = result.stdout.trim().split('\n').filter((line: string) => line.trim());
+      
+      for (const file of files) {
+        const trimmedFile = file.trim();
+        if (trimmedFile && trimmedFile !== '.' && trimmedFile !== '..') {
+          // Check if it's a directory by trying to list it
+          try {
+            const testDirCommand = `docker exec --user ${safeUser} casaos bash -c 'cd "${searchDir}" && test -d "${trimmedFile}" && echo "DIR" || echo "FILE"'`;
+            const dirResult = await execAsync(testDirCommand, {
+              timeout: 2000,
+              maxBuffer: 1024
+            });
+            
+            // Add trailing slash for directories
+            if (dirResult.stdout.trim() === 'DIR') {
+              completions.push(trimmedFile + '/');
+            } else {
+              completions.push(trimmedFile);
+            }
+          } catch (e) {
+            // If test fails, assume it's a file
+            completions.push(trimmedFile);
+          }
+        }
+      }
+    }
+    
+    // Build full path completions
+    const fullCompletions = completions.map(completion => {
+      if (safePath.startsWith('/')) {
+        // Absolute path
+        const dirPart = searchDir === '/' ? '/' : searchDir + '/';
+        return dirPart + completion;
+      } else {
+        // Relative path
+        const lastSlash = safePath.lastIndexOf('/');
+        if (lastSlash >= 0) {
+          return safePath.substring(0, lastSlash + 1) + completion;
+        } else {
+          return completion;
+        }
+      }
+    });
+    
+    res.json({
+      success: true,
+      completions: fullCompletions,
+      searchDir: searchDir,
+      prefix: filePrefix
+    });
+    
+  } catch (error: any) {
+    console.error(`❌ Autocomplete failed:`, error);
+    res.json({
+      success: false,
+      message: error.message || 'Autocomplete failed',
+      completions: []
+    });
+  }
+});
+
+// POST /api/terminal/rename - Rename a file or directory
+app.post("/api/terminal/rename", validateAuthHash, async (req, res) => {
+  const { oldName, newName, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
+  
+  if (!oldName || !newName || oldName === newName) {
+    return res.json({ success: false, message: 'Invalid rename parameters' });
+  }
+  
+  // Sanitize user input
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+  const safeOldName = oldName.trim();
+  const safeNewName = newName.trim();
+  
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Test Docker and CasaOS container access first
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 5000,
+        maxBuffer: 1024 * 1024
+      });
+      
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.json({ success: false, message: 'CasaOS container not found' });
+      }
+    } catch (error: any) {
+      return res.json({ success: false, message: 'Cannot access Docker or CasaOS container' });
+    }
+    
+    // Build the rename command
+    const renameCommand = `
+      cd "${currentDir}" 2>/dev/null || exit 1;
+      if [ ! -e "${safeOldName}" ]; then
+        echo "ERROR: File does not exist"
+        exit 1
+      fi
+      if [ -e "${safeNewName}" ]; then
+        echo "ERROR: Target file already exists"
+        exit 1
+      fi
+      mv "${safeOldName}" "${safeNewName}" && echo "SUCCESS"
+    `;
+    
+    const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${renameCommand.replace(/'/g, "'\\''")}'`;
+    
+    const result = await execAsync(dockerCommand, {
+      timeout: 10000,
+      maxBuffer: 1024 * 1024,
+      shell: '/bin/sh'
+    });
+    
+    if (result.stdout.includes('SUCCESS')) {
+      res.json({ success: true, message: `Renamed "${oldName}" to "${newName}"` });
+    } else if (result.stdout.includes('ERROR:')) {
+      res.json({ success: false, message: result.stdout.trim() });
+    } else {
+      res.json({ success: false, message: 'Rename operation failed' });
+    }
+    
+  } catch (error: any) {
+    console.error('Rename operation failed:', error);
+    res.json({ success: false, message: error.message || 'Rename operation failed' });
+  }
+});
+
+// POST /api/terminal/delete - Delete files or directories
+app.post("/api/terminal/delete", validateAuthHash, async (req, res) => {
+  const { fileNames, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
+  
+  if (!fileNames || !Array.isArray(fileNames) || fileNames.length === 0) {
+    return res.json({ success: false, message: 'No files specified for deletion' });
+  }
+  
+  // Sanitize user input
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+  const safeFileNames = fileNames.map(name => name.trim()).filter(name => name.length > 0);
+  
+  if (safeFileNames.length === 0) {
+    return res.json({ success: false, message: 'No valid files specified' });
+  }
+  
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Test Docker and CasaOS container access first
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 5000,
+        maxBuffer: 1024 * 1024
+      });
+      
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.json({ success: false, message: 'CasaOS container not found' });
+      }
+    } catch (error: any) {
+      return res.json({ success: false, message: 'Cannot access Docker or CasaOS container' });
+    }
+    
+    // Build the delete command
+    const deleteCommand = `
+      cd "${currentDir}" 2>/dev/null || exit 1;
+      for file in ${safeFileNames.map(name => `"${name}"`).join(' ')}; do
+        if [ ! -e "\$file" ]; then
+          echo "ERROR: \$file does not exist"
+          exit 1
+        fi
+      done
+      rm -rf ${safeFileNames.map(name => `"${name}"`).join(' ')} && echo "SUCCESS: Deleted ${safeFileNames.length} item(s)"
+    `;
+    
+    const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${deleteCommand.replace(/'/g, "'\\''")}'`;
+    
+    const result = await execAsync(dockerCommand, {
+      timeout: 15000, // Longer timeout for delete operations
+      maxBuffer: 1024 * 1024,
+      shell: '/bin/sh'
+    });
+    
+    if (result.stdout.includes('SUCCESS:')) {
+      res.json({ success: true, message: result.stdout.trim() });
+    } else if (result.stdout.includes('ERROR:')) {
+      res.json({ success: false, message: result.stdout.trim() });
+    } else {
+      res.json({ success: false, message: 'Delete operation failed' });
+    }
+    
+  } catch (error: any) {
+    console.error('Delete operation failed:', error);
+    res.json({ success: false, message: error.message || 'Delete operation failed' });
+  }
+});
+
 // Environment-based force update API has been removed
 // Use the web UI or POST /api/repos/:id/compile for manual builds
 
