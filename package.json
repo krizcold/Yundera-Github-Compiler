@@ -1,13 +1,24 @@
 {
   "name": "yundera-github-compiler",
-  "version": "1.5.2",
+  "version": "1.x.x",
   "description": "Clone, build, and run Docker-based projects directly from GitHub URLs.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "setup": "node dist/setup.js",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "version:current": "node scripts/version-manager.js current",
+    "version:increment": "node scripts/version-manager.js increment",
+    "version:status": "node scripts/version-manager.js status",
+    "docker:cleanup": "node scripts/version-manager.js cleanup",
+    "docker:build": "docker build -t krizcold/yundera-github-compiler:latest -t krizcold/yundera-github-compiler:$(node scripts/version-manager.js current) .",
+    "docker:build-dev": "docker build -t krizcold/yundera-github-compiler:dev .",
+    "docker:push": "docker push krizcold/yundera-github-compiler:latest && docker push krizcold/yundera-github-compiler:$(node scripts/version-manager.js current)",
+    "docker:push-dev": "docker push krizcold/yundera-github-compiler:dev && node scripts/version-manager.js dev-publish",
+    "dockflow:latest": "npm run build && node scripts/version-manager.js increment && npm run docker:build && npm run docker:push && npm run docker:cleanup",
+    "dockflow:dev": "npm run build && npm run docker:build-dev && npm run docker:push-dev && npm run docker:cleanup",
+    "dockflow:both": "npm run build && node scripts/version-manager.js increment && npm run docker:build && npm run docker:build-dev && npm run docker:push && npm run docker:push-dev && npm run docker:cleanup"
   },
   "dependencies": {
     "axios": "^1.10.0",

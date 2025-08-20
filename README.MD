@@ -460,6 +460,29 @@ This ensures that users always have a smooth experience, especially during the c
   - `settings.json` - Global settings
 - **Auto-sync**: Configuration reloads every 30 seconds
 
+## Version Management
+
+The project uses `dockflow.json` for automatic semantic versioning:
+
+- **Current System**: Starts at `1.0.0` and auto-increments patch version (1.0.1, 1.0.2, etc.)
+- **Automatic Incrementing**: Happens on `latest` and `both` publishes
+- **Docker Tags**: Creates both `:latest` and `:1.x.x` version tags
+- **Dev Builds**: Uses `:dev` tag without version incrementing
+- **Tracking**: Maintains build count and publish timestamps
+
+**dockflow.json Structure:**
+```json
+{
+  "version": "1.0.0",
+  "repository": "krizcold/yundera-github-compiler",
+  "lastPublish": {
+    "latest": "2024-08-15T...",
+    "dev": "2024-08-15T..."
+  },
+  "buildCount": 5
+}
+```
+
 ## Requirements
 
 - Docker with docker.sock access
@@ -481,6 +504,56 @@ npm run build
 
 # Production
 npm start
+```
+
+### Docker Workflow Commands (Dockflow)
+
+**One-Command Build & Push:**
+```bash
+# Build TypeScript + Docker + auto-increment version + push to :latest and :1.x.x + cleanup
+npm run dockflow:latest
+
+# Build TypeScript + Docker + push to :dev (no version increment) + cleanup
+npm run dockflow:dev
+
+# Build TypeScript + Docker + auto-increment version + push to :latest, :1.x.x, and :dev + cleanup
+npm run dockflow:both
+```
+
+**Version Management:**
+```bash
+# Show current version
+npm run version:current
+
+# Show detailed version status
+npm run version:status
+
+# Manual version increment (not needed - automatic on latest/both)
+npm run version:increment
+
+# Clean up local Docker images (automatic after dockflow)
+npm run docker:cleanup
+```
+
+**Individual Docker Operations:**
+```bash
+# Build Docker image with :latest tag
+npm run docker:build
+
+# Build Docker image with :dev tag
+npm run docker:build-dev
+
+# Push :latest tag to krizcold/yundera-github-compiler
+npm run docker:push
+
+# Push :dev tag to krizcold/yundera-github-compiler
+npm run docker:push-dev
+```
+
+**Alternative Shell Script:**
+```bash
+# Shell script alternative to npm commands
+./dockflow.sh latest|dev|both
 ```
 
 ## API Response Formats
