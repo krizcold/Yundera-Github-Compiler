@@ -92,6 +92,13 @@ services:
     cap_add:
       - SYS_ADMIN
       - NET_ADMIN
+    
+    # Resource limits
+    cpu_shares: 50
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
     x-casaos:
       volumes:
