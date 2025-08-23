@@ -1870,6 +1870,585 @@ app.post("/api/terminal/delete", validateAuthHash, async (req, res) => {
   }
 });
 
+// GET /api/services/:service/logs - Get logs for a specific service
+app.get("/api/services/:service/logs", validateAuthHash, async (req, res) => {
+  const { service } = req.params;
+  const { lines = 100 } = req.query;
+  
+  console.log(`📋 Getting logs for service: ${service}`);
+  
+  try {
+    let containerName: string;
+    let logCommand: string;
+    
+    // Map service names to container names and log commands
+    switch (service) {
+      case 'github-compiler':
+        containerName = 'yunderagithubcompiler';
+        logCommand = `docker logs --tail ${lines} ${containerName}`;
+        break;
+      case 'casaos':
+        containerName = 'casaos';
+        logCommand = `docker logs --tail ${lines} ${containerName}`;
+        break;
+      case 'mesh-router':
+        containerName = 'mesh-router';
+        logCommand = `docker logs --tail ${lines} ${containerName}`;
+        break;
+      default:
+        return res.status(400).json({ 
+          success: false, 
+          message: `Unknown service: ${service}` 
+        });
+    }
+    
+    // Execute docker logs command
+    const result = execSync(logCommand, { 
+      encoding: 'utf8',
+      timeout: 30000,
+      maxBuffer: 1024 * 1024 * 10 // 10MB max buffer
+    });
+    
+    // Split logs into lines and filter out empty ones
+    const logs = result.split('\n').filter(line => line.trim().length > 0);
+    
+    console.log(`✅ Retrieved ${logs.length} log lines for ${service}`);
+    res.json({ success: true, logs, service: containerName });
+    
+  } catch (error: any) {
+    console.error(`❌ Failed to get logs for ${service}:`, error.message);
+    
+    // Check if it's a container not found error
+    if (error.message.includes('No such container')) {
+      res.json({ 
+        success: true, 
+        logs: [`Container '${service}' not found or not running`],
+        service: service
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        message: `Failed to retrieve logs: ${error.message}` 
+      });
+    }
+  }
+});
+
+// POST /api/services/execute - Execute command in a service container
+app.post("/api/services/execute", validateAuthHash, async (req, res) => {
+  const { service, command } = req.body;
+  
+  if (!service || !command) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Service and command are required" 
+    });
+  }
+  
+  console.log(`🖥️ Executing command in ${service}: ${command}`);
+  
+  try {
+    let containerName: string;
+    
+    // Map service names to container names
+    switch (service) {
+      case 'github-compiler':
+        containerName = 'yunderagithubcompiler';
+        break;
+      case 'casaos':
+        containerName = 'casaos';
+        break;
+      case 'mesh-router':
+        containerName = 'mesh-router';
+        break;
+      default:
+        return res.status(400).json({ 
+          success: false, 
+          message: `Unknown service: ${service}` 
+        });
+    }
+    
+    // Execute command in container with proper escaping
+    // Validate and sanitize the command
+    if (command.includes('\n') || command.includes('\r')) {
+      return res.json({ 
+        success: false, 
+        message: "Multi-line commands are not allowed",
+        output: "Multi-line commands are not allowed"
+      });
+    }
+    
+    // Use single quotes to prevent most injection attacks
+    const escapedCommand = command.replace(/'/g, "'\"'\"'");
+    const dockerCommand = `docker exec ${containerName} /bin/sh -c '${escapedCommand}'`;
+    
+    const result = execSync(dockerCommand, { 
+      encoding: 'utf8',
+      timeout: 30000,
+      maxBuffer: 1024 * 1024 // 1MB max buffer
+    });
+    
+    console.log(`✅ Command executed successfully in ${service}`);
+    res.json({ success: true, output: result, service: containerName });
+    
+  } catch (error: any) {
+    console.error(`❌ Failed to execute command in ${service}:`, error.message);
+    
+    // Extract meaningful error message
+    let errorMessage = error.message;
+    if (error.stdout) {
+      errorMessage += '\n' + error.stdout;
+    }
+    if (error.stderr) {
+      errorMessage += '\n' + error.stderr;
+    }
+    
+    res.json({ 
+      success: false, 
+      message: errorMessage,
+      output: errorMessage 
+    });
+  }
+});
+
+// GET /api/services/status - Get status of all monitored services
+app.get("/api/services/status", validateAuthHash, async (req, res) => {
+  console.log(`🔍 Checking status of all services`);
+  
+  try {
+    const services = ['yunderagithubcompiler', 'casaos', 'mesh-router'];
+    const statusResults = [];
+    
+    for (const container of services) {
+      try {
+        // Check if container exists and get its status
+        const result = execSync(`docker inspect --format='{{.State.Status}}' ${container}`, { 
+          encoding: 'utf8',
+          timeout: 10000
+        });
+        
+        const status = result.trim();
+        statusResults.push({
+          container,
+          status: status,
+          running: status === 'running'
+        });
+        
+      } catch (error) {
+        // Container doesn't exist
+        statusResults.push({
+          container,
+          status: 'not_found',
+          running: false
+        });
+      }
+    }
+    
+    console.log(`✅ Retrieved status for ${statusResults.length} services`);
+    res.json({ success: true, services: statusResults });
+    
+  } catch (error: any) {
+    console.error(`❌ Failed to get service status:`, error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: `Failed to retrieve service status: ${error.message}` 
+    });
+  }
+});
+
+// GET /api/services/:service/logs/stream - Stream logs in real-time using Server-Sent Events
+app.get("/api/services/:service/logs/stream", validateAuthHash, async (req, res) => {
+  const { service } = req.params;
+  const { lines = 10 } = req.query;
+  
+  console.log(`📡 Starting log stream for service: ${service}`);
+  
+  // Set headers for Server-Sent Events
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
+  
+  let containerName: string;
+  
+  // Map service names to container names
+  switch (service) {
+    case 'github-compiler':
+      containerName = 'yunderagithubcompiler';
+      break;
+    case 'casaos':
+      containerName = 'casaos';
+      break;
+    case 'mesh-router':
+      containerName = 'mesh-router';
+      break;
+    default:
+      res.write(`event: error\ndata: ${JSON.stringify({ error: `Unknown service: ${service}` })}\n\n`);
+      res.end();
+      return;
+  }
+  
+  // Send initial ping
+  res.write(`event: connected\ndata: ${JSON.stringify({ message: `Connected to ${service} logs` })}\n\n`);
+  
+  // Function to get and send recent logs
+  const sendRecentLogs = () => {
+    try {
+      const result = execSync(`docker logs --tail ${lines} ${containerName}`, { 
+        encoding: 'utf8',
+        timeout: 10000,
+        maxBuffer: 1024 * 1024 * 5 // 5MB max buffer
+      });
+      
+      const logs = result.split('\n').filter(line => line.trim().length > 0);
+      logs.forEach(logLine => {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
+      });
+      
+    } catch (error: any) {
+      if (error.message.includes('No such container')) {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: `Container '${containerName}' not found or not running`, timestamp: new Date().toISOString() })}\n\n`);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+      }
+    }
+  };
+  
+  // Send recent logs immediately
+  sendRecentLogs();
+  
+  // Set up interval to send new logs periodically
+  const logInterval = setInterval(() => {
+    try {
+      // Get logs from the last 2 seconds to simulate real-time
+      const result = execSync(`docker logs --since 2s ${containerName}`, { 
+        encoding: 'utf8',
+        timeout: 5000,
+        maxBuffer: 1024 * 1024 // 1MB max buffer
+      });
+      
+      if (result.trim()) {
+        const logs = result.split('\n').filter(line => line.trim().length > 0);
+        logs.forEach(logLine => {
+          res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
+        });
+      }
+      
+      // Send keep-alive ping every 30 seconds
+      if (Date.now() % 30000 < 2000) {
+        res.write(`event: ping\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
+      }
+      
+    } catch (error: any) {
+      // Silently handle errors in the interval
+      if (!error.message.includes('No such container')) {
+        console.error(`Log streaming error for ${service}:`, error.message);
+      }
+    }
+  }, 2000); // Check for new logs every 2 seconds
+  
+  // Clean up when client disconnects
+  req.on('close', () => {
+    console.log(`📡 Log stream closed for service: ${service}`);
+    clearInterval(logInterval);
+  });
+  
+  req.on('error', (error) => {
+    console.log(`📡 Log stream error for service ${service}:`, error.message);
+    clearInterval(logInterval);
+  });
+  
+  // Also clean up on response end
+  res.on('close', () => {
+    clearInterval(logInterval);
+  });
+});
+
+// POST /api/services/autocomplete - Provide autocomplete for service terminal commands
+app.post("/api/services/autocomplete", validateAuthHash, async (req, res) => {
+  const { service, path: inputPath, currentDir = '/' } = req.body;
+  
+  if (!service) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Service is required" 
+    });
+  }
+  
+  console.log(`🔍 Autocomplete request for service ${service}: "${inputPath}" in ${currentDir}`);
+  
+  try {
+    let containerName: string;
+    
+    // Map service names to container names
+    switch (service) {
+      case 'github-compiler':
+        containerName = 'yunderagithubcompiler';
+        break;
+      case 'casaos':
+        containerName = 'casaos';
+        break;
+      case 'mesh-router':
+        containerName = 'mesh-router';
+        break;
+      default:
+        return res.status(400).json({ 
+          success: false, 
+          message: `Unknown service: ${service}` 
+        });
+    }
+    
+    // Handle empty path - list current directory
+    const pathToSearch = inputPath || '.';
+    const searchCommand = `find "${currentDir}" -maxdepth 1 -name "${pathToSearch}*" 2>/dev/null | head -20`;
+    
+    const result = execSync(`docker exec ${containerName} /bin/sh -c "${searchCommand}"`, { 
+      encoding: 'utf8',
+      timeout: 10000,
+      maxBuffer: 1024 * 512 // 512KB max buffer
+    });
+    
+    // Process results
+    const files = result.split('\n')
+      .filter(line => line.trim().length > 0)
+      .map(fullPath => {
+        const filename = fullPath.split('/').pop() || '';
+        return {
+          name: filename,
+          path: fullPath,
+          type: 'unknown' // We could add stat info here if needed
+        };
+      })
+      .filter(item => item.name.length > 0);
+    
+    console.log(`✅ Found ${files.length} autocomplete matches for ${service}`);
+    res.json({ success: true, completions: files });
+    
+  } catch (error: any) {
+    console.error(`❌ Autocomplete failed for ${service}:`, error.message);
+    
+    // Return empty completions instead of error - autocomplete should fail silently
+    res.json({ success: true, completions: [] });
+  }
+});
+
+// GET /api/docker/:containerName/logs/stream - Stream logs for any Docker container
+app.get("/api/docker/:containerName/logs/stream", validateAuthHash, async (req, res) => {
+  const { containerName } = req.params;
+  const { lines = 10 } = req.query;
+  
+  console.log(`📡 Starting log stream for Docker container: ${containerName}`);
+  
+  // Set headers for Server-Sent Events
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
+  
+  // Validate container name (basic security check)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: 'Invalid container name' })}\n\n`);
+    res.end();
+    return;
+  }
+  
+  // Send initial ping
+  res.write(`event: connected\ndata: ${JSON.stringify({ message: `Connected to ${containerName} logs` })}\n\n`);
+  
+  // Function to get and send recent logs
+  const sendRecentLogs = () => {
+    try {
+      const result = execSync(`docker logs --tail ${lines} ${containerName}`, { 
+        encoding: 'utf8',
+        timeout: 10000,
+        maxBuffer: 1024 * 1024 * 5 // 5MB max buffer
+      });
+      
+      const logs = result.split('\n').filter(line => line.trim().length > 0);
+      logs.forEach(logLine => {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
+      });
+      
+    } catch (error: any) {
+      if (error.message.includes('No such container')) {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: `Container '${containerName}' not found or not running`, timestamp: new Date().toISOString() })}\n\n`);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+      }
+    }
+  };
+  
+  // Send recent logs immediately
+  sendRecentLogs();
+  
+  // Set up interval to send new logs periodically
+  const logInterval = setInterval(() => {
+    try {
+      // Get logs from the last 2 seconds to simulate real-time
+      const result = execSync(`docker logs --since 2s ${containerName}`, { 
+        encoding: 'utf8',
+        timeout: 5000,
+        maxBuffer: 1024 * 1024 // 1MB max buffer
+      });
+      
+      if (result.trim()) {
+        const logs = result.split('\n').filter(line => line.trim().length > 0);
+        logs.forEach(logLine => {
+          res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
+        });
+      }
+      
+      // Send keep-alive ping every 30 seconds
+      if (Date.now() % 30000 < 2000) {
+        res.write(`event: ping\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
+      }
+      
+    } catch (error: any) {
+      // Silently handle errors in the interval
+      if (!error.message.includes('No such container')) {
+        console.error(`Log streaming error for ${containerName}:`, error.message);
+      }
+    }
+  }, 2000); // Check for new logs every 2 seconds
+  
+  // Clean up when client disconnects
+  req.on('close', () => {
+    console.log(`📡 Log stream closed for Docker container: ${containerName}`);
+    clearInterval(logInterval);
+  });
+  
+  req.on('error', (error) => {
+    console.log(`📡 Log stream error for Docker container ${containerName}:`, error.message);
+    clearInterval(logInterval);
+  });
+  
+  res.on('close', () => {
+    clearInterval(logInterval);
+  });
+});
+
+// POST /api/docker/execute - Execute command in any Docker container
+app.post("/api/docker/execute", validateAuthHash, async (req, res) => {
+  const { containerName, command } = req.body;
+  
+  if (!containerName || !command) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Container name and command are required" 
+    });
+  }
+  
+  // Validate container name (basic security check)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Invalid container name" 
+    });
+  }
+  
+  console.log(`🖥️ Executing command in Docker container ${containerName}: ${command}`);
+  
+  try {
+    // Execute command in container with proper escaping
+    if (command.includes('\n') || command.includes('\r')) {
+      return res.json({ 
+        success: false, 
+        message: "Multi-line commands are not allowed",
+        output: "Multi-line commands are not allowed"
+      });
+    }
+    
+    // Use single quotes to prevent most injection attacks
+    const escapedCommand = command.replace(/'/g, "'\"'\"'");
+    const dockerCommand = `docker exec ${containerName} /bin/sh -c '${escapedCommand}'`;
+    
+    const result = execSync(dockerCommand, { 
+      encoding: 'utf8',
+      timeout: 30000,
+      maxBuffer: 1024 * 1024 // 1MB max buffer
+    });
+    
+    console.log(`✅ Command executed successfully in Docker container ${containerName}`);
+    res.json({ success: true, output: result, containerName });
+    
+  } catch (error: any) {
+    console.error(`❌ Failed to execute command in Docker container ${containerName}:`, error.message);
+    
+    // Extract meaningful error message
+    let errorMessage = error.message;
+    if (error.stdout) {
+      errorMessage += '\n' + error.stdout;
+    }
+    if (error.stderr) {
+      errorMessage += '\n' + error.stderr;
+    }
+    
+    res.json({ 
+      success: false, 
+      message: errorMessage,
+      output: errorMessage 
+    });
+  }
+});
+
+// POST /api/docker/autocomplete - Provide autocomplete for Docker container terminal
+app.post("/api/docker/autocomplete", validateAuthHash, async (req, res) => {
+  const { containerName, path: inputPath, currentDir = '/' } = req.body;
+  
+  if (!containerName) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Container name is required" 
+    });
+  }
+  
+  // Validate container name (basic security check)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Invalid container name" 
+    });
+  }
+  
+  console.log(`🔍 Docker autocomplete request for container ${containerName}: "${inputPath}" in ${currentDir}`);
+  
+  try {
+    // Handle empty path - list current directory
+    const pathToSearch = inputPath || '.';
+    const searchCommand = `find "${currentDir}" -maxdepth 1 -name "${pathToSearch}*" 2>/dev/null | head -20`;
+    
+    const result = execSync(`docker exec ${containerName} /bin/sh -c "${searchCommand}"`, { 
+      encoding: 'utf8',
+      timeout: 10000,
+      maxBuffer: 1024 * 512 // 512KB max buffer
+    });
+    
+    // Process results
+    const files = result.split('\n')
+      .filter(line => line.trim().length > 0)
+      .map(fullPath => {
+        const filename = fullPath.split('/').pop() || '';
+        return {
+          name: filename,
+          path: fullPath,
+          type: 'unknown' // We could add stat info here if needed
+        };
+      })
+      .filter(item => item.name.length > 0);
+    
+    console.log(`✅ Found ${files.length} autocomplete matches for Docker container ${containerName}`);
+    res.json({ success: true, completions: files });
+    
+  } catch (error: any) {
+    console.error(`❌ Docker autocomplete failed for ${containerName}:`, error.message);
+    
+    // Return empty completions instead of error - autocomplete should fail silently
+    res.json({ success: true, completions: [] });
+  }
+});
+
 // Environment-based force update API has been removed
 // Use the web UI or POST /api/repos/:id/compile for manual builds
 

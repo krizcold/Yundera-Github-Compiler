@@ -34,6 +34,28 @@ class RepoManager {
         return hash;
     }
 
+    // Get authentication parameters for URLs
+    get authParams() {
+        return this.authHash ? `hash=${this.authHash}` : '';
+    }
+
+    // Handle authentication errors (session expired)
+    handleAuthError() {
+        console.error('🔒 Authentication failed - session likely expired');
+        
+        // Show user-friendly message
+        this.showNotification('Session expired. Redirecting to refresh authentication...', 'error');
+        
+        // Wait a moment then refresh with the hash to re-authenticate
+        setTimeout(() => {
+            if (this.authHash) {
+                window.location.href = `${window.location.pathname}?hash=${this.authHash}`;
+            } else {
+                window.location.href = '/';
+            }
+        }, 2000);
+    }
+
     // Add authentication hash to request data
     addAuthToRequest(data = {}) {
         if (this.authHash) {
@@ -82,6 +104,14 @@ class RepoManager {
         const terminalBtn = document.getElementById('terminal-btn');
         if (terminalBtn) {
             terminalBtn.addEventListener('click', () => this.openInteractiveTerminal());
+        }
+        
+        const logsBtn = document.getElementById('logs-btn');
+        if (logsBtn) {
+            logsBtn.addEventListener('click', () => {
+                console.log('🔍 Service Logs button clicked');
+                this.openServiceLogs();
+            });
         }
         
         console.log('✅ Events bound successfully');
@@ -245,6 +275,12 @@ class RepoManager {
                         onclick="repoManager.viewCompose('${repoId}')"
                         ${isEmpty || !hasCompose ? 'disabled' : ''}>
                     <i class="fas fa-file-code"></i>
+                </button>
+                <button class="btn btn-small btn-secondary" 
+                        title="View App Terminal" 
+                        onclick="repoManager.openAppLogs('${repoId}')"
+                        ${isEmpty || !isInstalled ? 'disabled' : ''}>
+                    <i class="fas fa-terminal"></i>
                 </button>
                 <button class="btn btn-small btn-warning" 
                         title="Remove Repository" 
@@ -2277,6 +2313,2177 @@ class RepoManager {
         this.setupInteractiveTerminalHandlers();
     }
 
+    openServiceLogs() {
+        console.log('📋 openServiceLogs called');
+        
+        // Initialize service logs state with persistent terminal sessions
+        this.serviceLogsState = {
+            selectedService: 'github-compiler',
+            services: {
+                'github-compiler': { 
+                    name: 'GitHub Compiler', 
+                    container: 'yunderagithubcompiler',
+                    terminalHistory: [],  // Each service keeps its own terminal history
+                    logHistory: [],  // Store log messages for this service
+                    terminalSession: {
+                        currentDir: '/',
+                        envVars: {},
+                        user: 'ubuntu',
+                        commandHistory: [],
+                        historyIndex: -1
+                    }
+                },
+                'casaos': { 
+                    name: 'CasaOS', 
+                    container: 'casaos',
+                    terminalHistory: [],
+                    logHistory: [],  // Store log messages for this service
+                    terminalSession: {
+                        currentDir: '/',
+                        envVars: {},
+                        user: 'ubuntu',
+                        commandHistory: [],
+                        historyIndex: -1
+                    }
+                },
+                'mesh-router': { 
+                    name: 'Mesh Router', 
+                    container: 'mesh-router',
+                    terminalHistory: [],
+                    logHistory: [],  // Store log messages for this service
+                    terminalSession: {
+                        currentDir: '/',
+                        envVars: {},
+                        user: 'ubuntu',
+                        commandHistory: [],
+                        historyIndex: -1
+                    }
+                },
+                'admin': { 
+                    name: 'Settings Center', 
+                    container: 'admin',
+                    isApp: true,  // Force it to use Docker container endpoint instead of service endpoint
+                    terminalHistory: [],
+                    logHistory: [],  // Store log messages for this service
+                    terminalSession: {
+                        currentDir: '/',
+                        envVars: {},
+                        user: 'ubuntu',
+                        commandHistory: [],
+                        historyIndex: -1
+                    }
+                }
+            }
+        };
+
+        // Create service logs popup
+        let logsPopup = document.getElementById('service-logs-popup');
+        if (logsPopup) {
+            logsPopup.remove();
+        }
+
+        logsPopup = document.createElement('div');
+        logsPopup.id = 'service-logs-popup';
+        logsPopup.innerHTML = `
+            <div class="terminal-backdrop" onclick="repoManager.closeServiceLogs()"></div>
+            <div class="logs-container">
+                <div class="logs-header">
+                    <div class="logs-title">
+                        <i class="fas fa-file-alt"></i>
+                        Service Logs
+                    </div>
+                    <div class="logs-controls">
+                        <button class="logs-btn" onclick="repoManager.closeServiceLogs()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="logs-body">
+                    <div class="logs-sidebar" id="logs-sidebar">
+                        <div class="sidebar-header">
+                            <span class="sidebar-title">Services</span>
+                        </div>
+                        <div class="service-list" id="service-list">
+                            <div class="service-item active" data-service="github-compiler">
+                                <div class="service-icon"><i class="fas fa-code-branch"></i></div>
+                                <div class="service-info">
+                                    <div class="service-name">GitHub Compiler</div>
+                                    <div class="service-status">Active</div>
+                                </div>
+                            </div>
+                            <div class="service-item" data-service="casaos">
+                                <div class="service-icon"><i class="fas fa-home"></i></div>
+                                <div class="service-info">
+                                    <div class="service-name">CasaOS</div>
+                                    <div class="service-status">Running</div>
+                                </div>
+                            </div>
+                            <div class="service-item" data-service="mesh-router">
+                                <div class="service-icon"><i class="fas fa-network-wired"></i></div>
+                                <div class="service-info">
+                                    <div class="service-name">Mesh Router</div>
+                                    <div class="service-status">Running</div>
+                                </div>
+                            </div>
+                            <div class="service-item" data-service="admin">
+                                <div class="service-icon"><i class="fas fa-cogs"></i></div>
+                                <div class="service-info">
+                                    <div class="service-name">Settings Center</div>
+                                    <div class="service-status">Running</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="logs-main">
+                        <div class="logs-tabs">
+                            <button class="logs-tab active" data-tab="logs">
+                                <i class="fas fa-file-alt"></i>
+                                Logs
+                            </button>
+                            <button class="logs-tab" data-tab="terminal">
+                                <i class="fas fa-terminal"></i>
+                                Terminal
+                            </button>
+                        </div>
+                        <div class="logs-content">
+                            <div class="logs-panel active" id="logs-panel">
+                                <div class="logs-toolbar">
+                                    <div class="logs-service-title">GitHub Compiler Logs</div>
+                                    <div class="logs-toolbar-controls">
+                                        <button class="logs-btn" id="logs-refresh-btn" title="Refresh logs">
+                                            <i class="fas fa-sync-alt"></i>
+                                        </button>
+                                        <button class="logs-btn" id="logs-clear-btn" title="Clear logs">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                        <button class="logs-btn" id="logs-follow-btn" title="Auto-scroll">
+                                            <i class="fas fa-arrow-down"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="logs-viewer" id="logs-viewer">
+                                    <div class="log-line system">📋 Loading logs for GitHub Compiler...</div>
+                                </div>
+                            </div>
+                            <div class="logs-panel" id="terminal-panel">
+                                <div class="terminal-content" id="service-terminal-output">
+                                    <div class="log-line system">🖥️ Service Terminal Ready</div>
+                                </div>
+                                <div class="terminal-input-section">
+                                    <div class="terminal-prompt">
+                                        <span id="service-terminal-prompt">ubuntu@github-compiler:/$</span>
+                                        <input type="text" id="service-terminal-input" placeholder="Enter command..." autocomplete="off">
+                                        <div class="terminal-controls">
+                                            <button id="service-terminal-execute" class="logs-btn" title="Execute command">
+                                                <i class="fas fa-play"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add styles for service logs
+        const style = document.createElement('style');
+        style.textContent = `
+            #service-logs-popup {
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.2s ease;
+            }
+            
+            #service-logs-popup .terminal-backdrop {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(4px);
+            }
+            
+            .logs-container {
+                position: relative;
+                width: 95%;
+                max-width: 1400px;
+                height: 85%;
+                max-height: 900px;
+                background: #1a1a1a;
+                border-radius: 12px;
+                border: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            
+            .logs-header {
+                background: #2d2d2d;
+                padding: 12px 16px;
+                border-radius: 12px 12px 0 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid #333;
+            }
+            
+            .logs-title {
+                color: #fff;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .logs-btn {
+                background: transparent;
+                border: none;
+                color: #888;
+                padding: 4px 8px;
+                cursor: pointer;
+                border-radius: 4px;
+                transition: all 0.2s;
+            }
+            
+            .logs-btn:hover {
+                background: #444;
+                color: #fff;
+            }
+            
+            .logs-body {
+                flex: 1;
+                display: flex;
+                overflow: hidden;
+            }
+            
+            .logs-sidebar {
+                width: 250px;
+                background: #252525;
+                border-right: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .logs-sidebar .sidebar-header {
+                padding: 12px 16px;
+                background: #2d2d2d;
+                border-bottom: 1px solid #333;
+                color: #fff;
+                font-weight: 600;
+                font-size: 14px;
+            }
+            
+            .service-list {
+                flex: 1;
+                overflow-y: auto;
+                padding: 8px;
+            }
+            
+            .service-item {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 12px;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.2s;
+                margin-bottom: 4px;
+            }
+            
+            .service-item:hover {
+                background: #333;
+            }
+            
+            .service-item.active {
+                background: #2563eb;
+                color: white;
+            }
+            
+            .service-icon {
+                width: 24px;
+                height: 24px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #888;
+                font-size: 14px;
+            }
+            
+            .service-item.active .service-icon {
+                color: white;
+            }
+            
+            .service-info {
+                flex: 1;
+            }
+            
+            .service-name {
+                color: #e0e0e0;
+                font-size: 13px;
+                font-weight: 500;
+                margin-bottom: 2px;
+            }
+            
+            .service-item.active .service-name {
+                color: white;
+            }
+            
+            .service-status {
+                color: #888;
+                font-size: 11px;
+            }
+            
+            .service-item.active .service-status {
+                color: #bfdbfe;
+            }
+            
+            .logs-main {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            
+            .logs-tabs {
+                display: flex;
+                background: #2d2d2d;
+                border-bottom: 1px solid #333;
+            }
+            
+            .logs-tab {
+                background: transparent;
+                border: none;
+                color: #888;
+                padding: 12px 20px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+                transition: all 0.2s;
+                border-bottom: 2px solid transparent;
+            }
+            
+            .logs-tab:hover {
+                background: #333;
+                color: #fff;
+            }
+            
+            .logs-tab.active {
+                color: #2563eb;
+                border-bottom-color: #2563eb;
+            }
+            
+            .logs-content {
+                flex: 1;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .logs-panel {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                display: none;
+                flex-direction: column;
+            }
+            
+            .logs-panel.active {
+                display: flex;
+            }
+            
+            .logs-toolbar {
+                background: #2a2a2a;
+                padding: 8px 16px;
+                border-bottom: 1px solid #333;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            .logs-service-title {
+                color: #fff;
+                font-size: 14px;
+                font-weight: 500;
+            }
+            
+            .logs-toolbar-controls {
+                display: flex;
+                gap: 4px;
+            }
+            
+            .logs-viewer {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                background: #1a1a1a;
+                color: #e0e0e0;
+            }
+            
+            #terminal-panel {
+                background: #1a1a1a;
+            }
+            
+            #service-terminal-output {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                color: #e0e0e0;
+            }
+            
+            #terminal-panel .terminal-input-section {
+                border-top: 1px solid #333;
+                background: #2d2d2d;
+                padding: 12px 16px;
+            }
+            
+            #terminal-panel .terminal-prompt {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            #service-terminal-prompt {
+                color: #2563eb;
+                font-weight: 600;
+                font-size: 13px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                white-space: nowrap;
+            }
+            
+            #service-terminal-input {
+                flex: 1;
+                background: #1a1a1a;
+                border: 1px solid #444;
+                color: #e0e0e0;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+            }
+            
+            #service-terminal-input:focus {
+                outline: none;
+                border-color: #2563eb;
+            }
+            
+            .terminal-controls {
+                display: flex;
+                gap: 4px;
+            }
+            
+            .logs-btn.active {
+                background: #2563eb !important;
+                color: white !important;
+            }
+            
+            .log-line.error {
+                color: #ef4444;
+            }
+            
+            .log-line.system {
+                color: #10b981;
+            }
+            
+            .log-line.command {
+                color: #f59e0b;
+                background: rgba(245, 158, 11, 0.1);
+                padding: 4px 8px;
+                border-radius: 4px;
+                margin: 2px 0;
+            }
+            
+            .log-line.output {
+                color: #e0e0e0;
+                padding-left: 16px;
+            }
+        `;
+
+        if (!document.getElementById('service-logs-styles')) {
+            style.id = 'service-logs-styles';
+            document.head.appendChild(style);
+        }
+
+        document.body.appendChild(logsPopup);
+
+        // Set up event handlers for service logs
+        this.setupServiceLogsHandlers();
+    }
+
+    setupServiceLogsHandlers() {
+        // Service selection
+        document.querySelectorAll('.service-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const service = item.dataset.service;
+                this.selectService(service);
+            });
+        });
+
+        // Tab switching
+        document.querySelectorAll('.logs-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabType = tab.dataset.tab;
+                this.switchLogsTab(tabType);
+            });
+        });
+
+        // Logs toolbar controls
+        document.getElementById('logs-refresh-btn')?.addEventListener('click', () => {
+            this.refreshServiceLogs();
+        });
+
+        document.getElementById('logs-clear-btn')?.addEventListener('click', () => {
+            this.clearServiceLogs();
+        });
+
+        document.getElementById('logs-follow-btn')?.addEventListener('click', () => {
+            this.toggleAutoScroll();
+        });
+
+        // Set up terminal handlers using event delegation to handle elements created in innerHTML
+        this.setupServiceTerminalHandlers();
+
+        // Enable auto-scroll by default
+        const followBtn = document.getElementById('logs-follow-btn');
+        if (followBtn) {
+            followBtn.classList.add('active');
+            followBtn.style.color = '#2563eb';
+            followBtn.title = 'Auto-scroll: ON';
+        }
+
+        // Load service status and initial logs
+        this.updateServiceStatus();
+        this.loadServiceLogs();
+    }
+
+    setupServiceTerminalHandlers() {
+        // Use setTimeout to ensure DOM elements are ready
+        setTimeout(() => {
+            const terminalInput = document.getElementById('service-terminal-input');
+            const executeBtn = document.getElementById('service-terminal-execute');
+
+            if (terminalInput && executeBtn) {
+                console.log('✅ Setting up service terminal handlers');
+                
+                // Remove any existing handlers to avoid duplicates
+                const newTerminalInput = terminalInput.cloneNode(true);
+                terminalInput.parentNode.replaceChild(newTerminalInput, terminalInput);
+                
+                const newExecuteBtn = executeBtn.cloneNode(true);
+                executeBtn.parentNode.replaceChild(newExecuteBtn, executeBtn);
+
+                // Handle key events (TAB completion removed for service terminals)
+                newTerminalInput.addEventListener('keydown', (e) => {
+                    // TAB completion disabled for service terminals due to performance issues
+                });
+                
+                newTerminalInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.executeServiceCommand();
+                    }
+                });
+
+                newExecuteBtn.addEventListener('click', () => {
+                    this.executeServiceCommand();
+                });
+            } else {
+                console.log('❌ Service terminal elements not found');
+            }
+        }, 100);
+    }
+
+    selectService(serviceId) {
+        // Update active service
+        document.querySelectorAll('.service-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        document.querySelector(`[data-service="${serviceId}"]`)?.classList.add('active');
+
+        // Update state
+        this.serviceLogsState.selectedService = serviceId;
+        const service = this.serviceLogsState.services[serviceId];
+
+        // Update UI
+        document.querySelector('.logs-service-title').textContent = `${service.name} Logs`;
+        document.getElementById('service-terminal-prompt').textContent = `ubuntu@${service.container}:/$`;
+
+        // Restore terminal history for the selected service
+        const terminalOutput = document.getElementById('service-terminal-output');
+        if (terminalOutput) {
+            // Clear and restore the specific service's terminal history
+            terminalOutput.innerHTML = '<div class="log-line system">🖥️ Service Terminal Ready</div>';
+            
+            // Restore previous terminal history for this service
+            const serviceHistory = service.terminalHistory || [];
+            serviceHistory.forEach(historyItem => {
+                terminalOutput.innerHTML += historyItem;
+            });
+            
+            // Scroll to bottom
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+        }
+
+        // Load logs for selected service
+        this.loadServiceLogs();
+    }
+
+    updateServiceSidebar() {
+        const serviceList = document.getElementById('service-list');
+        if (!serviceList) return;
+
+        // Clear existing items
+        serviceList.innerHTML = '';
+
+        // Add all services (both system services and apps)
+        Object.keys(this.serviceLogsState.services).forEach(serviceKey => {
+            const service = this.serviceLogsState.services[serviceKey];
+            
+            let icon, status;
+            if (service.isApp) {
+                icon = '<i class="fas fa-cube"></i>';
+                status = 'App';
+            } else if (serviceKey === 'github-compiler') {
+                icon = '<i class="fas fa-code-branch"></i>';
+                status = 'Active';
+            } else if (serviceKey === 'casaos') {
+                icon = '<i class="fas fa-home"></i>';
+                status = 'Running';
+            } else if (serviceKey === 'mesh-router') {
+                icon = '<i class="fas fa-network-wired"></i>';
+                status = 'Running';
+            } else {
+                icon = '<i class="fas fa-server"></i>';
+                status = 'Service';
+            }
+
+            const isActive = serviceKey === this.serviceLogsState.selectedService ? 'active' : '';
+            
+            const serviceItem = document.createElement('div');
+            serviceItem.className = `service-item ${isActive}`;
+            serviceItem.setAttribute('data-service', serviceKey);
+            serviceItem.innerHTML = `
+                <div class="service-icon">${icon}</div>
+                <div class="service-info">
+                    <div class="service-name">${service.name}</div>
+                    <div class="service-status">${status}</div>
+                </div>
+            `;
+            
+            serviceList.appendChild(serviceItem);
+        });
+
+        // Re-bind click events for service items
+        document.querySelectorAll('.service-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const service = item.dataset.service;
+                this.selectService(service);
+            });
+        });
+    }
+
+    switchLogsTab(tabType) {
+        // Update active tab
+        document.querySelectorAll('.logs-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        document.querySelector(`[data-tab="${tabType}"]`)?.classList.add('active');
+
+        // Update active panel
+        document.querySelectorAll('.logs-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+        document.getElementById(`${tabType}-panel`)?.classList.add('active');
+    }
+
+    async loadServiceLogs() {
+        const selectedServiceKey = this.serviceLogsState.selectedService;
+        const service = this.serviceLogsState.services[selectedServiceKey];
+        const logsViewer = document.getElementById('logs-viewer');
+        
+        if (!logsViewer) return;
+
+        try {
+            // Show loading message
+            logsViewer.innerHTML = '<div class="log-line system">📋 Connecting to log stream...</div>';
+
+            // Start real-time log streaming if not already active for this service
+            if (!service.eventSource) {
+                this.startLogStreaming();
+            } else {
+                // Restore saved log history for this service
+                this.restoreServiceLogHistory();
+            }
+            
+        } catch (error) {
+            console.error('Failed to load service logs:', error);
+            logsViewer.innerHTML = '<div class="log-line error">❌ Error loading logs: ' + (error.response?.data?.message || error.message) + '</div>';
+        }
+    }
+
+    restoreServiceLogHistory() {
+        const selectedServiceKey = this.serviceLogsState.selectedService;
+        const service = this.serviceLogsState.services[selectedServiceKey];
+        const logsViewer = document.getElementById('logs-viewer');
+        
+        if (!logsViewer || !service) return;
+
+        // Restore saved log history for this service
+        if (service.logHistory && service.logHistory.length > 0) {
+            logsViewer.innerHTML = service.logHistory.join('');
+            // Scroll to bottom
+            logsViewer.scrollTop = logsViewer.scrollHeight;
+        } else {
+            logsViewer.innerHTML = '<div class="log-line system">📡 Log stream active (no previous logs)</div>';
+        }
+    }
+
+    startLogStreaming() {
+        const selectedServiceKey = this.serviceLogsState.selectedService;
+        const service = this.serviceLogsState.services[selectedServiceKey];
+        const logsViewer = document.getElementById('logs-viewer');
+        
+        if (!logsViewer || !service) return;
+
+        let streamUrl;
+        
+        // Check if this is an app or a system service
+        if (service.isApp) {
+            // For apps, use the Docker container logs endpoint
+            streamUrl = `/api/docker/${service.container}/logs/stream?${this.authParams}&lines=50`;
+        } else {
+            // For system services, use the services endpoint
+            streamUrl = `/api/services/${selectedServiceKey}/logs/stream?${this.authParams}&lines=50`;
+        }
+        
+        console.log(`📡 Starting log stream for ${selectedServiceKey} (${service.name})`);
+        
+        // Create EventSource for real-time logs and store it per service
+        const eventSource = new EventSource(streamUrl);
+        service.eventSource = eventSource;
+        
+        // Clear logs on connection
+        eventSource.addEventListener('connected', (event) => {
+            const data = JSON.parse(event.data);
+            // Only update viewer if this service is currently selected
+            if (this.serviceLogsState.selectedService === selectedServiceKey) {
+                logsViewer.innerHTML = '<div class="log-line system">📡 ' + data.message + '</div>';
+            }
+        });
+        
+        // Handle log messages
+        eventSource.addEventListener('log', (event) => {
+            const data = JSON.parse(event.data);
+            // Save log to this service's history (always save, regardless of what's currently selected)
+            this.saveLogToServiceHistory(selectedServiceKey, data.log, data.timestamp);
+            
+            // Only update viewer if this service is currently selected
+            if (this.serviceLogsState.selectedService === selectedServiceKey) {
+                this.addLogToViewer(data.log, data.timestamp);
+            }
+        });
+        
+        // Handle connection errors with retry logic
+        eventSource.addEventListener('error', (event) => {
+            console.error('Log stream error for service:', selectedServiceKey);
+            
+            // Only show error if connection is permanently closed
+            if (eventSource.readyState === EventSource.CLOSED) {
+                // Save error to history and show if this service is currently selected
+                this.saveLogToServiceHistory(selectedServiceKey, '❌ Log stream disconnected. Attempting to reconnect...', new Date().toISOString(), 'error');
+                
+                if (this.serviceLogsState.selectedService === selectedServiceKey) {
+                    this.addLogToViewer('❌ Log stream disconnected. Attempting to reconnect...', new Date().toISOString(), 'error');
+                }
+                
+                // Clear the eventSource from the service since it's closed
+                service.eventSource = null;
+                
+                // Attempt to reconnect after 3 seconds
+                setTimeout(() => {
+                    if (this.serviceLogsState && this.serviceLogsState.selectedService === selectedServiceKey) {
+                        console.log('🔄 Attempting to reconnect log stream...');
+                        this.startLogStreaming();
+                    }
+                }, 3000);
+            }
+        });
+        
+        // Handle ping (keep-alive)
+        eventSource.addEventListener('ping', (event) => {
+            // Update connection status indicator if needed
+            console.log('📡 Log stream keep-alive ping received');
+        });
+        
+        // Enhanced error handling
+        eventSource.onerror = (error) => {
+            // Only log detailed error info, don't spam user with technical details
+            if (eventSource.readyState === EventSource.CONNECTING) {
+                console.log('📡 Log stream connecting...');
+            } else if (eventSource.readyState === EventSource.CLOSED) {
+                console.warn('📡 Log stream connection closed');
+            }
+        };
+    }
+
+    saveLogToServiceHistory(serviceKey, logText, timestamp, type = 'log') {
+        const service = this.serviceLogsState.services[serviceKey];
+        if (!service) return;
+
+        // Create the same HTML that would be displayed
+        const time = new Date(timestamp).toLocaleTimeString();
+        const logHtml = `<div class="log-line ${type}"><span style="color: #666; font-size: 11px;">[${time}]</span> ${logText}</div>`;
+        
+        // Add to service's log history
+        service.logHistory.push(logHtml);
+        
+        // Limit history to prevent memory issues (keep last 500 logs per service)
+        const maxHistoryLines = 500;
+        if (service.logHistory.length > maxHistoryLines) {
+            service.logHistory.shift(); // Remove oldest log
+        }
+    }
+
+    addLogToViewer(logText, timestamp, type = 'log') {
+        const logsViewer = document.getElementById('logs-viewer');
+        if (!logsViewer) return;
+
+        const line = document.createElement('div');
+        line.className = `log-line ${type}`;
+        
+        // Format timestamp for display
+        const time = new Date(timestamp).toLocaleTimeString();
+        line.innerHTML = `<span style="color: #666; font-size: 11px;">[${time}]</span> ${logText}`;
+        
+        logsViewer.appendChild(line);
+        
+        // Auto-scroll to bottom if follow mode is active
+        const followBtn = document.getElementById('logs-follow-btn');
+        if (followBtn && followBtn.classList.contains('active')) {
+            logsViewer.scrollTop = logsViewer.scrollHeight;
+        }
+        
+        // Limit number of log lines to prevent memory issues
+        const maxLines = 1000;
+        while (logsViewer.children.length > maxLines) {
+            logsViewer.removeChild(logsViewer.firstChild);
+        }
+    }
+
+    displayLogs(logs) {
+        const logsViewer = document.getElementById('logs-viewer');
+        if (!logsViewer) return;
+
+        if (!logs || logs.length === 0) {
+            logsViewer.innerHTML = '<div class="log-line system">📄 No logs available</div>';
+            return;
+        }
+
+        logsViewer.innerHTML = '';
+        logs.forEach(logLine => {
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.textContent = logLine;
+            logsViewer.appendChild(line);
+        });
+
+        // Auto-scroll to bottom
+        logsViewer.scrollTop = logsViewer.scrollHeight;
+    }
+
+    refreshServiceLogs() {
+        this.loadServiceLogs();
+    }
+
+    clearServiceLogs() {
+        const logsViewer = document.getElementById('logs-viewer');
+        if (logsViewer) {
+            logsViewer.innerHTML = '<div class="log-line system">📄 Logs cleared</div>';
+        }
+    }
+
+    toggleAutoScroll() {
+        const followBtn = document.getElementById('logs-follow-btn');
+        const logsViewer = document.getElementById('logs-viewer');
+        
+        if (followBtn) {
+            followBtn.classList.toggle('active');
+            
+            // If activating auto-scroll, scroll to bottom immediately
+            if (followBtn.classList.contains('active') && logsViewer) {
+                logsViewer.scrollTop = logsViewer.scrollHeight;
+                followBtn.style.color = '#2563eb';
+                followBtn.title = 'Auto-scroll: ON';
+            } else {
+                followBtn.style.color = '';
+                followBtn.title = 'Auto-scroll: OFF';
+            }
+        }
+    }
+
+    async executeServiceCommand() {
+        const terminalInput = document.getElementById('service-terminal-input');
+        const terminalOutput = document.getElementById('service-terminal-output');
+        
+        if (!terminalInput || !terminalOutput) return;
+
+        const command = terminalInput.value.trim();
+        if (!command) return;
+
+        const service = this.serviceLogsState.services[this.serviceLogsState.selectedService];
+
+        // Add command to output
+        const commandLine = document.createElement('div');
+        commandLine.className = 'log-line command';
+        commandLine.innerHTML = `<span style="color: #2563eb">ubuntu@${service.container}:/$</span> ${command}`;
+        terminalOutput.appendChild(commandLine);
+
+        // Save command to service history
+        const commandHTML = commandLine.outerHTML;
+        if (!service.terminalHistory) {
+            service.terminalHistory = [];
+        }
+        service.terminalHistory.push(commandHTML);
+
+        // Clear input
+        terminalInput.value = '';
+
+        try {
+            // Simplify API call - just use services endpoint for better performance
+            const response = await axios.post('/api/services/execute', this.addAuthToRequest({
+                service: this.serviceLogsState.selectedService,
+                command: command
+            }));
+
+            if (response.data.success) {
+                // Add output to terminal
+                if (response.data.output) {
+                    const outputLine = document.createElement('div');
+                    outputLine.className = 'log-line output';
+                    outputLine.textContent = response.data.output;
+                    terminalOutput.appendChild(outputLine);
+                    
+                    // Save output to service history
+                    service.terminalHistory.push(outputLine.outerHTML);
+                }
+            } else {
+                const errorLine = document.createElement('div');
+                errorLine.className = 'log-line error';
+                errorLine.textContent = `Error: ${response.data.message}`;
+                terminalOutput.appendChild(errorLine);
+                
+                // Save error to service history
+                service.terminalHistory.push(errorLine.outerHTML);
+            }
+        } catch (error) {
+            const errorLine = document.createElement('div');
+            errorLine.className = 'log-line error';
+            errorLine.textContent = `Error: ${error.response?.data?.message || error.message}`;
+            terminalOutput.appendChild(errorLine);
+            
+            // Save error to service history
+            service.terminalHistory.push(errorLine.outerHTML);
+        }
+
+        // Auto-scroll to bottom
+        terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    }
+
+    // TAB completion removed from service logs for better performance
+
+    async updateServiceStatus() {
+        try {
+            const url = this.authHash ? `/api/services/status?hash=${this.authHash}` : '/api/services/status';
+            const response = await axios.get(url);
+            if (response.data.success) {
+                const services = response.data.services;
+                
+                // Update status indicators in the sidebar
+                services.forEach(service => {
+                    let serviceId;
+                    switch (service.container) {
+                        case 'yunderagithubcompiler':
+                            serviceId = 'github-compiler';
+                            break;
+                        case 'casaos':
+                            serviceId = 'casaos';
+                            break;
+                        case 'mesh-router':
+                            serviceId = 'mesh-router';
+                            break;
+                    }
+                    
+                    if (serviceId) {
+                        const statusElement = document.querySelector(`[data-service="${serviceId}"] .service-status`);
+                        if (statusElement) {
+                            statusElement.textContent = service.running ? 'Running' : 'Stopped';
+                            statusElement.style.color = service.running ? '#10b981' : '#ef4444';
+                        }
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Failed to update service status:', error);
+        }
+    }
+
+    async openAppLogs(repoId) {
+        console.log('📱 openAppLogs called with repoId:', repoId);
+        
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo || !repo.name) {
+            console.log('❌ Repository not found:', repoId);
+            this.showNotification('Repository not found or not configured', 'error');
+            return;
+        }
+
+        if (!repo.isInstalled) {
+            console.log('❌ App not installed');
+            this.showNotification('App must be installed first to view logs', 'error');
+            return;
+        }
+
+        // Close any existing popups
+        this.closeServiceLogs();
+        this.closeAppLogsPopup();
+
+        // Create popup immediately with loading state
+        this.appLogsState = {
+            repoId: repoId,
+            repo: repo,
+            selectedContainer: null,
+            containers: {},
+            eventSources: {},
+            loading: true
+        };
+
+        // Create the popup with loading state
+        this.createAppLogsPopup();
+
+        // Load containers in the background
+        try {
+            const response = await fetch(`/api/repos/${repoId}/debug?${this.authParams}`);
+            
+            if (response.status === 401) {
+                this.handleAuthError();
+                return;
+            }
+            
+            const debugInfo = await response.json();
+            
+            if (!debugInfo.success) {
+                this.showNotification('Failed to get app container information', 'error');
+                this.closeAppLogsPopup();
+                return;
+            }
+
+            // Parse container list from debug info
+            const containerList = debugInfo.debug?.dockerInfo?.containerList || '';
+            const containers = [];
+            
+            if (containerList.trim()) {
+                containerList.split('\n').forEach(line => {
+                    if (line.trim()) {
+                        const [name, status, state] = line.split('\t');
+                        if (name) {
+                            containers.push({
+                                name: name.trim(),
+                                status: status?.trim() || 'unknown',
+                                state: state?.trim() || 'unknown'
+                            });
+                        }
+                    }
+                });
+            }
+
+            if (containers.length === 0) {
+                this.showNotification('No containers found for this app', 'error');
+                this.closeAppLogsPopup();
+                return;
+            }
+
+            // Update state with containers
+            this.appLogsState.selectedContainer = containers[0].name;
+            this.appLogsState.loading = false;
+            
+            // Set up containers in the state
+            containers.forEach(container => {
+                this.appLogsState.containers[container.name] = {
+                    name: container.name,
+                    displayName: container.name.replace(/^[^_]*_/, ''), // Remove prefix for display
+                    status: container.status,
+                    state: container.state,
+                    terminalHistory: [],
+                    logHistory: [],  // Store log messages for this service
+                    terminalSession: {
+                        currentDir: '/',
+                        envVars: {},
+                        user: 'root',
+                        commandHistory: [],
+                        historyIndex: -1
+                    }
+                };
+            });
+
+            // Update the popup with actual containers
+            this.updateAppLogsPopup();
+
+        } catch (error) {
+            console.error('Failed to load app containers:', error);
+            this.showNotification('Failed to load app containers: ' + error.message, 'error');
+            this.closeAppLogsPopup();
+        }
+    }
+
+    closeAppLogsPopup() {
+        // Close all EventSource connections for app containers
+        if (this.appLogsState && this.appLogsState.eventSources) {
+            Object.keys(this.appLogsState.eventSources).forEach(containerName => {
+                const eventSource = this.appLogsState.eventSources[containerName];
+                if (eventSource) {
+                    console.log(`📡 Closing ${containerName} log stream connection`);
+                    eventSource.close();
+                }
+            });
+        }
+
+        // Remove the popup (now uses service-logs-popup ID)
+        const popup = document.getElementById('service-logs-popup');
+        if (popup) {
+            popup.remove();
+        }
+        
+        this.appLogsState = null;
+    }
+
+    loadServiceLogsCSS() {
+        const style = document.createElement('style');
+        style.id = 'service-logs-styles';
+        style.textContent = `
+            #service-logs-popup {
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.2s ease;
+            }
+            
+            #service-logs-popup .terminal-backdrop {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(4px);
+            }
+            
+            .logs-container {
+                position: relative;
+                width: 95%;
+                max-width: 1400px;
+                height: 85%;
+                max-height: 900px;
+                background: #1a1a1a;
+                border-radius: 12px;
+                border: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            
+            .logs-header {
+                background: #2d2d2d;
+                padding: 12px 16px;
+                border-radius: 12px 12px 0 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid #333;
+            }
+            
+            .logs-title {
+                color: #fff;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .logs-controls {
+                display: flex;
+                gap: 8px;
+            }
+            
+            .logs-btn {
+                background: #444;
+                border: none;
+                color: #e0e0e0;
+                padding: 6px 8px;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: all 0.2s;
+                font-size: 12px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+            
+            .logs-btn:hover {
+                background: #555;
+                color: #fff;
+            }
+            
+            .logs-btn.active {
+                background: #3b82f6;
+                color: #fff;
+            }
+            
+            .logs-body {
+                flex: 1;
+                display: flex;
+                overflow: hidden;
+            }
+            
+            .logs-sidebar {
+                width: 280px;
+                background: #2d2d2d;
+                border-right: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .sidebar-header {
+                padding: 12px 16px;
+                background: #3d3d3d;
+                border-bottom: 1px solid #444;
+            }
+            
+            .sidebar-title {
+                color: #e0e0e0;
+                font-weight: 600;
+                font-size: 13px;
+            }
+            
+            .service-list {
+                flex: 1;
+                overflow-y: auto;
+            }
+            
+            .service-item {
+                padding: 12px 16px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                cursor: pointer;
+                transition: all 0.2s;
+                border-bottom: 1px solid #3d3d3d;
+            }
+            
+            .service-item:hover {
+                background: #3d3d3d;
+            }
+            
+            .service-item.active {
+                background: #3b82f6;
+                color: #fff;
+            }
+            
+            .service-icon {
+                color: #888;
+                font-size: 16px;
+                width: 20px;
+                text-align: center;
+            }
+            
+            .service-item.active .service-icon {
+                color: #fff;
+            }
+            
+            .service-info {
+                flex: 1;
+            }
+            
+            .service-name {
+                color: #e0e0e0;
+                font-weight: 500;
+                font-size: 13px;
+                margin-bottom: 2px;
+            }
+            
+            .service-item.active .service-name {
+                color: #fff;
+            }
+            
+            .service-status {
+                color: #888;
+                font-size: 11px;
+            }
+            
+            .service-item.active .service-status {
+                color: #bfdbfe;
+            }
+            
+            .logs-main {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            
+            .logs-tabs {
+                display: flex;
+                background: #2d2d2d;
+                border-bottom: 1px solid #333;
+            }
+            
+            .logs-tab {
+                background: transparent;
+                border: none;
+                color: #888;
+                padding: 12px 16px;
+                cursor: pointer;
+                transition: all 0.2s;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 13px;
+                border-bottom: 2px solid transparent;
+            }
+            
+            .logs-tab:hover {
+                background: #3d3d3d;
+                color: #e0e0e0;
+            }
+            
+            .logs-tab.active {
+                background: #1a1a1a;
+                color: #3b82f6;
+                border-bottom-color: #3b82f6;
+            }
+            
+            .logs-content {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            
+            .logs-panel {
+                display: none;
+                flex-direction: column;
+                flex: 1;
+                overflow: hidden;
+            }
+            
+            .logs-panel.active {
+                display: flex;
+            }
+            
+            .logs-toolbar {
+                background: #2d2d2d;
+                padding: 8px 16px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid #333;
+            }
+            
+            .logs-service-title {
+                color: #e0e0e0;
+                font-weight: 500;
+                font-size: 13px;
+            }
+            
+            .logs-toolbar-controls {
+                display: flex;
+                gap: 4px;
+            }
+            
+            .logs-viewer {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 12px;
+                line-height: 1.5;
+                background: #1a1a1a;
+                color: #e0e0e0;
+            }
+            
+            #terminal-panel {
+                background: #1a1a1a;
+            }
+            
+            #service-terminal-output {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                color: #e0e0e0;
+            }
+            
+            #terminal-panel .terminal-input-section {
+                border-top: 1px solid #333;
+                background: #2d2d2d;
+                padding: 12px 16px;
+            }
+            
+            #terminal-panel .terminal-prompt {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            #service-terminal-prompt, #app-terminal-prompt {
+                color: #2563eb;
+                font-weight: 600;
+                font-size: 13px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                white-space: nowrap;
+            }
+            
+            #service-terminal-input, #app-terminal-input {
+                flex: 1;
+                background: #1a1a1a;
+                border: 1px solid #444;
+                color: #e0e0e0;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                font-size: 13px;
+            }
+            
+            #service-terminal-input:focus, #app-terminal-input:focus {
+                outline: none;
+                border-color: #3b82f6;
+            }
+            
+            .terminal-controls {
+                display: flex;
+                gap: 4px;
+            }
+            
+            .log-line {
+                margin: 1px 0;
+                word-break: break-word;
+                white-space: pre-wrap;
+            }
+            
+            .log-line.error {
+                color: #ef4444;
+            }
+            
+            .log-line.system {
+                color: #10b981;
+            }
+            
+            .log-line.command {
+                color: #3b82f6;
+                font-weight: 600;
+            }
+            
+            .log-line.output {
+                color: #e0e0e0;
+            }
+            
+            .log-timestamp {
+                color: #666;
+                font-size: 11px;
+                margin-right: 8px;
+            }
+            
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+        `;
+        
+        document.head.appendChild(style);
+    }
+
+    closeServiceLogs() {
+        // Close all EventSource connections
+        if (this.serviceLogsState && this.serviceLogsState.services) {
+            Object.keys(this.serviceLogsState.services).forEach(serviceKey => {
+                const service = this.serviceLogsState.services[serviceKey];
+                if (service.eventSource) {
+                    console.log(`📡 Closing ${serviceKey} log stream connection`);
+                    service.eventSource.close();
+                    service.eventSource = null;
+                }
+            });
+        }
+
+        // Remove the popup
+        const popup = document.getElementById('service-logs-popup');
+        if (popup) {
+            popup.remove();
+        }
+        
+        this.serviceLogsState = null;
+    }
+
+    createAppLogsPopup() {
+        const repo = this.appLogsState.repo;
+        
+        // Create the popup HTML using service logs structure
+        const logsPopup = document.createElement('div');
+        logsPopup.id = 'service-logs-popup';  // Use same ID to reuse CSS
+        
+        // Generate container sidebar items
+        let containerItems = '';
+        if (this.appLogsState.loading) {
+            containerItems = `
+                <div class="service-item">
+                    <div class="service-icon"><i class="fas fa-spinner fa-spin"></i></div>
+                    <div class="service-info">
+                        <div class="service-name">Loading containers...</div>
+                        <div class="service-status">Please wait</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            Object.keys(this.appLogsState.containers).forEach(containerName => {
+                const container = this.appLogsState.containers[containerName];
+                const isActive = containerName === this.appLogsState.selectedContainer ? 'active' : '';
+                const statusColor = container.state === 'running' ? '#10b981' : '#ef4444';
+                
+                containerItems += `
+                    <div class="service-item ${isActive}" data-container="${containerName}">
+                        <div class="service-icon"><i class="fas fa-cube"></i></div>
+                        <div class="service-info">
+                            <div class="service-name">${container.displayName}</div>
+                            <div class="service-status" style="color: ${statusColor}">${container.state}</div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        logsPopup.innerHTML = `
+            <div class="terminal-backdrop" onclick="repoManager.closeAppLogsPopup()"></div>
+            <div class="logs-container">
+                <div class="logs-header">
+                    <div class="logs-title">
+                        <i class="fas fa-cube"></i>
+                        ${repo.name} - Container Logs
+                    </div>
+                    <div class="logs-controls">
+                        <button class="logs-btn" onclick="repoManager.closeAppLogsPopup()">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="logs-body">
+                    <div class="logs-sidebar" id="app-logs-sidebar">
+                        <div class="sidebar-header">
+                            <span class="sidebar-title">Containers</span>
+                        </div>
+                        <div class="service-list" id="app-container-list">
+                            ${containerItems}
+                        </div>
+                    </div>
+                    <div class="logs-main">
+                        <div class="logs-tabs">
+                            <button class="logs-tab active" data-tab="logs">
+                                <i class="fas fa-file-alt"></i>
+                                Logs
+                            </button>
+                            <button class="logs-tab" data-tab="terminal">
+                                <i class="fas fa-terminal"></i>
+                                Terminal
+                            </button>
+                        </div>
+                        <div class="logs-content">
+                            <div class="logs-panel active" id="logs-panel">
+                                <div class="logs-toolbar">
+                                    <div class="logs-service-title" id="app-logs-title">${this.appLogsState.loading ? 'Loading...' : (this.appLogsState.containers[this.appLogsState.selectedContainer]?.displayName || 'Container')} Logs</div>
+                                    <div class="logs-toolbar-controls">
+                                        <button class="logs-btn" id="logs-refresh-btn" title="Refresh logs">
+                                            <i class="fas fa-sync-alt"></i>
+                                        </button>
+                                        <button class="logs-btn" id="logs-clear-btn" title="Clear logs">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                        <button class="logs-btn active" id="logs-follow-btn" title="Auto-scroll: ON">
+                                            <i class="fas fa-arrow-down"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="logs-viewer" id="logs-viewer">
+                                    <div class="log-line system">📋 ${this.appLogsState.loading ? 'Loading containers...' : 'Loading logs...'}</div>
+                                </div>
+                            </div>
+                            <div class="logs-panel" id="terminal-panel">
+                                <div class="terminal-content" id="service-terminal-output">
+                                    <div class="log-line system">🖥️ Container Terminal Ready</div>
+                                </div>
+                                <div class="terminal-input-section">
+                                    <div class="terminal-prompt">
+                                        <span id="service-terminal-prompt">root@${this.appLogsState.selectedContainer || 'container'}:/$</span>
+                                        <input type="text" id="service-terminal-input" placeholder="Enter command..." autocomplete="off">
+                                        <div class="terminal-controls">
+                                            <button id="service-terminal-execute" class="logs-btn" title="Execute command">
+                                                <i class="fas fa-play"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Load CSS if not already loaded (same as service logs)
+        if (!document.getElementById('service-logs-styles')) {
+            this.loadServiceLogsCSS();
+        }
+
+        document.body.appendChild(logsPopup);
+
+        // Only set up handlers if not loading (will be set up later)
+        if (!this.appLogsState.loading) {
+            this.setupAppLogsHandlers();
+            this.startAppLogStreaming();
+        }
+    }
+
+    updateAppLogsPopup() {
+        if (!this.appLogsState || this.appLogsState.loading) return;
+
+        // Update sidebar with actual containers
+        const containerList = document.getElementById('app-container-list');
+        if (containerList) {
+            let containerItems = '';
+            Object.keys(this.appLogsState.containers).forEach(containerName => {
+                const container = this.appLogsState.containers[containerName];
+                const isActive = containerName === this.appLogsState.selectedContainer ? 'active' : '';
+                const statusColor = container.state === 'running' ? '#10b981' : '#ef4444';
+                
+                containerItems += `
+                    <div class="service-item ${isActive}" data-container="${containerName}">
+                        <div class="service-icon"><i class="fas fa-cube"></i></div>
+                        <div class="service-info">
+                            <div class="service-name">${container.displayName}</div>
+                            <div class="service-status" style="color: ${statusColor}">${container.state}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            containerList.innerHTML = containerItems;
+        }
+
+        // Update title
+        const title = document.getElementById('app-logs-title');
+        if (title && this.appLogsState.selectedContainer) {
+            const container = this.appLogsState.containers[this.appLogsState.selectedContainer];
+            title.textContent = `${container.displayName} Logs`;
+        }
+
+        // Update terminal prompt
+        const prompt = document.getElementById('service-terminal-prompt');
+        if (prompt && this.appLogsState.selectedContainer) {
+            prompt.textContent = `root@${this.appLogsState.selectedContainer}:/$`;
+        }
+
+        // Update logs viewer
+        const viewer = document.getElementById('logs-viewer');
+        if (viewer) {
+            viewer.innerHTML = '<div class="log-line system">📋 Loading logs...</div>';
+        }
+
+        // Set up event handlers and start streaming
+        this.setupAppLogsHandlers();
+        this.startAppLogStreaming();
+    }
+
+    setupAppLogsHandlers() {
+        // Container selection
+        document.querySelectorAll('#app-container-list .service-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const containerName = item.dataset.container;
+                this.selectAppContainer(containerName);
+            });
+        });
+
+        // Tab switching
+        document.querySelectorAll('.logs-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabType = tab.dataset.tab;
+                this.switchAppLogsTab(tabType);
+            });
+        });
+
+        // Toolbar controls  
+        document.getElementById('logs-refresh-btn')?.addEventListener('click', () => {
+            this.refreshAppLogs();
+        });
+
+        document.getElementById('logs-clear-btn')?.addEventListener('click', () => {
+            this.clearAppLogs();
+        });
+
+        document.getElementById('logs-follow-btn')?.addEventListener('click', () => {
+            this.toggleAppAutoScroll();
+        });
+
+        // Terminal handlers
+        const terminalInput = document.getElementById('service-terminal-input');
+        const executeBtn = document.getElementById('service-terminal-execute');
+
+        if (terminalInput) {
+            terminalInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    this.executeAppCommand();
+                }
+                if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    this.navigateAppCommandHistory('up');
+                }
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    this.navigateAppCommandHistory('down');
+                }
+            });
+        }
+
+        if (executeBtn) {
+            executeBtn.addEventListener('click', () => {
+                this.executeAppCommand();
+            });
+        }
+    }
+
+    selectAppContainer(containerName) {
+        if (!this.appLogsState || !this.appLogsState.containers[containerName]) return;
+
+        // Update UI
+        document.querySelectorAll('#app-container-list .service-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        document.querySelector(`[data-container="${containerName}"]`)?.classList.add('active');
+
+        // Update state
+        this.appLogsState.selectedContainer = containerName;
+        const container = this.appLogsState.containers[containerName];
+
+        // Update titles
+        document.getElementById('app-logs-title').textContent = `${container.displayName} Logs`;
+        document.getElementById('service-terminal-prompt').textContent = `root@${containerName}:/$`;
+
+        // Clear and reload logs
+        this.refreshAppLogs();
+    }
+
+    switchAppLogsTab(tabType) {
+        document.querySelectorAll('.logs-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        document.querySelector(`.logs-tab[data-tab="${tabType}"]`)?.classList.add('active');
+
+        document.querySelectorAll('.logs-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+        document.getElementById(`${tabType}-panel`)?.classList.add('active');
+
+        if (tabType === 'terminal') {
+            setTimeout(() => {
+                document.getElementById('service-terminal-input')?.focus();
+            }, 100);
+        }
+    }
+
+    startAppLogStreaming() {
+        if (!this.appLogsState || !this.appLogsState.selectedContainer) return;
+
+        const containerName = this.appLogsState.selectedContainer;
+        
+        // Close existing connection for this container if any
+        if (this.appLogsState.eventSources[containerName]) {
+            this.appLogsState.eventSources[containerName].close();
+        }
+
+        console.log(`📡 Starting log stream for container: ${containerName}`);
+        
+        const streamUrl = `/api/docker/${containerName}/logs/stream?${this.authParams}&lines=200`;
+        
+        try {
+            const eventSource = new EventSource(streamUrl);
+            this.appLogsState.eventSources[containerName] = eventSource;
+
+            // Handle connection establishment
+            eventSource.addEventListener('connected', (event) => {
+                const data = JSON.parse(event.data);
+                // Only update viewer if this container is still selected
+                if (this.appLogsState.selectedContainer === containerName) {
+                    console.log(`✅ Connected to ${containerName} logs`);
+                    this.appendAppLogLine('📡 ' + data.message, null, 'system');
+                }
+            });
+
+            // Handle actual log messages (this is the key fix!)
+            eventSource.addEventListener('log', (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    // Only update if this container is still selected
+                    if (this.appLogsState.selectedContainer === containerName) {
+                        this.appendAppLogLine(data.log, data.timestamp);
+                    }
+                } catch (error) {
+                    console.error('Failed to parse log message:', error);
+                }
+            });
+
+            // Handle connection errors with retry logic
+            eventSource.addEventListener('error', (event) => {
+                console.error(`App log stream error for ${containerName}:`, error);
+                
+                // Only show error if connection is permanently closed
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    // Connection is closed, remove from eventSources
+                    delete this.appLogsState.eventSources[containerName];
+                    
+                    // Only show error if this container is still selected
+                    if (this.appLogsState.selectedContainer === containerName) {
+                        this.appendAppLogLine('❌ Log stream disconnected. Attempting to reconnect...', null, 'error');
+                        
+                        // Attempt to reconnect after 5 seconds
+                        setTimeout(() => {
+                            if (this.appLogsState && this.appLogsState.selectedContainer === containerName) {
+                                console.log(`🔄 Attempting to reconnect to ${containerName}...`);
+                                this.startAppLogStreaming();
+                            }
+                        }, 5000);
+                    }
+                }
+            });
+
+            // Handle ping (keep-alive)
+            eventSource.addEventListener('ping', (event) => {
+                console.log(`📡 Log stream keep-alive ping received for ${containerName}`);
+            });
+
+        } catch (error) {
+            console.error(`Failed to start log streaming for ${containerName}:`, error);
+            this.appendAppLogLine(`❌ Failed to start log streaming: ${error.message}`, null, 'error');
+        }
+    }
+
+    appendAppLogLine(message, timestamp, type = 'log') {
+        const viewer = document.getElementById('logs-viewer');
+        if (!viewer) return;
+
+        const line = document.createElement('div');
+        line.className = `log-line ${type}`;
+        
+        const time = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+        const prefix = type === 'system' ? '🖥️' : type === 'error' ? '❌' : '📋';
+        
+        line.innerHTML = `<span class="log-timestamp">[${time}]</span> ${prefix} ${message}`;
+        viewer.appendChild(line);
+
+        // Auto-scroll to bottom
+        viewer.scrollTop = viewer.scrollHeight;
+
+        // Limit lines
+        if (viewer.children.length > 1000) {
+            viewer.removeChild(viewer.firstChild);
+        }
+    }
+
+    refreshAppLogs() {
+        const viewer = document.getElementById('logs-viewer');
+        if (viewer) {
+            viewer.innerHTML = '<div class="log-line system">📋 Refreshing logs...</div>';
+        }
+        this.startAppLogStreaming();
+    }
+
+    clearAppLogs() {
+        const viewer = document.getElementById('logs-viewer');
+        if (viewer) {
+            viewer.innerHTML = '<div class="log-line system">📋 Logs cleared</div>';
+        }
+    }
+
+    toggleAppAutoScroll() {
+        // App logs always auto-scroll for now - just toggle the button appearance
+        const btn = document.getElementById('logs-follow-btn');
+        if (btn) {
+            btn.classList.toggle('active');
+            btn.title = btn.classList.contains('active') ? 'Auto-scroll: ON' : 'Auto-scroll: OFF';
+        }
+    }
+
+    async executeAppCommand() {
+        if (!this.appLogsState) return;
+
+        const input = document.getElementById('service-terminal-input');
+        if (!input || !input.value.trim()) return;
+
+        const command = input.value.trim();
+        const containerName = this.appLogsState.selectedContainer;
+        const container = this.appLogsState.containers[containerName];
+        
+        // Add to command history
+        container.terminalSession.commandHistory.push(command);
+        container.terminalSession.historyIndex = container.terminalSession.commandHistory.length;
+
+        // Show command in terminal
+        this.appendAppTerminalLine(`$ ${command}`, 'command');
+        
+        // Clear input
+        input.value = '';
+
+        try {
+            const response = await fetch(`/api/docker/execute?${this.authParams}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ containerName, command })
+            });
+
+            if (response.status === 401) {
+                this.handleAuthError();
+                return;
+            }
+
+            const result = await response.json();
+            
+            if (result.success) {
+                if (result.output) {
+                    this.appendAppTerminalLine(result.output, 'output');
+                }
+            } else {
+                this.appendAppTerminalLine(result.error || 'Command failed', 'error');
+            }
+        } catch (error) {
+            console.error('Command execution failed:', error);
+            this.appendAppTerminalLine(`Error: ${error.message}`, 'error');
+        }
+    }
+
+    appendAppTerminalLine(message, type = 'output') {
+        const output = document.getElementById('service-terminal-output');
+        if (!output) return;
+
+        const line = document.createElement('div');
+        line.className = `log-line ${type}`;
+        line.textContent = message;
+        
+        output.appendChild(line);
+        output.scrollTop = output.scrollHeight;
+
+        if (output.children.length > 500) {
+            output.removeChild(output.firstChild);
+        }
+    }
+
+    navigateAppCommandHistory(direction) {
+        if (!this.appLogsState) return;
+
+        const input = document.getElementById('service-terminal-input');
+        if (!input) return;
+
+        const container = this.appLogsState.containers[this.appLogsState.selectedContainer];
+        const history = container.terminalSession.commandHistory;
+        
+        if (direction === 'up' && container.terminalSession.historyIndex > 0) {
+            container.terminalSession.historyIndex--;
+            input.value = history[container.terminalSession.historyIndex];
+        } else if (direction === 'down') {
+            container.terminalSession.historyIndex++;
+            if (container.terminalSession.historyIndex >= history.length) {
+                container.terminalSession.historyIndex = history.length;
+                input.value = '';
+            } else {
+                input.value = history[container.terminalSession.historyIndex];
+            }
+        }
+    }
+
+    async uninstallApp(repoId) {
+        console.log('🗑️ uninstallApp called with repoId:', repoId);
+        
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo || !repo.name) {
+            console.log('❌ Repository not found:', repoId);
+            this.showNotification('Repository not found or not configured', 'error');
+            return;
+        }
+
+        if (!repo.isInstalled) {
+            console.log('❌ App not installed');
+            this.showNotification('Application is not installed', 'error');
+            return;
+        }
+
+        console.log(`🗑️ Uninstalling app: ${repo.name}`);
+
+        // Show confirmation dialog
+        const result = await this.showAppUninstallConfirmation(repo);
+        if (!result.proceed) {
+            console.log('❌ Uninstall cancelled by user');
+            return;
+        }
+
+        try {
+            // Call uninstall API (reuse existing app management endpoint)
+            const response = await axios.post(`/api/apps/${repoId}/stop`, this.addAuthToRequest({
+                uninstall: true,
+                preserveData: result.preserveData
+            }));
+
+            if (response.data.success) {
+                this.showNotification(`Application "${repo.name}" uninstalled successfully`, 'success');
+                // Refresh the repo to update status
+                await this.loadRepos();
+            } else {
+                this.showNotification(`Failed to uninstall "${repo.name}": ${response.data.message}`, 'error');
+            }
+        } catch (error) {
+            console.error(`Failed to uninstall app ${repo.name}:`, error);
+            this.showNotification(`Failed to uninstall "${repo.name}": ${error.response?.data?.message || error.message}`, 'error');
+        }
+    }
+
+    async showAppUninstallConfirmation(repo) {
+        return new Promise((resolve) => {
+            // Create app uninstall confirmation popup  
+            const popup = document.createElement('div');
+            popup.id = 'app-uninstall-confirmation';
+            popup.innerHTML = `
+                <div class="uninstall-backdrop"></div>
+                <div class="uninstall-container">
+                    <div class="uninstall-header">
+                        <div class="uninstall-icon">🗑️</div>
+                        <h2>Uninstall Application</h2>
+                    </div>
+                    <div class="uninstall-content">
+                        <p><strong>Are you sure you want to uninstall "${repo.name}"?</strong></p>
+                        
+                        <div class="uninstall-notice">
+                            <p><i class="fas fa-info-circle"></i> This will uninstall the application from CasaOS but keep the repository configuration.</p>
+                        </div>
+                        
+                        <div class="data-preservation-section">
+                            <label class="preserve-data-label">
+                                <input type="checkbox" id="preserve-app-data-uninstall" checked>
+                                <span class="preserve-data-text">
+                                    <strong>Preserve application data</strong><br>
+                                    <small>Keep user data, settings, and configurations. You can reinstall later without losing data.</small>
+                                </span>
+                            </label>
+                        </div>
+                        
+                        <div class="uninstall-warning">
+                            <p><strong>⚠️ What will happen:</strong></p>
+                            <ul>
+                                <li>Application will be removed from CasaOS</li>
+                                <li>Container will be stopped and removed</li>
+                                <li>Repository configuration will remain intact</li>
+                                <li id="data-warning">User data will be preserved for future reinstallation</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="uninstall-actions">
+                        <button class="btn btn-secondary" id="cancel-app-uninstall">Cancel</button>
+                        <button class="btn btn-danger" id="confirm-app-uninstall">Uninstall Application</button>
+                    </div>
+                </div>
+            `;
+
+            // Add styles
+            const style = document.createElement('style');
+            style.textContent = `
+                #app-uninstall-confirmation {
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    z-index: 10000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                
+                .preserve-data-label {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    cursor: pointer;
+                    padding: 12px;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 8px;
+                    margin: 16px 0;
+                }
+                
+                .preserve-data-label input[type="checkbox"] {
+                    margin-top: 2px;
+                }
+                
+                .preserve-data-text {
+                    flex: 1;
+                }
+                
+                .preserve-data-text small {
+                    color: #666;
+                    line-height: 1.3;
+                }
+            `;
+
+            if (!document.getElementById('app-uninstall-styles')) {
+                style.id = 'app-uninstall-styles';
+                document.head.appendChild(style);
+            }
+
+            document.body.appendChild(popup);
+
+            // Handle button clicks
+            const cancelBtn = document.getElementById('cancel-app-uninstall');
+            const confirmBtn = document.getElementById('confirm-app-uninstall');
+            const preserveDataCheckbox = document.getElementById('preserve-app-data-uninstall');
+            const dataWarning = document.getElementById('data-warning');
+
+            // Handle preserve data checkbox
+            preserveDataCheckbox.addEventListener('change', () => {
+                if (preserveDataCheckbox.checked) {
+                    dataWarning.textContent = 'User data will be preserved for future reinstallation';
+                    dataWarning.style.color = '#10b981';
+                } else {
+                    dataWarning.textContent = 'If data preservation is disabled, all user data will be lost';
+                    dataWarning.style.color = '#dc2626';
+                }
+            });
+
+            cancelBtn.addEventListener('click', () => {
+                popup.remove();
+                resolve({ proceed: false });
+            });
+
+            confirmBtn.addEventListener('click', () => {
+                const preserveData = preserveDataCheckbox.checked;
+                popup.remove();
+                resolve({ proceed: true, preserveData });
+            });
+
+            // Handle backdrop click
+            popup.querySelector('.uninstall-backdrop').addEventListener('click', () => {
+                popup.remove();
+                resolve({ proceed: false });
+            });
+        });
+    }
+
     setupInteractiveTerminalHandlers() {
         const userSelect = document.getElementById('terminal-user');
         const customUserInput = document.getElementById('custom-user');
@@ -3328,6 +5535,9 @@ function initializeApp() {
     try {
         repoManager = new RepoManager();
         console.log('✅ RepoManager initialized successfully');
+        
+        // Make repoManager globally accessible for debugging
+        window.repoManager = repoManager;
     } catch (error) {
         console.error('❌ Failed to initialize RepoManager:', error);
     }
