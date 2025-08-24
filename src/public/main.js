@@ -130,12 +130,42 @@ class RepoManager {
             const url = this.authHash ? `/api/repos?hash=${this.authHash}` : '/api/repos';
             const response = await axios.get(url);
             this.repos = response.data.repos || [];
-            this.renderRepos();
+            this.renderReposPreservingFocus();
         } catch (error) {
             console.error('Failed to load repositories:', error);
             this.repos = [];
+            this.renderReposPreservingFocus();
+        }
+    }
+
+    renderReposPreservingFocus() {
+        // Check if user is typing in the empty repo form
+        const emptyRepoInput = document.querySelector('.repo-item:last-child input[type="text"]');
+        const isUserTyping = emptyRepoInput && document.activeElement === emptyRepoInput;
+        
+        if (isUserTyping) {
+            // User is typing - update only the existing repos, not the empty form
+            this.updateExistingRepos();
+        } else {
+            // Safe to do full re-render
             this.renderRepos();
         }
+    }
+
+    updateExistingRepos() {
+        const repoList = document.getElementById('repo-list');
+        if (!repoList) return;
+        
+        // Remove all existing repo items (but keep the empty form)
+        const existingRepoItems = repoList.querySelectorAll('.repo-item:not(:last-child)');
+        existingRepoItems.forEach(item => item.remove());
+        
+        // Add updated repo items before the empty form
+        const emptyForm = repoList.querySelector('.repo-item:last-child');
+        this.repos.forEach((repo, index) => {
+            const newRepoElement = this.createRepoElement(repo, index);
+            repoList.insertBefore(newRepoElement, emptyForm);
+        });
     }
     
     async syncAndReload() {
@@ -417,7 +447,31 @@ class RepoManager {
     handleUrlChange(repoId, url) {
         if (repoId === 'empty') {
             this.emptyRepoState.url = url;
-            this.renderRepos();
+            // Update the display name without re-rendering the entire form
+            this.updateEmptyRepoDisplayName();
+        }
+    }
+
+    updateEmptyRepoDisplayName() {
+        // Find the empty repo form by looking for the repo with id='empty'
+        const emptyRepoItem = document.querySelector('.repo-item[data-repo-id="empty"]');
+        if (!emptyRepoItem) return;
+        
+        const repoNameElement = emptyRepoItem.querySelector('.repo-name');
+        const actionButton = emptyRepoItem.querySelector('.repo-actions button:first-child');
+        
+        // Update display name
+        if (repoNameElement && this.emptyRepoState.type === 'github' && this.emptyRepoState.url) {
+            const extractedName = this.extractRepoName(this.emptyRepoState.url);
+            repoNameElement.textContent = extractedName || 'New GitHub App';
+        } else if (repoNameElement && this.emptyRepoState.type === 'github') {
+            repoNameElement.textContent = 'New GitHub App';
+        }
+        
+        // Update button state (for GitHub repos, disabled when no URL)
+        if (actionButton && this.emptyRepoState.type === 'github') {
+            const shouldDisable = !this.emptyRepoState.url.trim();
+            actionButton.disabled = shouldDisable;
         }
     }
     
