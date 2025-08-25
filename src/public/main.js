@@ -272,14 +272,14 @@ class RepoManager {
                         <input type="text" 
                                placeholder="https://github.com/username/repository.git" 
                                value="${repoUrl}"
-                               oninput="repoManager.handleUrlChange('empty', this.value)"
+                               oninput="repoManager.handleUrlChange('${repoId}', this.value)"
                                ${!isEmpty ? 'disabled' : ''}>
                     </div>
                 </div>
                 <div class="repo-settings">
                     <div class="setting-row">
                         <label>Auto-Update:</label>
-                        <div class="switch ${autoUpdate ? 'active' : ''}" onclick="repoManager.toggleRepoAutoUpdate('${repoId}')" ${isEmpty ? 'disabled' : ''}>
+                        <div class="switch ${autoUpdate ? 'active' : ''}" onclick="repoManager.toggleRepoAutoUpdate('${repoId}')" ${isEmpty || repoType === 'compose' ? 'disabled' : ''}>
                             <div class="switch-slider"></div>
                         </div>
                     </div>
@@ -287,11 +287,11 @@ class RepoManager {
                         <label>Interval (min):</label>
                         <input type="number" min="5" max="10080" value="${repo.autoUpdateInterval || 60}" 
                                onchange="repoManager.updateRepoSettings('${repoId}', { autoUpdateInterval: this.value })" 
-                               ${!autoUpdate || isEmpty ? 'disabled' : ''}>
+                               ${!autoUpdate || isEmpty || repoType === 'compose' ? 'disabled' : ''}>
                     </div>
                     <div class="setting-row">
                         <label>API Updates:</label>
-                        <div class="switch ${repo.apiUpdatesEnabled !== false ? 'active' : ''}" onclick="repoManager.toggleRepoApiUpdates('${repoId}')" ${isEmpty ? 'disabled' : ''}>
+                        <div class="switch ${repo.apiUpdatesEnabled !== false ? 'active' : ''}" onclick="repoManager.toggleRepoApiUpdates('${repoId}')" ${isEmpty || repoType === 'compose' ? 'disabled' : ''}>
                             <div class="switch-slider"></div>
                         </div>
                     </div>
