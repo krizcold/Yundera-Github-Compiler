@@ -489,6 +489,41 @@ app.put("/api/settings", validateAuthHash, (req, res) => {
   res.json({ success: true, settings: newSettings });
 });
 
+// POST /api/repos - Create a new GitHub repository
+app.post("/api/repos", validateAuthHash, async (req, res) => {
+  const { name, url, type, autoUpdate, autoUpdateInterval, apiUpdatesEnabled, status } = req.body;
+  
+  if (!name || !type) {
+    return res.status(400).json({ success: false, message: "Name and type are required" });
+  }
+  
+  if (type === 'github' && !url) {
+    return res.status(400).json({ success: false, message: "URL is required for GitHub repositories" });
+  }
+  
+  try {
+    // Check if a repo with this name already exists
+    const existingRepos = loadRepositories();
+    if (existingRepos.some(r => r.name.toLowerCase() === name.toLowerCase())) {
+      return res.status(409).json({ success: false, message: `An application named '${name}' already exists.` });
+    }
+    
+    const newRepo = addRepository({
+      name,
+      url,
+      type,
+      autoUpdate: autoUpdate || false,
+      autoUpdateInterval: autoUpdateInterval || 60,
+      apiUpdatesEnabled: apiUpdatesEnabled !== false,
+      status: status || 'empty'
+    });
+    
+    res.json({ success: true, repo: newRepo });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // POST /api/repos/create-from-compose - Create a new Docker Compose repository
 app.post("/api/repos/create-from-compose", validateAuthHash, async (req, res) => {
   const { yaml } = req.body;

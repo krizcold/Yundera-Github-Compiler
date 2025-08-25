@@ -503,6 +503,11 @@ class RepoManager {
 
         try {
             const repo = await this.createNewRepo(name, url, 'github');
+            
+            if (!repo || !repo.id) {
+                throw new Error('Repository creation failed - no repo ID returned');
+            }
+            
             this.emptyRepoState = { name: '', type: 'github', url: '' };
             await this.loadRepos();
             
