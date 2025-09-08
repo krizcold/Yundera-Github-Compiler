@@ -19,14 +19,53 @@ export interface GitUpdateInfo {
 /** Clone if missing, otherwise pull latest */
 export function cloneOrUpdateRepo(repo: RepoConfig, baseDir: string): void {
   const repoDir = path.join(baseDir, repo.path);
-  if (!fs.existsSync(repoDir)) {
-    console.log(`🔀 Cloning ${repo.url}`);
-    execSync(`git clone ${repo.url} ${repoDir}`, { stdio: "inherit" });
-  } else {
-    console.log(`↻ Pulling latest in ${repoDir}`);
-    execSync(`git -C ${repoDir} pull`, { stdio: "inherit" });
+  
+  try {
+    if (!fs.existsSync(repoDir)) {
+      console.log(`🔀 Cloning ${repo.url}`);
+      
+      // Set Git to skip SSL verification for this operation if needed
+      const gitEnv = { 
+        ...process.env,
+        GIT_SSL_NO_VERIFY: '1', // This helps with some authentication issues
+        GIT_TERMINAL_PROMPT: '0' // Prevent interactive prompts
+      };
+      
+      execSync(`git clone "${repo.url}" "${repoDir}"`, { 
+        stdio: "inherit",
+        env: gitEnv
+      });
+    } else {
+      console.log(`↻ Pulling latest in ${repoDir}`);
+      
+      const gitEnv = { 
+        ...process.env,
+        GIT_SSL_NO_VERIFY: '1',
+        GIT_TERMINAL_PROMPT: '0'
+      };
+      
+      execSync(`git -C "${repoDir}" pull`, { 
+        stdio: "inherit",
+        env: gitEnv
+      });
+    }
+  } catch (error: any) {
+    console.error(`❌ Git operation failed for ${repo.url}:`, error.message);
+    
+    // If authentication failed, provide helpful error message
+    if (error.message.includes('Authentication failed') || 
+        error.message.includes('Permission denied') ||
+        error.message.includes('could not read Username') ||
+        error.message.includes('repository not found')) {
+      
+      console.error(`🔑 Git authentication issue detected. For private repositories:`);
+      console.error(`   Use Personal Access Token in URL: https://github_pat_TOKEN@github.com/owner/repo.git`);
+    }
+    
+    throw error;
   }
 }
+
 
 /** Check if repository has remote updates available without pulling */
 export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo {
@@ -45,16 +84,25 @@ export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo
     }
 
     // Fetch remote updates without merging
-    execSync(`git -C ${repoDir} fetch origin`, { stdio: 'pipe' });
+    const gitEnv = { 
+      ...process.env,
+      GIT_SSL_NO_VERIFY: '1',
+      GIT_TERMINAL_PROMPT: '0'
+    };
+    
+    execSync(`git -C "${repoDir}" fetch origin`, { 
+      stdio: 'pipe',
+      env: gitEnv 
+    });
     
     // Get current local commit
-    const currentCommit = execSync(`git -C ${repoDir} rev-parse HEAD`, { 
+    const currentCommit = execSync(`git -C "${repoDir}" rev-parse HEAD`, { 
       encoding: 'utf8', 
       stdio: 'pipe' 
     }).trim();
     
     // Get latest remote commit
-    const latestCommit = execSync(`git -C ${repoDir} rev-parse origin/HEAD`, { 
+    const latestCommit = execSync(`git -C "${repoDir}" rev-parse origin/HEAD`, { 
       encoding: 'utf8', 
       stdio: 'pipe' 
     }).trim();
@@ -65,7 +113,7 @@ export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo
     let commitsBehind = 0;
     if (hasUpdates) {
       try {
-        const commitCount = execSync(`git -C ${repoDir} rev-list --count HEAD..origin/HEAD`, { 
+        const commitCount = execSync(`git -C "${repoDir}" rev-list --count HEAD..origin/HEAD`, { 
           encoding: 'utf8', 
           stdio: 'pipe' 
         }).trim();

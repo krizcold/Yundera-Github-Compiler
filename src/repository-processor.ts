@@ -29,7 +29,9 @@ export async function processRepo(
   };
   
   try {
-    const hostMetadataDir = path.join('/DATA/AppData/casaos/apps', repository.name);
+    // We'll determine the actual app name from the compose file later
+    let appName = repository.name; // Default fallback
+    let hostMetadataDir = path.join('/DATA/AppData/casaos/apps', appName);
     
     // Phase 1: Build image if it's a GitHub repo
     if (repository.type === 'github') {
@@ -63,6 +65,16 @@ export async function processRepo(
     log(`✅ Found docker-compose.yml, parsing...`, 'success');
     const rawYaml = fs.readFileSync(internalComposePath, 'utf8');
     const composeObject = yaml.parse(rawYaml);
+    
+    // Extract the actual app name from compose file's name property
+    if (composeObject.name && composeObject.name !== repository.name) {
+        appName = composeObject.name;
+        hostMetadataDir = path.join('/DATA/AppData/casaos/apps', appName);
+        log(`🏷️ Using app name from compose file: ${appName}`, 'info');
+        // Update the repository display name to match the compose file
+        updateRepository(repository.id, { displayName: appName });
+        log(`📝 Updated repository display name to: ${appName}`, 'info');
+    }
 
     // Only run pre-install command on FIRST installation, never on updates
     if (repository.isInstalled) {
@@ -121,6 +133,21 @@ export async function processRepo(
                             // Fallback to Node.js mkdir if docker exec fails
                             try {
                                 fs.mkdirSync(hostPath, { recursive: true });
+                                log(`📁 Created directory ${hostPath}, fixing ownership...`, 'info');
+                                
+                                // Fix ownership after creating with Node.js
+                                const { exec } = await import('child_process');
+                                const { promisify } = require('util');
+                                const execAsync = promisify(exec);
+                                
+                                await execAsync(`chown -R 1000:1000 "${hostPath}"`, {
+                                    timeout: 5000
+                                });
+                                await execAsync(`chmod -R 755 "${hostPath}"`, {
+                                    timeout: 5000
+                                });
+                                
+                                log(`✅ Fixed ownership of ${hostPath} to 1000:1000`, 'success');
                                 createdPaths.add(hostPath);
                                 volumeCount++;
                             } catch (fallbackError: any) {
@@ -154,8 +181,29 @@ export async function processRepo(
             maxBuffer: 1024 * 1024
         });
     } catch (error: any) {
+        log(`⚠️ Failed to create metadata directory via docker exec: ${error.message}`, 'warning');
         // Fallback to Node.js mkdir
-        fs.mkdirSync(hostMetadataDir, { recursive: true });
+        try {
+            fs.mkdirSync(hostMetadataDir, { recursive: true });
+            log(`📁 Created metadata directory ${hostMetadataDir}, fixing ownership...`, 'info');
+            
+            // Fix ownership after creating with Node.js
+            const { exec } = await import('child_process');
+            const { promisify } = require('util');
+            const execAsync = promisify(exec);
+            
+            await execAsync(`chown -R 1000:1000 "${hostMetadataDir}"`, {
+                timeout: 5000
+            });
+            
+            await execAsync(`chmod -R 755 "${hostMetadataDir}"`, {
+                timeout: 5000
+            });
+            
+            log(`✅ Fixed ownership of metadata directory to 1000:1000`, 'success');
+        } catch (fallbackError: any) {
+            log(`❌ Failed to create or fix metadata directory: ${fallbackError.message}`, 'error');
+        }
     }
     
     fs.writeFileSync(hostComposePath, yaml.stringify(clean));
@@ -166,7 +214,7 @@ export async function processRepo(
     updateRepository(repository.id, { status: 'installing' });
     
     // Start the installation and wait for completion
-    const installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector);
+    const installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector, appName);
 
     if (!installResult.success) {
         const errorMsg = installResult.message;
@@ -176,26 +224,47 @@ export async function processRepo(
 
     // Installation completed successfully
     log(`✅ Docker Compose installation completed successfully for ${repository.name}`, 'success');
+    
+    // Fix ownership of any directories Docker Compose may have created as root
+    log(`🔧 Fixing ownership of Docker Compose created directories...`, 'info');
+    const appDataPath = `/DATA/AppData/${appName}`;
+    try {
+        const { exec } = await import('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+        
+        // Check if the app data directory exists (Docker may have created it)
+        if (fs.existsSync(appDataPath)) {
+            
+            try {
+                // Try to fix ownership via docker exec to CasaOS container first
+                await execAsync(`docker exec casaos chown -R ubuntu:ubuntu "${appDataPath}"`, {
+                    timeout: 10000,
+                    maxBuffer: 1024 * 1024
+                });
+            } catch (dockerError: any) {
+                // Fallback to direct chown with numeric IDs
+                await execAsync(`chown -R 1000:1000 "${appDataPath}"`, {
+                    timeout: 5000
+                });
+            }
+            
+            log(`✅ Fixed ownership of Docker Compose directory: ${appDataPath}`, 'success');
+        } else {
+        }
+    } catch (error: any) {
+        log(`⚠️ Warning: Could not fix ownership of Docker Compose directories: ${error.message}`, 'warning');
+    }
+    
     log(`🔍 Verifying installation status...`, 'info');
     
     // Brief delay to allow CasaOS to recognize the new container
     log(`⏳ Waiting 3 seconds for CasaOS to recognize the new container...`, 'info');
     await new Promise(resolve => setTimeout(resolve, 3000));
     
-    // Get the actual app name to check
-    let appNameToCheck = repository.name;
-    if (fs.existsSync(internalComposePath)) {
-        try {
-            const composeContent = fs.readFileSync(internalComposePath, 'utf8');
-            const composeData = yaml.parse(composeContent);
-            if (composeData.services && Object.keys(composeData.services).length > 0) {
-                appNameToCheck = Object.keys(composeData.services)[0];
-                log(`🔍 Checking app status using service name: ${appNameToCheck}`, 'info');
-            }
-        } catch (error) {
-            log(`⚠️ Could not parse compose file for service name, using repository name`, 'warning');
-        }
-    }
+    // Use the actual app name for verification - this matches what Docker Compose uses
+    const appNameToCheck = appName;
+    log(`🔍 Checking app status using app name: ${appNameToCheck}`, 'info');
     
     // Verify installation status directly
     log(`🔍 Checking if app is running in CasaOS...`, 'info');

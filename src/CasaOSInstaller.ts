@@ -7,17 +7,18 @@ export interface CasaOSResult {
 
 
 export class CasaOSInstaller {
-  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any): Promise<CasaOSResult> {
+  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any, projectName?: string): Promise<CasaOSResult> {
     return new Promise((resolve) => {
-      const projectName = composeFilePath.split('/').slice(-2, -1)[0];
-      if (!projectName) {
+      // Use provided project name or extract from path as fallback
+      const finalProjectName = projectName || composeFilePath.split('/').slice(-2, -1)[0];
+      if (!finalProjectName) {
         return resolve({ success: false, message: 'Could not determine project name from compose file path.' });
       }
 
-      console.log(`🚀 Spawning Docker Compose process for: ${projectName}`);
+      console.log(`🚀 Spawning Docker Compose process for: ${finalProjectName}`);
       
       const command = 'docker';
-      const args = ['compose', '-p', projectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans', '--pull=always'];
+      const args = ['compose', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans', '--pull=always'];
       
       const child = spawn(command, args);
 
@@ -27,7 +28,8 @@ export class CasaOSInstaller {
         
         lines.forEach(line => {
           if (!line) return;
-          console.log(`[${projectName} log]: ${line}`);
+          console.log(`[${finalProjectName} log]: ${line}`);
+          
           
           // Also send to log collector for terminal display
           if (logCollector) {
@@ -41,17 +43,17 @@ export class CasaOSInstaller {
 
       child.on('close', (code) => {
         if (code === 0) {
-          console.log(`✅ Docker Compose process for ${projectName} completed successfully.`);
+          console.log(`✅ Docker Compose process for ${finalProjectName} completed successfully.`);
           resolve({ success: true, message: 'Installation completed successfully.' });
         } else {
-          console.error(`❌ Docker Compose process for ${projectName} exited with code ${code}.`);
+          console.error(`❌ Docker Compose process for ${finalProjectName} exited with code ${code}.`);
           const errorMessage = `Installation failed (exit code: ${code})`;
           resolve({ success: false, message: errorMessage });
         }
       });
 
       child.on('error', (err) => {
-        console.error(`❌ Failed to start Docker Compose process for ${projectName}:`, err);
+        console.error(`❌ Failed to start Docker Compose process for ${finalProjectName}:`, err);
         resolve({ success: false, message: `Failed to start installer: ${err.message}` });
       });
 

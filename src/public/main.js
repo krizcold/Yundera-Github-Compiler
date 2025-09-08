@@ -230,10 +230,8 @@ class RepoManager {
         const lastBuildTime = repo.lastBuildTime ? this.formatDate(repo.lastBuildTime) : 'Never';
         const hasCompose = status !== 'empty' && status !== 'idle' && status !== 'importing';
 
-        let displayName = repo.name || (repoType === 'github' ? 'New GitHub App' : 'New Compose App');
-        if (isEmpty && repoType === 'github' && repoUrl) {
-            displayName = this.extractRepoName(repoUrl) || 'New GitHub App';
-        }
+        let displayName = repo.displayName || repo.name || (repoType === 'github' ? 'New GitHub App' : 'New Compose App');
+        // Keep constant name for empty repos - don't extract from URL
 
         const nameHTML = `<h3 class="repo-name">${displayName}</h3>`;
 
@@ -460,11 +458,8 @@ class RepoManager {
         const repoNameElement = emptyRepoItem.querySelector('.repo-name');
         const actionButton = emptyRepoItem.querySelector('.repo-actions button:first-child');
         
-        // Update display name
-        if (repoNameElement && this.emptyRepoState.type === 'github' && this.emptyRepoState.url) {
-            const extractedName = this.extractRepoName(this.emptyRepoState.url);
-            repoNameElement.textContent = extractedName || 'New GitHub App';
-        } else if (repoNameElement && this.emptyRepoState.type === 'github') {
+        // Keep display name constant - don't change it based on URL
+        if (repoNameElement && this.emptyRepoState.type === 'github') {
             repoNameElement.textContent = 'New GitHub App';
         }
         

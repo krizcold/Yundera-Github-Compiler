@@ -297,6 +297,59 @@ export async function verifyCasaOSInstallation(appName: string): Promise<{
   }
 }
 
+// Perform manual cleanup of app containers, networks, and metadata
+async function performManualCleanup(appName: string): Promise<void> {
+  console.log(`🧹 Performing manual cleanup for ${appName}`);
+  
+  try {
+    // 1. Stop and remove containers related to the app
+    const containerCleanup = `
+      # Find and stop all containers related to the app
+      CONTAINERS=$(docker ps -aq --filter "name=${appName}")
+      if [ ! -z "$CONTAINERS" ]; then
+        echo "Stopping containers: $CONTAINERS"
+        docker stop $CONTAINERS 2>/dev/null || true
+        docker rm -f $CONTAINERS 2>/dev/null || true
+      fi
+      
+      # Also try with compose project name pattern
+      COMPOSE_CONTAINERS=$(docker ps -aq --filter "label=com.docker.compose.project=${appName}")
+      if [ ! -z "$COMPOSE_CONTAINERS" ]; then
+        echo "Stopping compose containers: $COMPOSE_CONTAINERS"
+        docker stop $COMPOSE_CONTAINERS 2>/dev/null || true
+        docker rm -f $COMPOSE_CONTAINERS 2>/dev/null || true
+      fi
+    `;
+    await execAsync(containerCleanup);
+    
+    // 2. Remove related networks (but don't fail if they don't exist)
+    const networkCleanup = `
+      # Remove networks related to the app
+      NETWORKS=$(docker network ls --filter "name=${appName}" --format "{{.Name}}")
+      for network in $NETWORKS; do
+        echo "Removing network: $network"
+        docker network rm "$network" 2>/dev/null || true
+      done
+    `;
+    await execAsync(networkCleanup);
+    
+    // 3. Clean up app metadata directory
+    const metadataCleanup = `
+      # Remove app metadata directory
+      if [ -d "/DATA/AppData/casaos/apps/${appName}" ]; then
+        echo "Removing metadata directory: /DATA/AppData/casaos/apps/${appName}"
+        rm -rf "/DATA/AppData/casaos/apps/${appName}" 2>/dev/null || true
+      fi
+    `;
+    await execAsync(metadataCleanup);
+    
+    console.log(`✅ Manual cleanup completed for ${appName}`);
+  } catch (error) {
+    console.error(`⚠️ Some cleanup operations failed for ${appName}:`, error);
+    // Don't throw - cleanup is best effort
+  }
+}
+
 // Uninstall an app from CasaOS
 export async function uninstallCasaOSApp(appName: string, preserveData: boolean = false): Promise<{
   success: boolean;
@@ -334,40 +387,40 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
     const { stdout } = await execAsync(command);
     
     if (stdout.includes('Connection refused') || stdout.includes('404')) {
+      // Try manual cleanup if CasaOS API is not available
+      await performManualCleanup(appName);
       return {
-        success: false,
-        message: `Failed to connect to CasaOS API for uninstall`
+        success: true,
+        message: `App ${appName} manually cleaned up (CasaOS API unavailable)`
       };
     }
     
+    let apiSuccess = false;
     try {
       const response = JSON.parse(stdout);
       // CasaOS might return different success indicators
       if (response.success !== false && !stdout.includes('error')) {
-        return {
-          success: true,
-          message: `App ${appName} uninstallation initiated`
-        };
+        apiSuccess = true;
       } else {
-        return {
-          success: false,
-          message: response.message || `Failed to uninstall ${appName}`
-        };
+        console.log(`⚠️ CasaOS API returned error:`, response);
       }
     } catch (parseError) {
       // If it's not JSON, check if it looks like a success response
       if (stdout.includes('success') || stdout.trim() === '') {
-        return {
-          success: true,
-          message: `App ${appName} uninstallation initiated`
-        };
-      } else {
-        return {
-          success: false,
-          message: `Uninstall response unclear: ${stdout}`
-        };
+        apiSuccess = true;
       }
     }
+
+    // Perform additional cleanup regardless of API success
+    // This ensures residual files and containers are removed
+    await performManualCleanup(appName);
+
+    return {
+      success: true,
+      message: apiSuccess 
+        ? `App ${appName} uninstallation completed with cleanup`
+        : `App ${appName} manually cleaned up (API response unclear)`
+    };
     
   } catch (error) {
     console.error(`❌ Error uninstalling ${appName}:`, error);

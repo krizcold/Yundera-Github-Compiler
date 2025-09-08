@@ -11,6 +11,7 @@ const SETTINGS_FILE = path.join(UI_DATA_DIR, 'settings.json');
 export interface Repository {
   id: string;
   name: string;
+  displayName?: string; // Name to display in UI (from compose file if different)
   type: 'github' | 'compose';
   url?: string;
   autoUpdate: boolean;

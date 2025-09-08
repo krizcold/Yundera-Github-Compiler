@@ -631,17 +631,24 @@ app.post("/api/repos/:id/import", validateAuthHash, async (req, res) => {
     // Copy docker-compose.yml if it exists
     let hasCompose = false;
     let icon = '';
+    let displayName;
     
     if (fs.existsSync(sourcePath)) {
       fs.copyFileSync(sourcePath, targetPath);
       hasCompose = true;
       console.log(`📋 Copied docker-compose.yml to ${targetPath}`);
       
-      // Analyze docker-compose.yml for icon
+      // Analyze docker-compose.yml for icon and display name
       try {
         const yaml = await import('yaml');
         const composeContent = fs.readFileSync(targetPath, 'utf8');
         const composeData = yaml.parse(composeContent);
+        
+        // Extract display name from compose file's name property
+        if (composeData.name && composeData.name !== repo.name) {
+          displayName = composeData.name;
+          console.log(`🏷️ Found app name in compose file: ${displayName}`);
+        }
         
         // Look for icon in x-casaos section
         if (composeData['x-casaos'] && composeData['x-casaos'].icon) {
@@ -649,18 +656,26 @@ app.post("/api/repos/:id/import", validateAuthHash, async (req, res) => {
           // Icon found and stored
         }
       } catch (error: any) {
-        console.log(`⚠️ Could not parse docker-compose.yml for icon: ${error.message}`);
+        console.log(`⚠️ Could not parse docker-compose.yml for icon and name: ${error.message}`);
       }
     } else {
       console.log(`⚠️ No docker-compose.yml found in ${sourcePath}`);
     }
     
     // Update repository status to imported
-    updateRepository(id, { 
+    const updateData: any = { 
       status: 'imported',
       hasCompose,
       icon: icon || undefined
-    });
+    };
+    
+    // Add displayName if we found one in the compose file
+    if (displayName) {
+      updateData.displayName = displayName;
+      console.log(`📝 Updated repository display name to: ${displayName}`);
+    }
+    
+    updateRepository(id, updateData);
     
     console.log(`✅ Import completed for ${repo.name}`);
     

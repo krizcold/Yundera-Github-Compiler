@@ -235,6 +235,20 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 }
             }
 
+            // Inject AUTH_HASH for apps that need authentication
+            // Generate a unique AUTH_HASH for this app installation
+            if (!service.environment) {
+                service.environment = {};
+            }
+            
+            // Only add AUTH_HASH if the service doesn't already have it
+            if (!service.environment.AUTH_HASH) {
+                const crypto = require('crypto');
+                const authHash = crypto.randomBytes(32).toString('hex');
+                service.environment.AUTH_HASH = authHash;
+                console.log(`🔑 Generated AUTH_HASH for service ${serviceName}`);
+            }
+
             // Process template substitutions in volumes
             if (service.volumes && Array.isArray(service.volumes)) {
                 service.volumes = service.volumes.map((volume: any) => {
