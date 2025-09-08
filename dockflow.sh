@@ -76,7 +76,7 @@ case "${1:-latest}" in
         build_docker "latest"
         push_docker "latest"
         cleanup_docker
-        local version=$(node scripts/version-manager.js current)
+        version=$(node scripts/version-manager.js current)
         echo "🎉 Dockflow complete! Images pushed to ${REPO}:latest and ${REPO}:${version}"
         ;;
     "dev")
@@ -97,7 +97,7 @@ case "${1:-latest}" in
         push_docker "latest"
         push_docker "dev"
         cleanup_docker
-        local version=$(node scripts/version-manager.js current)
+        version=$(node scripts/version-manager.js current)
         echo "🎉 Dockflow complete! Images pushed to ${REPO}:latest, ${REPO}:${version}, and ${REPO}:dev"
         ;;
     "help"|"-h"|"--help")
