@@ -32,6 +32,7 @@ export async function processRepo(
     // We'll determine the actual app name from the compose file later
     let appName = repository.name; // Default fallback
     let hostMetadataDir = path.join('/DATA/AppData/casaos/apps', appName);
+    let localImageName: string | null = null; // Track built image name for GitHub repos
     
     // Phase 1: Build image if it's a GitHub repo
     if (repository.type === 'github') {
@@ -46,8 +47,12 @@ export async function processRepo(
       
       log(`🏗️ Building Docker image from repository...`, 'info');
       updateRepository(repository.id, { status: 'building' });
-      await buildImageFromRepo(repoConfig, baseDir);
+      localImageName = await buildImageFromRepo(repoConfig, baseDir, true); // true = isGitHubRepo
       log(`✅ Docker image build completed`, 'success');
+      
+      if (localImageName) {
+        log(`🐳 Built local image: ${localImageName}`, 'info');
+      }
     }
 
     // Phase 2: Pre-process the compose file
@@ -87,7 +92,7 @@ export async function processRepo(
     
     log(`🔧 Loading settings and preprocessing compose file...`, 'info');
     const settings = loadSettings();
-    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings);
+    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName);
     log(`✅ Compose file preprocessing completed`, 'success');
 
     // Step 3: Create all host volume paths
@@ -214,7 +219,7 @@ export async function processRepo(
     updateRepository(repository.id, { status: 'installing' });
     
     // Start the installation and wait for completion
-    const installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector, appName);
+    const installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector, appName, !!localImageName);
 
     if (!installResult.success) {
         const errorMsg = installResult.message;

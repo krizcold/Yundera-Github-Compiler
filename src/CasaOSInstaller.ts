@@ -7,7 +7,7 @@ export interface CasaOSResult {
 
 
 export class CasaOSInstaller {
-  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any, projectName?: string): Promise<CasaOSResult> {
+  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any, projectName?: string, hasLocalImage?: boolean): Promise<CasaOSResult> {
     return new Promise((resolve) => {
       // Use provided project name or extract from path as fallback
       const finalProjectName = projectName || composeFilePath.split('/').slice(-2, -1)[0];
@@ -18,7 +18,11 @@ export class CasaOSInstaller {
       console.log(`🚀 Spawning Docker Compose process for: ${finalProjectName}`);
       
       const command = 'docker';
-      const args = ['compose', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans', '--pull=always'];
+      // Don't use --pull=always for local builds to avoid pulling from registry
+      const args = ['compose', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans'];
+      if (!hasLocalImage) {
+        args.push('--pull=always'); // Only pull for non-local images
+      }
       
       const child = spawn(command, args);
 

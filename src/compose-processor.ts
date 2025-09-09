@@ -137,7 +137,7 @@ export interface ProcessedCompose {
  * Pre-processes an App Store-style docker-compose object.
  * Returns two versions: one for saving (rich) and one for installation (clean).
  */
-export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings): ProcessedCompose {
+export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null): ProcessedCompose {
     console.log('🔧 Pre-processing App Store-style compose file...');
     
     // Create a deep copy to avoid modifying the original object in memory
@@ -157,6 +157,11 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
     if (richCompose.services) {
         for (const serviceName in richCompose.services) {
             const service = richCompose.services[serviceName];
+
+            // Replace image with local image name for GitHub repos
+            if (localImageName && serviceName === mainServiceKey) {
+                service.image = localImageName;
+            }
 
             // Convert ports to expose for CasaOS AppStore compatibility
             if (service.ports && Array.isArray(service.ports)) {
@@ -184,7 +189,6 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 if (exposedPorts.length > 0) {
                     service.expose = exposedPorts;
                     delete service.ports; // Remove ports array
-                    console.log(`🔄 Converted ports to expose for ${serviceName}: [${exposedPorts.join(', ')}]`);
                 }
             }
 
@@ -203,8 +207,6 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                     }
                     service.labels.icon = richCompose['x-casaos'].icon;
                 }
-
-                console.log(`✅ Added CasaOS metadata for main service ${serviceName}`);
             }
 
             // Helper function to replace template variables in strings
@@ -246,7 +248,6 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 const crypto = require('crypto');
                 const authHash = crypto.randomBytes(32).toString('hex');
                 service.environment.AUTH_HASH = authHash;
-                console.log(`🔑 Generated AUTH_HASH for service ${serviceName}`);
             }
 
             // Process template substitutions in volumes
@@ -347,10 +348,8 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 }
                 return volume;
             });
-            console.log(`🔄 Processed template variables in x-casaos volumes`);
         }
 
-        console.log(`✅ Added CasaOS metadata to x-casaos section for ${appId}`);
     }
 
     // Create clean version by removing pre-install-cmd and other CasaOS-specific stuff
@@ -359,10 +358,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
     // Remove pre-install-cmd from clean version
     if (cleanCompose['x-casaos'] && cleanCompose['x-casaos']['pre-install-cmd']) {
         delete cleanCompose['x-casaos']['pre-install-cmd'];
-        console.log('🧹 Removed pre-install-cmd from clean compose version');
     }
-
-    console.log('✅ App Store compose preprocessing complete');
     
     return {
         rich: richCompose,
