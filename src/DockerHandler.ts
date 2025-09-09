@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "js-yaml";
@@ -9,7 +9,7 @@ interface RepoConfig {
   autoUpdate: boolean;
 }
 
-export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGitHubRepo: boolean = false): Promise<string | null> {
+export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGitHubRepo: boolean = false, logCollector?: any): Promise<string | null> {
   const repoDir = path.join(baseDir, repo.path);
   const composeSrc = path.join(repoDir, "docker-compose.yml");
   if (!fs.existsSync(composeSrc)) {
@@ -78,17 +78,50 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
 
     // For GitHub repos, use simple build command (Dockerfile is in default location)
     // For compose repos, use -f flag for custom dockerfile paths
-    const buildCommand = isGitHubRepo 
-      ? `docker build -t "${localTag}" "${buildContext}"`
-      : `docker build -t "${localTag}" -f "${dockerfilePath}" "${buildContext}"`;
+    const buildArgs = isGitHubRepo 
+      ? ['build', '-t', localTag, buildContext]
+      : ['build', '-t', localTag, '-f', dockerfilePath, buildContext];
     
-    console.log(`🔄 Executing build: ${buildCommand}`);
-    execSync(buildCommand, { stdio: 'pipe' });
+    console.log(`🔄 Executing build: docker ${buildArgs.join(' ')}`);
     
-    console.log(`✅ [${repo.path}] Docker build for image '${localTag}' completed successfully`);
-    
-    // Return the local image name for GitHub repos so it can be used in compose file
-    return isGitHubRepo ? localTag : null;
+    // Use spawn to stream progress like CasaOSInstaller does
+    return new Promise<string | null>((resolve, reject) => {
+      const child = spawn('docker', buildArgs);
+
+      const processLog = (data: Buffer) => {
+        const message = data.toString();
+        const lines = message.split(/[\r\n]+/);
+        
+        lines.forEach(line => {
+          if (!line.trim()) return;
+          console.log(`🐳 [${repo.path}]: ${line}`);
+          
+          // Stream to UI with whale icon (like CasaOSInstaller)
+          if (logCollector) {
+            logCollector.addLog(`🐳 ${line}`, 'info');
+          }
+        });
+      };
+
+      child.stdout.on('data', processLog);
+      child.stderr.on('data', processLog);
+
+      child.on('close', (code) => {
+        if (code === 0) {
+          console.log(`✅ [${repo.path}] Docker build for image '${localTag}' completed successfully`);
+          // Return the local image name for GitHub repos so it can be used in compose file
+          resolve(isGitHubRepo ? localTag : null);
+        } else {
+          console.error(`❌ [${repo.path}] Docker build exited with code ${code}`);
+          reject(new Error(`Docker build failed for ${repo.path}: exit code ${code}`));
+        }
+      });
+
+      child.on('error', (err) => {
+        console.error(`❌ [${repo.path}] Docker build process failed:`, err);
+        reject(new Error(`Docker build failed for ${repo.path}: ${err.message}`));
+      });
+    });
   } catch (error: any) {
     console.error(`❌ [${repo.path}] Docker build failed:`, error.message);
     if (error.stderr) {

@@ -298,7 +298,7 @@ export async function verifyCasaOSInstallation(appName: string): Promise<{
 }
 
 // Perform manual cleanup of app containers, networks, and metadata
-async function performManualCleanup(appName: string): Promise<void> {
+async function performManualCleanup(appName: string, removeData: boolean = false): Promise<void> {
   console.log(`🧹 Performing manual cleanup for ${appName}`);
   
   try {
@@ -342,6 +342,19 @@ async function performManualCleanup(appName: string): Promise<void> {
       fi
     `;
     await execAsync(metadataCleanup);
+    
+    // 4. Remove app data directory if requested
+    if (removeData) {
+      const dataCleanup = `
+        # Remove app data directory
+        if [ -d "/DATA/AppData/${appName}" ]; then
+          echo "Removing app data directory: /DATA/AppData/${appName}"
+          rm -rf "/DATA/AppData/${appName}" 2>/dev/null || true
+        fi
+      `;
+      await execAsync(dataCleanup);
+      console.log(`🧹 Removed app data directory: /DATA/AppData/${appName}`);
+    }
     
     console.log(`✅ Manual cleanup completed for ${appName}`);
   } catch (error) {
@@ -388,7 +401,7 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
     
     if (stdout.includes('Connection refused') || stdout.includes('404')) {
       // Try manual cleanup if CasaOS API is not available
-      await performManualCleanup(appName);
+      await performManualCleanup(appName, !preserveData);
       return {
         success: true,
         message: `App ${appName} manually cleaned up (CasaOS API unavailable)`
@@ -413,7 +426,7 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
 
     // Perform additional cleanup regardless of API success
     // This ensures residual files and containers are removed
-    await performManualCleanup(appName);
+    await performManualCleanup(appName, !preserveData);
 
     return {
       success: true,

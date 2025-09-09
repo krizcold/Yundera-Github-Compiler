@@ -908,10 +908,37 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
         console.error(`⚠️ Failed to clean up persistent storage for ${repo.name}:`, error.message);
       }
       
-      // Note: When preserveData=false, CasaOS API already removes /DATA/AppData/appname
-      // When preserveData=true, we manually stopped containers and want to keep the data
-      const appDataDir = path.join('/DATA/AppData', repo.name);
-      if (preserveData) {
+      // Handle app data directory based on preserveData setting
+      // Use the same app name logic as the uninstall process
+      let appDataDirName = repo.name;
+      const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+      
+      if (fs.existsSync(composePath)) {
+        try {
+          const yaml = require('yaml');
+          const composeContent = fs.readFileSync(composePath, 'utf8');
+          const composeData = yaml.parse(composeContent);
+          
+          if (composeData.name) {
+            appDataDirName = composeData.name;
+          } else if (composeData.services && Object.keys(composeData.services).length > 0) {
+            appDataDirName = Object.keys(composeData.services)[0];
+          }
+        } catch (error) {
+          // Use repo.name as fallback
+        }
+      }
+      
+      const appDataDir = path.join('/DATA/AppData', appDataDirName);
+      if (!preserveData && fs.existsSync(appDataDir)) {
+        // Remove data directory when checkbox is checked (preserveData = false)
+        try {
+          fs.rmSync(appDataDir, { recursive: true, force: true });
+          console.log(`🧹 Removed app data directory: ${appDataDir}`);
+        } catch (error: any) {
+          console.error(`⚠️ Failed to remove app data directory:`, error.message);
+        }
+      } else if (preserveData) {
         console.log(`💾 Preserving app data directory: ${appDataDir}`);
       }
       

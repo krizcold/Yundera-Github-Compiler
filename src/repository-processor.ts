@@ -47,7 +47,7 @@ export async function processRepo(
       
       log(`🏗️ Building Docker image from repository...`, 'info');
       updateRepository(repository.id, { status: 'building' });
-      localImageName = await buildImageFromRepo(repoConfig, baseDir, true); // true = isGitHubRepo
+      localImageName = await buildImageFromRepo(repoConfig, baseDir, true, logCollector); // true = isGitHubRepo
       log(`✅ Docker image build completed`, 'success');
       
       if (localImageName) {
