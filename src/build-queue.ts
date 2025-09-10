@@ -76,31 +76,31 @@ export class BuildQueue {
   }
 
   async addJob(repository: Repository, force: boolean = false, runAsUser?: string): Promise<{ success: boolean; message: string }> {
-    return new Promise((resolve, reject) => {
-      if (this.pendingRepositoryIds.has(repository.id)) {
-        resolve({ success: false, message: `Repository ${repository.name} is already queued or building` });
-        return;
-      }
+    if (this.pendingRepositoryIds.has(repository.id)) {
+      return { success: false, message: `Repository ${repository.name} is already queued or building` };
+    }
 
-      this.pendingRepositoryIds.add(repository.id);
+    this.pendingRepositoryIds.add(repository.id);
 
-      const job: BuildJob = {
-        id: `${repository.id}-${Date.now()}`,
-        repository,
-        force,
-        runAsUser,
-        timestamp: Date.now(),
-        status: 'queued',
-        resolve,
-        reject
-      };
+    const job: BuildJob = {
+      id: `${repository.id}-${Date.now()}`,
+      repository,
+      force,
+      runAsUser,
+      timestamp: Date.now(),
+      status: 'queued',
+      resolve: undefined, // Will be handled internally
+      reject: undefined
+    };
 
-      this.queue.push(job);
-      console.log(`📋 Added build job for ${repository.name} to queue (${this.queue.length} queued)`);
-      
-      // Try to start the job immediately if we have capacity
-      this.processQueue();
-    });
+    this.queue.push(job);
+    console.log(`📋 Added build job for ${repository.name} to queue (${this.queue.length} queued)`);
+    
+    // Try to start the job immediately if we have capacity
+    this.processQueue();
+    
+    // Return immediately after queueing (don't wait for completion)
+    return { success: true, message: `Build job queued for ${repository.name}. Use /api/build-status to monitor progress.` };
   }
 
   private async processQueue(): Promise<void> {
@@ -142,10 +142,6 @@ export class BuildQueue {
       const duration = job.endTime - job.startTime!;
       console.log(`✅ Build job completed for ${job.repository.name} in ${duration}ms`);
       logCollector.addLog(`✅ Build completed successfully in ${duration}ms`, 'success');
-      
-      if (job.resolve) {
-        job.resolve(result);
-      }
 
     } catch (error: any) {
       job.status = 'failed';
@@ -154,10 +150,6 @@ export class BuildQueue {
 
       console.error(`❌ Build job failed for ${job.repository.name}:`, error);
       logCollector.addLog(`❌ Build failed: ${error.message}`, 'error');
-
-      if (job.reject) {
-        job.reject(error);
-      }
     } finally {
       // Move job from running to completed
       this.running.delete(job.repository.id);

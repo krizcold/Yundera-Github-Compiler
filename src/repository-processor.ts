@@ -218,13 +218,37 @@ export async function processRepo(
     log('🚀 Starting Docker Compose installation...', 'info');
     updateRepository(repository.id, { status: 'installing' });
     
-    // Start the installation and wait for completion
-    const installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector, appName, !!localImageName);
-
-    if (!installResult.success) {
+    // Start the installation with retry logic for transient failures
+    let installResult;
+    let retryCount = 0;
+    const maxRetries = 1; // Retry once on timeout
+    
+    while (retryCount <= maxRetries) {
+      if (retryCount > 0) {
+        log(`🔄 Retrying Docker Compose installation (attempt ${retryCount + 1}/${maxRetries + 1})...`, 'info');
+        // Use longer timeout on retry (15 minutes instead of 10)
+        installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector, appName, !!localImageName, 900000);
+      } else {
+        // First attempt with default timeout (10 minutes)
+        installResult = await CasaOSInstaller.installComposeAppDirectly(hostComposePath, repository.id, logCollector, appName, !!localImageName);
+      }
+      
+      if (installResult.success) {
+        break; // Success, exit retry loop
+      }
+      
+      // Check if this is a timeout error that we should retry
+      const isTimeoutError = installResult.message.includes('timed out') || installResult.message.includes('timeout');
+      
+      if (!isTimeoutError || retryCount >= maxRetries) {
+        // Not a timeout error, or we've exceeded max retries
         const errorMsg = installResult.message;
-        log(`❌ Docker Compose installation failed: ${errorMsg}`, 'error');
+        log(`❌ Docker Compose installation failed after ${retryCount + 1} attempt(s): ${errorMsg}`, 'error');
         throw new Error(errorMsg);
+      }
+      
+      retryCount++;
+      log(`⚠️ Installation timed out, will retry with extended timeout...`, 'warning');
     }
 
     // Installation completed successfully

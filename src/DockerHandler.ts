@@ -86,7 +86,9 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
     
     // Use spawn to stream progress like CasaOSInstaller does
     return new Promise<string | null>((resolve, reject) => {
-      const child = spawn('docker', buildArgs);
+      const child = spawn('docker', buildArgs, {
+        env: { ...process.env, DOCKER_BUILDKIT: '1' }
+      });
 
       const processLog = (data: Buffer) => {
         const message = data.toString();

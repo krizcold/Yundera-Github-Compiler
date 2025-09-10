@@ -5,6 +5,9 @@
 
 set -e
 
+# Enable BuildKit for all Docker builds
+export DOCKER_BUILDKIT=1
+
 REPO="krizcold/yundera-github-compiler"
 
 show_help() {

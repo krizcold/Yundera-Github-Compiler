@@ -27,13 +27,13 @@ function buildDocker(tag) {
             const buildCommand = `docker build -t ${REPO}:${tag} -t ${REPO}:${version} .`;
             console.log(`Executing: ${buildCommand}`);
             
-            execSync(buildCommand, { stdio: 'inherit' });
+            execSync(buildCommand, { stdio: 'inherit', env: { ...process.env, DOCKER_BUILDKIT: '1' } });
             console.log(`✅ Docker build complete for tags: ${tag}, ${version}`);
         } else {
             const buildCommand = `docker build -t ${REPO}:${tag} .`;
             console.log(`Executing: ${buildCommand}`);
             
-            execSync(buildCommand, { stdio: 'inherit' });
+            execSync(buildCommand, { stdio: 'inherit', env: { ...process.env, DOCKER_BUILDKIT: '1' } });
             console.log(`✅ Docker build complete for tag: ${tag}`);
         }
     } catch (error) {

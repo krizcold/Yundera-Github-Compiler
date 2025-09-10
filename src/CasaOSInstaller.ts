@@ -7,7 +7,7 @@ export interface CasaOSResult {
 
 
 export class CasaOSInstaller {
-  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any, projectName?: string, hasLocalImage?: boolean): Promise<CasaOSResult> {
+  static installComposeAppDirectly(composeFilePath: string, repositoryId: string, logCollector?: any, projectName?: string, hasLocalImage?: boolean, timeoutMs: number = 600000): Promise<CasaOSResult> {
     return new Promise((resolve) => {
       // Use provided project name or extract from path as fallback
       const finalProjectName = projectName || composeFilePath.split('/').slice(-2, -1)[0];
@@ -25,6 +25,19 @@ export class CasaOSInstaller {
       }
       
       const child = spawn(command, args);
+
+      // Set up timeout to prevent indefinite hanging
+      const timeout = setTimeout(() => {
+        console.log(`⏰ Docker Compose operation timed out after ${timeoutMs}ms for ${finalProjectName}`);
+        child.kill('SIGTERM');
+        // Give it 5 seconds to clean up, then force kill
+        setTimeout(() => {
+          if (!child.killed) {
+            child.kill('SIGKILL');
+          }
+        }, 5000);
+        resolve({ success: false, message: `Installation timed out after ${Math.round(timeoutMs / 1000)} seconds. This may indicate a network issue or resource constraint.` });
+      }, timeoutMs);
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
@@ -46,6 +59,7 @@ export class CasaOSInstaller {
       child.stderr.on('data', processLog);
 
       child.on('close', (code) => {
+        clearTimeout(timeout); // Clear timeout on completion
         if (code === 0) {
           console.log(`✅ Docker Compose process for ${finalProjectName} completed successfully.`);
           resolve({ success: true, message: 'Installation completed successfully.' });
@@ -57,6 +71,7 @@ export class CasaOSInstaller {
       });
 
       child.on('error', (err) => {
+        clearTimeout(timeout); // Clear timeout on error
         console.error(`❌ Failed to start Docker Compose process for ${finalProjectName}:`, err);
         resolve({ success: false, message: `Failed to start installer: ${err.message}` });
       });
