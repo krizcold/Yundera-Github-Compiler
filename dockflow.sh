@@ -5,8 +5,19 @@
 
 set -e
 
-# Enable BuildKit for all Docker builds
-export DOCKER_BUILDKIT=1
+# Check if buildx is available and conditionally enable BuildKit
+check_buildx() {
+    if docker buildx version >/dev/null 2>&1; then
+        echo "🔧 BuildKit enabled (buildx available)"
+        export DOCKER_BUILDKIT=1
+    else
+        echo "⚠️ BuildKit disabled (buildx not available, using legacy builder)"
+        unset DOCKER_BUILDKIT
+    fi
+}
+
+# Initialize BuildKit setting
+check_buildx
 
 REPO="krizcold/yundera-github-compiler"
 

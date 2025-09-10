@@ -3,6 +3,16 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
+// Check if Docker buildx is available for BuildKit support
+function isBuildxAvailable() {
+    try {
+        execSync('docker buildx version', { stdio: 'pipe', timeout: 5000 });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function getCurrentVersion() {
     try {
         const versionManagerPath = path.join(__dirname, 'version-manager.js');
@@ -27,13 +37,31 @@ function buildDocker(tag) {
             const buildCommand = `docker build -t ${REPO}:${tag} -t ${REPO}:${version} .`;
             console.log(`Executing: ${buildCommand}`);
             
-            execSync(buildCommand, { stdio: 'inherit', env: { ...process.env, DOCKER_BUILDKIT: '1' } });
+            // Only enable BuildKit if buildx is available
+            const env = { ...process.env };
+            if (isBuildxAvailable()) {
+                env.DOCKER_BUILDKIT = '1';
+                console.log('🔧 BuildKit enabled (buildx available)');
+            } else {
+                console.log('⚠️ BuildKit disabled (buildx not available, using legacy builder)');
+            }
+            
+            execSync(buildCommand, { stdio: 'inherit', env });
             console.log(`✅ Docker build complete for tags: ${tag}, ${version}`);
         } else {
             const buildCommand = `docker build -t ${REPO}:${tag} .`;
             console.log(`Executing: ${buildCommand}`);
             
-            execSync(buildCommand, { stdio: 'inherit', env: { ...process.env, DOCKER_BUILDKIT: '1' } });
+            // Only enable BuildKit if buildx is available
+            const env = { ...process.env };
+            if (isBuildxAvailable()) {
+                env.DOCKER_BUILDKIT = '1';
+                console.log('🔧 BuildKit enabled (buildx available)');
+            } else {
+                console.log('⚠️ BuildKit disabled (buildx not available, using legacy builder)');
+            }
+            
+            execSync(buildCommand, { stdio: 'inherit', env });
             console.log(`✅ Docker build complete for tag: ${tag}`);
         }
     } catch (error) {

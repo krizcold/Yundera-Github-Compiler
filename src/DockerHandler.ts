@@ -3,6 +3,16 @@ import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "js-yaml";
 
+// Check if Docker buildx is available for BuildKit support
+function isBuildxAvailable(): boolean {
+  try {
+    execSync('docker buildx version', { stdio: 'pipe', timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface RepoConfig {
   url: string;
   path: string; // This is the repo name
@@ -86,9 +96,16 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
     
     // Use spawn to stream progress like CasaOSInstaller does
     return new Promise<string | null>((resolve, reject) => {
-      const child = spawn('docker', buildArgs, {
-        env: { ...process.env, DOCKER_BUILDKIT: '1' }
-      });
+      // Only enable BuildKit if buildx is available
+      const env = { ...process.env };
+      if (isBuildxAvailable()) {
+        env.DOCKER_BUILDKIT = '1';
+        console.log(`🔧 BuildKit enabled (buildx available)`);
+      } else {
+        console.log(`⚠️ BuildKit disabled (buildx not available, using legacy builder)`);
+      }
+      
+      const child = spawn('docker', buildArgs, { env });
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
