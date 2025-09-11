@@ -16,6 +16,39 @@ export interface GitUpdateInfo {
   error?: string;
 }
 
+// Helper function to determine the remote branch to use for comparisons
+function getRemoteBranch(repoDir: string): string {
+  try {
+    // First try origin/HEAD if it exists
+    execSync(`git -C "${repoDir}" rev-parse origin/HEAD`, { stdio: 'pipe' });
+    return 'origin/HEAD';
+  } catch {
+    try {
+      // Fall back to origin/main
+      execSync(`git -C "${repoDir}" rev-parse origin/main`, { stdio: 'pipe' });
+      return 'origin/main';
+    } catch {
+      try {
+        // Fall back to origin/master
+        execSync(`git -C "${repoDir}" rev-parse origin/master`, { stdio: 'pipe' });
+        return 'origin/master';
+      } catch {
+        try {
+          // Get default remote branch
+          const defaultBranch = execSync(`git -C "${repoDir}" symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`, { 
+            encoding: 'utf8', 
+            stdio: 'pipe' 
+          }).trim();
+          return `origin/${defaultBranch}`;
+        } catch {
+          // Ultimate fallback
+          return 'origin/main';
+        }
+      }
+    }
+  }
+}
+
 /** Clone if missing, otherwise pull latest */
 export function cloneOrUpdateRepo(repo: RepoConfig, baseDir: string): void {
   const repoDir = path.join(baseDir, repo.path);
@@ -79,7 +112,7 @@ export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo
         hasUpdates: true,
         currentCommit: '',
         latestCommit: 'unknown',
-        commitsBehind: -1
+        commitsBehind: 1 // Indicates updates available but count unknown
       };
     }
 
@@ -101,25 +134,30 @@ export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo
       stdio: 'pipe' 
     }).trim();
     
-    // Get latest remote commit
-    const latestCommit = execSync(`git -C "${repoDir}" rev-parse origin/HEAD`, { 
+    // Get the appropriate remote branch and latest commit
+    const remoteBranch = getRemoteBranch(repoDir);
+    const latestCommit = execSync(`git -C "${repoDir}" rev-parse ${remoteBranch}`, { 
       encoding: 'utf8', 
       stdio: 'pipe' 
     }).trim();
     
     // Check if we're behind
     const hasUpdates = currentCommit !== latestCommit;
+    console.log(`🔍 Update check for ${repoPath}: current=${currentCommit.substring(0,8)}, latest=${latestCommit.substring(0,8)}, hasUpdates=${hasUpdates}`);
     
     let commitsBehind = 0;
     if (hasUpdates) {
       try {
-        const commitCount = execSync(`git -C "${repoDir}" rev-list --count HEAD..origin/HEAD`, { 
+        const commitCount = execSync(`git -C "${repoDir}" rev-list --count HEAD..${remoteBranch}`, { 
           encoding: 'utf8', 
           stdio: 'pipe' 
         }).trim();
         commitsBehind = parseInt(commitCount) || 0;
-      } catch (error) {
-        commitsBehind = -1; // Unknown
+      } catch (error: any) {
+        console.warn(`⚠️ Failed to count commits behind for ${repoUrl}: ${error.message}`);
+        console.warn(`   Remote branch: ${remoteBranch}, Current: ${currentCommit.substring(0,8)}, Latest: ${latestCommit.substring(0,8)}`);
+        // If we can't count commits but we know there are updates, assume at least 1
+        commitsBehind = 1;
       }
     }
     

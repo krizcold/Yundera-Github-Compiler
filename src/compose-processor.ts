@@ -137,7 +137,7 @@ export interface ProcessedCompose {
  * Pre-processes an App Store-style docker-compose object.
  * Returns two versions: one for saving (rich) and one for installation (clean).
  */
-export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null): ProcessedCompose {
+export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null, appToken?: string | null): ProcessedCompose {
     console.log('🔧 Pre-processing App Store-style compose file...');
     
     // Create a deep copy to avoid modifying the original object in memory
@@ -217,7 +217,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                     ? `${appId}${settings.refSeparator}${settings.refDomain}`
                     : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
                 
-                return value
+                let result = value
                     .replace(/\$\{?PUID\}?/g, settings.puid)
                     .replace(/\$\{?PGID\}?/g, settings.pgid)
                     .replace(/\$\{?APP_ID\}?/g, appId)
@@ -225,6 +225,13 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                     .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
                     .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme)
                     .replace(/\$\{?REF_PORT\}?/g, settings.refPort);
+                
+                // Replace $API_HASH with the app's specific token if available
+                if (appToken) {
+                    result = result.replace(/\$\{?API_HASH\}?/g, appToken);
+                }
+                
+                return result;
             };
 
             // Process template substitutions in environment variables

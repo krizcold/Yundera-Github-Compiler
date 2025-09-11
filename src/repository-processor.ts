@@ -90,9 +90,22 @@ export async function processRepo(
         log(`✅ Pre-install command completed successfully`, 'success');
     }
     
+    // Generate app token for secure API access BEFORE compose preprocessing
+    log(`🔑 Creating app token for secure API access...`, 'info');
+    let appToken: string | null = null;
+    try {
+      const { createAppToken } = await import('./app-tokens');
+      const token = createAppToken(appName, repository.id);
+      appToken = token.token;
+      log(`✅ App token created for ${appName}: ${appToken.substring(0, 8)}...`, 'success');
+    } catch (tokenError: any) {
+      log(`⚠️ Failed to create app token: ${tokenError.message}`, 'warning');
+      // Continue without token - apps that don't use $API_HASH will work fine
+    }
+    
     log(`🔧 Loading settings and preprocessing compose file...`, 'info');
     const settings = loadSettings();
-    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName);
+    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName, appToken);
     log(`✅ Compose file preprocessing completed`, 'success');
 
     // Step 3: Create all host volume paths

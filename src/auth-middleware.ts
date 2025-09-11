@@ -1,7 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
+import { validateAppToken, AppToken } from './app-tokens';
 
 export interface AuthenticatedRequest extends Request {
   isAuthenticated?: boolean;
+}
+
+export interface AppAuthenticatedRequest extends Request {
+  appToken?: AppToken;
 }
 
 // Session management (shared with main app)
@@ -168,6 +173,34 @@ export function protectWebUI(req: AuthenticatedRequest, res: Response, next: Nex
   
   // Set session cookie
   setSessionCookie(res, newSessionId);
+  
+  next();
+}
+
+// Middleware for validating app tokens (for secure app-specific API endpoints)
+export function validateAppTokenMiddleware(req: AppAuthenticatedRequest, res: Response, next: NextFunction) {
+  // Check for app token in X-App-Token header
+  const appTokenHeader = req.headers['x-app-token'] as string;
+  
+  if (!appTokenHeader) {
+    return res.status(401).json({
+      success: false,
+      message: 'App authentication required. Please provide X-App-Token header.'
+    });
+  }
+  
+  const appToken = require('./app-tokens').validateAppToken(appTokenHeader);
+  
+  if (!appToken) {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid app token. Please verify your authentication credentials.'
+    });
+  }
+  
+  // Add the app token to the request for use in endpoints
+  req.appToken = appToken;
+  console.log(`🔑 App authenticated: ${appToken.appName} (${appToken.repositoryId})`);
   
   next();
 }

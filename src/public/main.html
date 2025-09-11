@@ -413,6 +413,37 @@
             color: #065f46;
         }
 
+        /* Update status indicators */
+        .update-status {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 2px 8px;
+            border-radius: 8px;
+            display: inline-block;
+        }
+
+        .update-status-uptodate {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+
+        .update-status-available {
+            background-color: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .update-status-unknown {
+            background-color: #f3f4f6;
+            color: #374151;
+            cursor: pointer;
+        }
+
+        .version-info {
+            font-size: 11px;
+            color: var(--gray-500);
+            font-family: 'Courier New', monospace;
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -514,6 +545,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 15px;
         }
 
         .repo-settings input[type="number"] {

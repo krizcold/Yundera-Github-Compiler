@@ -47,6 +47,28 @@ volumes:
 | `DATA_ROOT` | `/DATA` | Data storage root path |
 | `DIAG_COMMAND` | - | Optional diagnostic command |
 
+## Variable Replacement in Docker Compose
+
+The compiler automatically replaces template variables in your docker-compose.yml files:
+
+- `$PUID` / `${PUID}` - Process user ID (default: 1000)
+- `$PGID` / `${PGID}` - Process group ID (default: 1000)  
+- `$APP_ID` / `${APP_ID}` - Unique app identifier
+- `$REF_DOMAIN` / `${REF_DOMAIN}` - Reference domain for web access
+- `$REF_SCHEME` / `${REF_SCHEME}` - Reference scheme (http/https)
+- `$REF_PORT` / `${REF_PORT}` - Reference port
+- `$AUTH_HASH` / `${AUTH_HASH}` - Random authentication hash (for admin access)
+- `$API_HASH` / `${API_HASH}` - App-specific API token (for secure app updates)
+
+**Important:** Apps using `$API_HASH` must be on the same Docker network as the GitHub Compiler (`pcs` network) and use `yunderagithubcompiler` as the hostname to communicate with the API.
+
+**Complete Requirements Checklist:**
+- ✅ Include `$API_HASH` in environment variables
+- ✅ Use `COMPILER_API=http://yunderagithubcompiler:3000/api/app`
+- ✅ Add `networks: [pcs]` to your service
+- ✅ Read token from `process.env.APP_TOKEN`
+- ✅ Use `X-App-Token` header for API calls
+
 ## API Integration for External Apps
 
 The Yundera compiler provides a comprehensive REST API that other applications can use to trigger builds, monitor status, and manage repositories.
@@ -85,12 +107,22 @@ curl http://localhost:3000/api/repos
 
 **Check for Updates (Single Repository)**
 ```bash
-curl http://localhost:3000/api/repos/{repository-id}/check-update
+curl http://localhost:3000/api/repos/{repository-id}/check-updates
 ```
 
 **Check for Updates (All Repositories)**
 ```bash
 curl -X POST http://localhost:3000/api/repos/check-updates
+```
+
+**Uninstall App from CasaOS**
+```bash
+curl -X POST http://localhost:3000/api/repos/{repository-id}/uninstall
+```
+
+**Start/Stop App in CasaOS**
+```bash
+curl -X POST http://localhost:3000/api/repos/{repository-id}/toggle
 ```
 
 #### Update Checking
@@ -99,7 +131,7 @@ The update checking system allows external applications to query whether reposit
 
 **Check Single Repository for Updates**
 ```bash
-curl http://localhost:3000/api/repos/{repository-id}/check-update
+curl http://localhost:3000/api/repos/{repository-id}/check-updates
 ```
 
 Response format:
@@ -260,6 +292,368 @@ else
 fi
 ```
 
+### App-Specific Secure API
+
+For security, external applications should NOT use the admin AUTH_HASH. Instead, use app-specific tokens that are automatically generated during installation.
+
+#### Authentication
+```javascript
+headers: {
+  'X-App-Token': 'your-app-token-here'
+}
+```
+
+App tokens are automatically created when apps are installed and injected into the app's environment variables via `$API_HASH` variable replacement.
+
+#### Step-by-Step Setup and Verification
+
+**Step 1: Create your app's docker-compose.yml**
+```yaml
+version: '3.8'
+services:
+  myapp:
+    image: myapp:latest
+    environment:
+      - APP_TOKEN=$API_HASH
+      - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+    networks:
+      - pcs
+    restart: unless-stopped
+
+networks:
+  pcs:
+    external: true
+```
+
+**Step 2: Install your app**
+- The GitHub Compiler will automatically replace `$API_HASH` with your unique token
+
+**Step 3: Verify the setup**
+```bash
+# Check if token was injected:
+docker exec -it myapp env | grep APP_TOKEN
+
+# Test network connectivity:
+docker exec -it myapp nslookup yunderagithubcompiler
+
+# Test API access:
+docker exec -it myapp curl -H "X-App-Token: $APP_TOKEN" http://yunderagithubcompiler:3000/api/app/check-updates
+```
+
+#### Getting Your Token
+Apps receive their tokens through the `$API_HASH` variable in their docker-compose.yml:
+
+```yaml
+services:
+  myapp:
+    environment:
+      - APP_TOKEN=$API_HASH
+      - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+```
+
+During installation, `$API_HASH` is replaced with your app's unique token. Your application can then read it from the environment variable.
+
+#### Network Configuration (IMPORTANT)
+
+**Apps MUST be on the same Docker network as the GitHub Compiler to communicate.**
+
+**Example docker-compose.yml for an app:**
+```yaml
+version: '3.8'
+services:
+  mybot:
+    image: myuser/mybot:latest
+    environment:
+      - NODE_ENV=production
+      - APP_TOKEN=$API_HASH
+      - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+    networks:
+      - pcs
+    restart: unless-stopped
+
+networks:
+  pcs:
+    external: true
+```
+
+**Key Points:**
+- Use `yunderagithubcompiler` as the hostname (the compiler's container name)
+- Both containers must be on the `pcs` network
+- Port remains `3000`
+- **Do NOT use IP addresses, localhost, or host.docker.internal**
+
+**After installation, the environment becomes:**
+```yaml
+environment:
+  - NODE_ENV=production  
+  - APP_TOKEN=a1b2c3d4e5f6789...  # Your app's unique 64-char token
+  - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+```
+
+#### Secure API Endpoints
+
+**Check for Updates (App-Specific)**
+```bash
+# From another container on the same network:
+curl -H "X-App-Token: your-token" http://yunderagithubcompiler:3000/api/app/check-updates
+
+# From the host machine:
+curl -H "X-App-Token: your-token" http://localhost:3000/api/app/check-updates
+```
+
+**Trigger Self-Update**
+```bash
+# From another container on the same network:
+curl -X POST -H "X-App-Token: your-token" http://yunderagithubcompiler:3000/api/app/update
+
+# From the host machine:
+curl -X POST -H "X-App-Token: your-token" http://localhost:3000/api/app/update
+```
+
+**Check App Status**
+```bash
+# From another container on the same network:
+curl -H "X-App-Token: your-token" http://yunderagithubcompiler:3000/api/app/status
+
+# From the host machine:
+curl -H "X-App-Token: your-token" http://localhost:3000/api/app/status
+```
+
+#### Understanding Update Check Responses
+
+**IMPORTANT**: When checking for updates, always use the `hasUpdates` field to determine if updates are available. Never rely solely on the `commitsBehind` value for decision making.
+
+**Response Fields Explained:**
+- `hasUpdates` (boolean): True if updates are available, false if up to date
+- `commitsBehind` (number): Number of commits behind (may be 1 when count is unknown)
+- `message` (string): Human-readable status message, ready for display
+- `currentVersion`/`latestVersion`: Commit hashes for version tracking
+
+**Correct Usage Pattern:**
+```javascript
+const response = await checkForUpdates();
+
+if (response.hasUpdates) {
+  // Updates are available
+  console.log(`Updates available: ${response.message}`);
+  // Safe to trigger update
+} else {
+  // App is up to date
+  console.log('App is up to date');
+  // No action needed
+}
+```
+
+**Why Not Use `commitsBehind` Directly?**
+- Fresh installs: Repository doesn't exist locally yet (`commitsBehind` may be 1)
+- Git errors: Commit counting can fail (`commitsBehind` may be 1 as fallback)
+- Up to date: Only when `hasUpdates: false` is the app truly current (`commitsBehind: 0`)
+
+**Common Scenarios:**
+```javascript
+// Scenario 1: App is up to date
+{
+  "hasUpdates": false,
+  "commitsBehind": 0,
+  "message": "App is up to date"
+}
+
+// Scenario 2: Updates available with known count
+{
+  "hasUpdates": true, 
+  "commitsBehind": 3,
+  "message": "3 commit(s) behind"
+}
+
+// Scenario 3: Updates available but count unknown
+{
+  "hasUpdates": true,
+  "commitsBehind": 1, 
+  "message": "Updates available (count unknown)"
+}
+```
+
+#### Auto-Update Implementation Example
+
+```javascript
+const axios = require('axios');
+
+class AppUpdater {
+  constructor() {
+    // Read token from environment variable (injected via $API_HASH)
+    this.appToken = process.env.APP_TOKEN;
+    this.apiBase = process.env.COMPILER_API || 'http://yunderagithubcompiler:3000/api/app';
+    
+    if (!this.appToken) {
+      throw new Error('APP_TOKEN environment variable not set. Ensure your docker-compose.yml includes $API_HASH.');
+    }
+  }
+  
+  async checkAndUpdate() {
+    const hasUpdates = await this.checkForUpdates();
+    if (hasUpdates) {
+      await this.notifyUpdate('Update detected! Initiating self-update...');
+      const success = await this.triggerSelfUpdate();
+      
+      if (success) {
+        await this.waitForUpdateCompletion();
+      }
+    }
+  }
+  
+  async checkForUpdates() {
+    try {
+      const response = await axios.get(`${this.apiBase}/check-updates`, {
+        headers: { 'X-App-Token': this.appToken }
+      });
+      return response.data.success && response.data.hasUpdates;
+    } catch (error) {
+      console.error('Update check failed:', error.message);
+      return false;
+    }
+  }
+  
+  async triggerSelfUpdate() {
+    try {
+      const response = await axios.post(`${this.apiBase}/update`, {}, {
+        headers: { 'X-App-Token': this.appToken }
+      });
+      return response.data.success;
+    } catch (error) {
+      console.error('Update trigger failed:', error.message);
+      return false;
+    }
+  }
+  
+  async waitForUpdateCompletion() {
+    const maxAttempts = 20; // 10 minutes max
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds
+      
+      try {
+        const response = await axios.get(`${this.apiBase}/status`, {
+          headers: { 'X-App-Token': this.appToken }
+        });
+        
+        if (response.data.success && !response.data.buildQueue.currentlyBuilding) {
+          await this.notifyUpdate('Update completed! Application will restart shortly.');
+          break;
+        }
+      } catch (error) {
+        console.error('Status check failed:', error.message);
+      }
+      
+      attempts++;
+    }
+  }
+  
+  async notifyUpdate(message) {
+    // Implement your application's notification logic here
+    console.log(`Update notification: ${message}`);
+  }
+}
+
+// Usage Example
+const updater = new AppUpdater(); // Token automatically read from environment
+
+// Check for updates every hour
+setInterval(async () => {
+  await updater.checkAndUpdate();
+}, 60 * 60 * 1000);
+
+// Manual update trigger
+async function manualUpdate() {
+  console.log('Checking for updates...');
+  await updater.checkAndUpdate();
+}
+```
+
+#### Security Features
+- **Scoped Access**: App tokens only work for the specific app they were created for
+- **Limited Permissions**: Tokens only allow `check-self-updates`, `update-self`, and `get-self-status`
+- **No Admin Access**: Apps cannot access AUTH_HASH or perform admin functions
+- **Automatic Management**: Tokens created during installation, removed during uninstallation
+
+#### Troubleshooting Network Issues
+
+**Common Error: Connection Refused**
+```
+Error: connect ECONNREFUSED 192.168.x.x:3000
+```
+
+**Solution:**
+1. Verify your app's docker-compose.yml includes:
+   ```yaml
+   networks:
+     - pcs
+   ```
+
+2. Use the correct hostname:
+   ```yaml
+   environment:
+     - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+   ```
+
+3. Test connectivity from inside your container:
+   ```bash
+   docker exec -it your-app-container sh
+   # Inside container:
+   nslookup yunderagithubcompiler
+   wget http://yunderagithubcompiler:3000/api/system/status
+   ```
+
+**Alternative Network Configuration:**
+If the `pcs` network doesn't exist, create your own:
+```yaml
+networks:
+  casaos_apps:
+    driver: bridge
+
+# Then use the same network in both containers
+```
+
+#### Debugging Token Issues
+
+**1. Verify Token Injection**
+Check if your app received the token:
+```bash
+docker exec -it your-app-container env | grep APP_TOKEN
+# Should show: APP_TOKEN=a1b2c3d4e5f6789...
+```
+
+**2. Verify API Connection**
+Test connectivity from your app container:
+```bash
+docker exec -it your-app-container sh
+# Inside container:
+echo $APP_TOKEN
+curl -H "X-App-Token: $APP_TOKEN" http://yunderagithubcompiler:3000/api/app/check-updates
+```
+
+**3. Check Token in Storage**
+Verify the token was created on the compiler side:
+```bash
+docker exec yunderagithubcompiler cat /app/uidata/app-tokens.json
+```
+
+**4. Check Network Configuration**
+Verify both containers are on the same network:
+```bash
+# Check compiler network:
+docker inspect yunderagithubcompiler | grep NetworkMode
+
+# Check your app network:
+docker inspect your-app-container | grep NetworkMode
+```
+
+**5. Common Token Issues:**
+- **Token not injected**: `$API_HASH` wasn't in your docker-compose.yml
+- **Wrong environment variable**: Using `API_ENDPOINT` instead of `COMPILER_API`
+- **Network isolation**: Containers on different networks
+- **Wrong hostname**: Using `localhost` instead of `yunderagithubcompiler`
+
 ### JavaScript/Node.js Integration
 
 ```javascript
@@ -299,7 +693,7 @@ class YunderaClient {
 
     async checkForUpdates(repoId) {
         try {
-            const response = await axios.get(`${this.baseUrl}/api/repos/${repoId}/check-update`);
+            const response = await axios.get(`${this.baseUrl}/api/repos/${repoId}/check-updates`);
             return response.data;
         } catch (error) {
             throw new Error(`Failed to check for updates: ${error.message}`);

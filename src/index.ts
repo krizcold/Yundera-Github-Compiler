@@ -9,7 +9,8 @@ import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler"
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
-import { validateAuthHash, protectWebUI } from "./auth-middleware";
+import { validateAuthHash, protectWebUI, validateAppTokenMiddleware, AppAuthenticatedRequest } from "./auth-middleware";
+import { createAppToken, removeAppToken, hasPermission } from "./app-tokens";
 
 
 const config = loadConfig();
@@ -78,11 +79,16 @@ function performStartupCheck() {
   }
   
   // Start individual timers for repositories with auto-update enabled
-  managedRepos.forEach(repo => {
-    if (repo.autoUpdate) {
-      startRepoTimer(repo);
-    }
+  const autoUpdateRepos = managedRepos.filter(repo => repo.autoUpdate);
+  console.log(`⏰ Starting auto-update timers for ${autoUpdateRepos.length} repositories`);
+  
+  autoUpdateRepos.forEach(repo => {
+    startRepoTimer(repo);
   });
+  
+  if (autoUpdateRepos.length === 0) {
+    console.log(`ℹ️ No repositories have auto-update enabled`);
+  }
   
   // Docker exec approach is used for pre-install commands
   
@@ -103,14 +109,47 @@ function startRepoTimer(repository: Repository) {
   // Start new timer
   const intervalMs = repository.autoUpdateInterval * 60 * 1000; // Convert minutes to ms
   const timer = setInterval(async () => {
-    console.log(`⏱ Auto-update check for ${repository.name}`);
+    console.log(`⏱️ Auto-update timer triggered for ${repository.name}`);
     const updatedRepo = getRepository(repository.id);
-    if (updatedRepo) {
+    
+    if (!updatedRepo) {
+      console.log(`⚠️ Repository ${repository.name} not found, stopping timer`);
+      stopRepoTimer(repository.id);
+      return;
+    }
+
+    if (!updatedRepo.autoUpdate) {
+      console.log(`⚠️ Auto-update disabled for ${repository.name}, stopping timer`);
+      stopRepoTimer(repository.id);
+      return;
+    }
+
+    // Only check for updates if it's a GitHub repo with a URL
+    if (updatedRepo.type === 'github' && updatedRepo.url) {
       try {
-        await buildQueue.addJob(updatedRepo, false);
+        console.log(`🔍 Checking for updates: ${updatedRepo.name}`);
+        const updateInfo = checkForUpdates(updatedRepo.url, baseDir);
+        
+        // Update repository with check time and version info
+        updateRepository(updatedRepo.id, {
+          lastUpdateCheck: new Date().toISOString(),
+          currentVersion: updateInfo.currentCommit.substring(0, 8),
+          latestVersion: updateInfo.latestCommit.substring(0, 8)
+        });
+        
+        if (updateInfo.hasUpdates) {
+          console.log(`📋 Updates available for ${updatedRepo.name} (${updateInfo.commitsBehind} commits behind)`);
+          await buildQueue.addJob(updatedRepo, false);
+          console.log(`✅ Auto-update build queued for ${updatedRepo.name}`);
+        } else {
+          console.log(`✅ ${updatedRepo.name} is up to date`);
+        }
+        
       } catch (error) {
-        console.error(`❌ Failed to queue auto-update for ${repository.name}:`, error);
+        console.error(`❌ Auto-update check failed for ${updatedRepo.name}:`, error);
       }
+    } else {
+      console.log(`⚠️ Skipping auto-update for ${updatedRepo.name} (not a GitHub repo with URL)`);
     }
   }, intervalMs);
   
@@ -887,6 +926,19 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
       }
     }
     
+    // Remove app token if it exists
+    try {
+      const actualAppName = repo.displayName || repo.name;
+      const tokenRemoved = removeAppToken(actualAppName, repo.id);
+      if (tokenRemoved) {
+        console.log(`🔑 Removed app token for ${actualAppName}`);
+      }
+    } catch (tokenError: any) {
+      const actualAppName = repo.displayName || repo.name;
+      console.warn(`⚠️ Failed to remove app token for ${actualAppName}: ${tokenError.message}`);
+      // Don't fail the removal if token cleanup fails
+    }
+    
     // Now remove the repository from storage
     const success = removeRepository(id);
     if (!success) {
@@ -986,8 +1038,8 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
   }
 });
 
-// GET /api/repos/:id/check-update - Check if a specific repository has updates available
-app.get("/api/repos/:id/check-update", validateAuthHash, async (req, res) => {
+// GET /api/repos/:id/check-updates - Check if a specific repository has updates available
+app.get("/api/repos/:id/check-updates", validateAuthHash, async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -2528,6 +2580,202 @@ app.post("/api/docker/autocomplete", validateAuthHash, async (req, res) => {
 
 // Environment-based force update API has been removed
 // Use the web UI or POST /api/repos/:id/compile for manual builds
+
+// ===========================================
+// APP-SPECIFIC SECURE API ENDPOINTS
+// ===========================================
+// These endpoints allow external applications to securely manage their own updates
+// without requiring full AUTH_HASH admin access.
+// 
+// Authentication: Apps must use the X-App-Token header with their generated app token.
+// Documentation: See README.md "App-Specific Secure API" section for usage examples.
+
+// GET /api/app/check-updates - Check for updates for the authenticated app
+app.get("/api/app/check-updates", validateAppTokenMiddleware, async (req, res) => {
+  const appReq = req as AppAuthenticatedRequest;
+  const appToken = appReq.appToken!;
+  
+  // Find the repository associated with this app
+  const repo = managedRepos.find(r => r.id === appToken.repositoryId);
+  if (!repo) {
+    return res.status(404).json({
+      success: false,
+      message: `Repository not found for app ${appToken.appName}`
+    });
+  }
+  
+  // Check permissions
+  if (!hasPermission(appToken, 'check-self-updates')) {
+    return res.status(403).json({
+      success: false,
+      message: 'App does not have permission to check updates'
+    });
+  }
+  
+  console.log(`🔍 App ${appToken.appName} checking for updates`);
+  
+  // Verify repository has a URL (only GitHub repos support update checking)
+  if (!repo.url) {
+    return res.status(400).json({
+      success: false,
+      message: 'Repository does not support update checking (no URL available)'
+    });
+  }
+  
+  try {
+    const updateInfo: GitUpdateInfo = await checkForUpdates(repo.url, baseDir);
+    
+    const response = {
+      success: true,
+      appName: appToken.appName,
+      repositoryId: repo.id,
+      currentVersion: updateInfo.currentCommit,
+      latestVersion: updateInfo.latestCommit,
+      hasUpdates: updateInfo.hasUpdates,
+      commitsBehind: updateInfo.commitsBehind,
+      lastChecked: new Date().toISOString(),
+      message: !updateInfo.hasUpdates 
+        ? 'App is up to date' 
+        : updateInfo.commitsBehind > 0 
+          ? `${updateInfo.commitsBehind} commit(s) behind`
+          : 'Updates available (count unknown)'
+    };
+    
+    console.log(`✅ Update check complete for app ${appToken.appName}: ${!updateInfo.hasUpdates ? 'up to date' : `${updateInfo.commitsBehind} behind`}`);
+    res.json(response);
+    
+  } catch (error: any) {
+    console.error(`❌ Failed to check updates for app ${appToken.appName}:`, error.message);
+    res.status(500).json({
+      success: false,
+      message: `Failed to check updates: ${error.message}`
+    });
+  }
+});
+
+// POST /api/app/update - Trigger self-update for the authenticated app
+app.post("/api/app/update", validateAppTokenMiddleware, async (req, res) => {
+  const appReq = req as AppAuthenticatedRequest;
+  const appToken = appReq.appToken!;
+  
+  // Find the repository associated with this app
+  const repo = managedRepos.find(r => r.id === appToken.repositoryId);
+  if (!repo) {
+    return res.status(404).json({
+      success: false,
+      message: `Repository not found for app ${appToken.appName}`
+    });
+  }
+  
+  // Check permissions
+  if (!hasPermission(appToken, 'update-self')) {
+    return res.status(403).json({
+      success: false,
+      message: 'App does not have permission to update itself'
+    });
+  }
+  
+  console.log(`🔄 App ${appToken.appName} requesting self-update`);
+  
+  // Add to build queue
+  const jobResult = await buildQueue.addJob(repo, false);
+  if (!jobResult.success) {
+    return res.status(500).json({
+      success: false,
+      message: jobResult.message
+    });
+  }
+  
+  res.json({
+    success: true,
+    appName: appToken.appName,
+    repositoryId: repo.id,
+    message: 'Update build queued successfully'
+  });
+  
+  console.log(`✅ Self-update queued for app ${appToken.appName}`);
+});
+
+// GET /api/app/status - Get build and installation status for the authenticated app
+app.get("/api/app/status", validateAppTokenMiddleware, async (req, res) => {
+  const appReq = req as AppAuthenticatedRequest;
+  const appToken = appReq.appToken!;
+  
+  // Find the repository associated with this app
+  const repo = managedRepos.find(r => r.id === appToken.repositoryId);
+  if (!repo) {
+    return res.status(404).json({
+      success: false,
+      message: `Repository not found for app ${appToken.appName}`
+    });
+  }
+  
+  // Check permissions
+  if (!hasPermission(appToken, 'get-self-status')) {
+    return res.status(403).json({
+      success: false,
+      message: 'App does not have permission to check status'
+    });
+  }
+  
+  try {
+    // Check build queue status
+    const queueStatus = buildQueue.getQueueStatus();
+    const currentJob = queueStatus.runningJobs.find((job: any) => job.repositoryId === repo.id);
+    const recentJobs = buildQueue.getRecentJobs().filter((job: any) => job.repositoryId === repo.id).slice(0, 5);
+    
+    // Check CasaOS installation status
+    let casaOSStatus = null;
+    try {
+      casaOSStatus = {
+        installed: await isAppInstalledInCasaOS(repo.name),
+        appId: repo.name
+      };
+    } catch (error) {
+      console.warn(`⚠️ Could not check CasaOS status for app ${appToken.appName}:`, error);
+    }
+    
+    const response = {
+      success: true,
+      appName: appToken.appName,
+      repositoryId: repo.id,
+      repository: {
+        url: repo.url,
+        lastBuildTime: repo.lastBuildTime,
+        status: repo.status,
+        currentVersion: repo.currentVersion,
+        latestVersion: repo.latestVersion
+      },
+      buildQueue: {
+        currentlyBuilding: !!currentJob,
+        currentJob: currentJob ? {
+          id: currentJob.id,
+          repositoryName: currentJob.repositoryName,
+          startTime: currentJob.startTime,
+          runTime: currentJob.runTime
+        } : null,
+        recentJobs: recentJobs.map((job: any) => ({
+          id: job.id,
+          status: job.status,
+          startTime: job.startTime,
+          endTime: job.endTime,
+          duration: job.duration
+        }))
+      },
+      casaOS: casaOSStatus,
+      lastChecked: new Date().toISOString()
+    };
+    
+    res.json(response);
+    
+  } catch (error: any) {
+    console.error(`❌ Failed to get status for app ${appToken.appName}:`, error.message);
+    res.status(500).json({
+      success: false,
+      message: `Failed to get status: ${error.message}`
+    });
+  }
+});
 
 const port = config.webuiPort;
 app.listen(port, () => {

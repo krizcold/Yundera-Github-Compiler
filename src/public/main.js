@@ -241,6 +241,13 @@ class RepoManager {
                 <option value="compose" ${repoType === 'compose' ? 'selected' : ''}>Docker Compose</option>
             </select>`;
 
+        const updateStatus = this.getUpdateStatus(repo);
+        const updateStatusHTML = updateStatus.status !== 'none' ? `
+            <div class="update-status update-status-${updateStatus.status}" title="${updateStatus.version}" ${updateStatus.status === 'unknown' ? `onclick="repoManager.checkSingleRepoUpdate('${repoId}')"` : ''}>
+                ${updateStatus.display}
+            </div>
+        ` : '';
+
         const statusInfoHTML = `
             <div class="status-info">
                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -249,6 +256,8 @@ class RepoManager {
                     </span>
                     ${repo.installMismatch ? '<span class="warning-triangle" title="App is listed as installed but not found in CasaOS. It may have been removed manually."><i class="fas fa-exclamation-triangle"></i></span>' : ''}
                 </div>
+                ${updateStatusHTML}
+                ${updateStatus.version ? `<div class="version-info">${updateStatus.version}</div>` : ''}
                 <div>Last Action: ${lastBuildTime}</div>
             </div>
         `;
@@ -345,6 +354,42 @@ class RepoManager {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
+    getUpdateStatus(repo) {
+        if (!repo || repo.type !== 'github' || !repo.url) {
+            return { status: 'none', display: '', version: '' };
+        }
+
+        const hasVersions = repo.currentVersion && repo.latestVersion;
+        if (!hasVersions) {
+            return { status: 'unknown', display: 'Check for updates', version: '' };
+        }
+
+        const isUpToDate = repo.currentVersion === repo.latestVersion;
+        const lastChecked = repo.lastUpdateCheck ? new Date(repo.lastUpdateCheck).toLocaleTimeString('en-US', { 
+            hour: '2-digit', minute: '2-digit', hour12: false 
+        }) : '';
+
+        if (isUpToDate) {
+            return { 
+                status: 'uptodate', 
+                display: '✅ Up to date', 
+                version: `${repo.currentVersion} • ${lastChecked}`
+            };
+        } else {
+            const behindText = repo.commitsBehind > 0 ? ` (${repo.commitsBehind} commits behind)` : '';
+            return { 
+                status: 'available', 
+                display: '🔄 Update available', 
+                version: `${repo.currentVersion} → ${repo.latestVersion}${behindText} • ${lastChecked}`
+            };
+        }
+    }
+
+    hasUpdatesAvailable(repo) {
+        if (!repo || repo.type !== 'github' || !repo.url) return false;
+        return repo.currentVersion && repo.latestVersion && repo.currentVersion !== repo.latestVersion;
+    }
+
     getInstallationStatus(repo) {
         if (!repo || repo.id === 'empty') return { status: 'uninstalled', label: 'Not Created' };
         
@@ -429,8 +474,16 @@ class RepoManager {
                 const buildText = repo.type === 'github' ? 'Build' : 'Install';
                 return `<button class="btn btn-small btn-success" title="${buildText} Application" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-cogs"></i></button>`;
             case 'success':
-                const actionText = repo.type === 'github' ? 'Update' : 'Re-install';
-                return `<button class="btn btn-small btn-warning" title="${actionText}" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
+                if (repo.type === 'github') {
+                    const hasUpdates = this.hasUpdatesAvailable(repo);
+                    if (hasUpdates) {
+                        return `<button class="btn btn-small btn-primary" title="Update Application" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-download"></i></button>`;
+                    } else {
+                        return `<button class="btn btn-small btn-secondary" title="Reinstall Application" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
+                    }
+                } else {
+                    return `<button class="btn btn-small btn-warning" title="Re-install" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
+                }
             case 'error':
                 const retryText = repo.type === 'github' ? 'Retry Build' : 'Retry Install';
                 return `<button class="btn btn-small btn-danger" title="${retryText}" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-redo"></i></button>`;
@@ -705,13 +758,53 @@ class RepoManager {
     async checkAllUpdates() {
         try {
             this.showNotification('Checking for updates...', 'info');
+            console.log('🔍 Checking all updates - calling POST /api/repos/check-updates');
             const response = await axios.post('/api/repos/check-updates', this.addAuthToRequest({}));
+            console.log('✅ Check all updates response:', response.data);
             if (response.data.success) {
                 await this.loadRepos();
                 this.showNotification('Update check completed', 'success');
+            } else {
+                this.showNotification(`Update check failed: ${response.data.message}`, 'error');
             }
         } catch (error) {
-            this.showNotification('Failed to check for updates', 'error');
+            console.error('❌ Check all updates failed:', error);
+            console.error('Error details:', error.response?.data || error.message);
+            this.showNotification(`Failed to check for updates: ${error.response?.data?.message || error.message}`, 'error');
+        }
+    }
+
+    async checkSingleRepoUpdate(repoId) {
+        try {
+            const repo = this.repos.find(r => r.id === repoId);
+            if (!repo) return;
+            
+            this.showNotification(`Checking updates for ${repo.name}...`, 'info');
+            console.log(`🔍 Checking single repo update - calling GET /api/repos/${repoId}/check-updates`);
+            
+            // For GET requests, use query parameters for auth
+            const url = this.authHash ? 
+                `/api/repos/${repoId}/check-updates?hash=${this.authHash}` : 
+                `/api/repos/${repoId}/check-updates`;
+                
+            const response = await axios.get(url);
+            console.log('✅ Single repo update response:', response.data);
+            
+            if (response.data.success) {
+                await this.loadRepos();
+                const updateInfo = response.data.updateInfo;
+                if (updateInfo.hasUpdates) {
+                    this.showNotification(`${repo.name}: Update available (${updateInfo.commitsBehind} commits behind)`, 'success');
+                } else {
+                    this.showNotification(`${repo.name}: Up to date`, 'success');
+                }
+            } else {
+                this.showNotification(`Update check failed: ${response.data.message}`, 'error');
+            }
+        } catch (error) {
+            console.error('❌ Single repo update check failed:', error);
+            console.error('Error details:', error.response?.data || error.message);
+            this.showNotification(`Failed to check for updates: ${error.response?.data?.message || error.message}`, 'error');
         }
     }
 
