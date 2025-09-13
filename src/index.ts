@@ -884,46 +884,20 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
       }
       
       console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS before removing repository...`);
-      const result = await uninstallCasaOSApp(appNameToUninstall, preserveData);
+      const uninstallResult = await uninstallCasaOSApp(appNameToUninstall, preserveData);
       
-      if (result.success) {
-        // If data was preserved, we manually stopped containers - no need to poll CasaOS
-        if (result.message.includes('(data preserved)')) {
-          console.log(`✅ App ${appNameToUninstall} containers stopped`);
-        } else {
-          console.log(`✅ App ${appNameToUninstall} uninstall initiated - waiting for completion...`);
-          
-          // Wait for actual uninstall completion (up to 30 seconds)
-          let attempts = 0;
-          const maxAttempts = 6; // 30 seconds total (5s intervals)
-          let uninstallComplete = false;
-          
-          while (attempts < maxAttempts && !uninstallComplete) {
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-            attempts++;
-            
-            try {
-              const installedApps = await getCasaOSInstalledApps(true);
-              uninstallComplete = !installedApps.includes(appNameToUninstall);
-              
-              if (uninstallComplete) {
-                console.log(`✅ App ${appNameToUninstall} successfully uninstalled after ${attempts * 5}s`);
-              } else {
-                console.log(`⏳ Waiting for ${appNameToUninstall} uninstall completion (${attempts}/${maxAttempts})`);
-              }
-            } catch (error) {
-              console.log(`⚠️ Error checking uninstall status: ${error}`);
-            }
-          }
-          
-          if (!uninstallComplete) {
-            console.log(`⏰ Uninstall verification timeout for ${appNameToUninstall} - proceeding with repository removal`);
-          }
-        }
-      } else {
-        console.log(`⚠️ Failed to uninstall ${appNameToUninstall}: ${result.message}`);
-        // Continue with repository removal even if uninstall failed
+      if (!uninstallResult.success) {
+        console.log(`❌ Uninstall failed: ${uninstallResult.message}`);
+        console.log(`⚠️ Repository removal cancelled to prevent leaving orphaned app in CasaOS`);
+        return res.status(500).json({ 
+          success: false, 
+          message: `Repository removal cancelled: ${uninstallResult.message}. Please manually uninstall the app from CasaOS first, or use "Force Remove" if you're sure it's safe.`
+        });
       }
+      
+      console.log(`✅ Successfully uninstalled ${appNameToUninstall}: ${uninstallResult.message}`);
+      // Store the uninstall message for the final response
+      (repo as any).uninstallMessage = uninstallResult.message;
     }
     
     // Remove app token if it exists
@@ -1021,10 +995,14 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
     
     let message = "";
     if (repo.isInstalled) {
-      if (preserveData) {
-        message = "Repository removed, app uninstalled from CasaOS, and application data preserved";
+      const uninstallMessage = (repo as any).uninstallMessage;
+      if (uninstallMessage) {
+        message = `Repository removed. ${uninstallMessage}`;
       } else {
-        message = "Repository removed and app uninstalled from CasaOS";
+        // Fallback to old messages if uninstall message not available
+        message = preserveData 
+          ? "Repository removed, app uninstalled from CasaOS, and application data preserved"
+          : "Repository removed and app uninstalled from CasaOS";
       }
     } else {
       message = "Repository and associated files removed successfully";
@@ -1323,15 +1301,20 @@ app.post("/api/repos/:id/uninstall", validateAuthHash, async (req, res) => {
       isRunning: false
     });
     
-    console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS...`);
-    const result = await uninstallCasaOSApp(appNameToUninstall);
+    const { preserveData } = req.body || {};
+    console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS (preserveData: ${preserveData})...`);
+    const result = await uninstallCasaOSApp(appNameToUninstall, preserveData);
     
     if (result.success) {
-      console.log(`✅ Successfully initiated uninstall for ${appNameToUninstall}`);
+      console.log(`✅ Successfully uninstalled ${appNameToUninstall}: ${result.message}`);
       res.json({ success: true, message: result.message });
       
-      // Start polling to verify uninstall completion
-      pollUninstallStatus(id, appNameToUninstall, 0);
+      // Update repository status directly since new uninstall system does its own verification
+      updateRepository(id, { 
+        status: 'idle',
+        isInstalled: false,
+        isRunning: false
+      });
     } else {
       console.log(`❌ Failed to uninstall ${appNameToUninstall}: ${result.message}`);
       // Revert status on failure

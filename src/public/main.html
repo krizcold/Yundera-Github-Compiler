@@ -122,6 +122,25 @@
             pointer-events: auto;
         }
 
+        .repo-item.disabled-card {
+            opacity: 0.5;
+            pointer-events: none;
+            position: relative;
+        }
+
+        .repo-item.disabled-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(128, 128, 128, 0.1);
+            z-index: 10;
+            pointer-events: auto;
+            cursor: not-allowed;
+        }
+
         .btn-small {
             padding: 6px 12px;
             font-size: 12px;

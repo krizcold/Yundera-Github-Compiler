@@ -363,83 +363,127 @@ async function performManualCleanup(appName: string, removeData: boolean = false
   }
 }
 
-// Uninstall an app from CasaOS
+// Uninstall an app from CasaOS with proper verification
 export async function uninstallCasaOSApp(appName: string, preserveData: boolean = false): Promise<{
   success: boolean;
   message: string;
 }> {
+  console.log(`🗑️ Starting uninstall for ${appName} (preserveData: ${preserveData})`);
+  
   try {
-    if (preserveData) {
-      console.log(`🛡️ Preserving data - stopping containers for ${appName}`);
+    let apiSuccess = false;
+    let lastApiResponse = '';
+    const maxRetries = 3;
+    
+    // Step 1: Try CasaOS API uninstall (with retries for transition states)
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      console.log(`🗑️ CasaOS API uninstall attempt ${attempt}/${maxRetries} for ${appName}...`);
       
-      // Stop and remove the app containers manually (but preserve data volumes)
-      const stopCommand = `
+      const command = `
         docker exec casaos sh -c "
-          docker-compose -f /DATA/AppData/casaos/apps/${appName}/docker-compose.yml down --remove-orphans 2>/dev/null || 
-          (docker stop \\\$(docker ps -q --filter name=${appName}) 2>/dev/null && docker rm \\\$(docker ps -aq --filter name=${appName}) 2>/dev/null) ||
-          echo 'No containers found to stop'
+          curl -s -X DELETE 'http://localhost:8080/v2/app_management/compose/${appName}' \\
+            -H 'Accept: application/json'
         " 2>&1
       `;
       
-      await execAsync(stopCommand);
+      const { stdout } = await execAsync(command);
+      console.log(`📊 CasaOS API response (attempt ${attempt}): ${stdout.trim()}`);
+      lastApiResponse = stdout.trim();
       
-      return {
-        success: true,
-        message: `App ${appName} stopped (data preserved)`
-      };
-    }
-    
-    // Normal uninstall - use CasaOS API (will remove data)
-    const command = `
-      docker exec casaos sh -c "
-        curl -s -X DELETE 'http://localhost:8080/v2/app_management/compose/${appName}' \\
-          -H 'Accept: application/json'
-      " 2>&1
-    `;
-    
-    const { stdout } = await execAsync(command);
-    
-    if (stdout.includes('Connection refused') || stdout.includes('404')) {
-      // Try manual cleanup if CasaOS API is not available
-      await performManualCleanup(appName, !preserveData);
-      return {
-        success: true,
-        message: `App ${appName} manually cleaned up (CasaOS API unavailable)`
-      };
-    }
-    
-    let apiSuccess = false;
-    try {
-      const response = JSON.parse(stdout);
-      // CasaOS might return different success indicators
-      if (response.success !== false && !stdout.includes('error')) {
-        apiSuccess = true;
-      } else {
-        console.log(`⚠️ CasaOS API returned error:`, response);
+      // Check for connection/API unavailable errors first
+      if (stdout.includes('Connection refused') || stdout.includes('404') || stdout.includes('curl: command not found')) {
+        console.log(`⚠️ CasaOS API unavailable on attempt ${attempt}`);
+        if (attempt === maxRetries) {
+          console.log(`⚠️ CasaOS API unavailable after all attempts - falling back to manual cleanup`);
+          await performManualCleanup(appName, !preserveData);
+          return {
+            success: false,
+            message: `CasaOS API unavailable. Manual cleanup performed, but app may still be registered in CasaOS.`
+          };
+        }
+        // Wait before retry for API availability
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        continue;
       }
-    } catch (parseError) {
-      // If it's not JSON, check if it looks like a success response
-      if (stdout.includes('success') || stdout.trim() === '') {
-        apiSuccess = true;
+      
+      // Parse API response strictly - assume failure unless we can prove success
+      try {
+        const response = JSON.parse(stdout);
+        console.log(`📊 Parsed CasaOS response (attempt ${attempt}):`, response);
+        
+        // Only consider it successful if explicitly indicated
+        if (response.success === true || response.message === 'success') {
+          apiSuccess = true;
+          console.log(`✅ CasaOS API confirmed successful uninstall on attempt ${attempt}`);
+          break;
+        } else if (response.message?.includes('no matching operation was found')) {
+          // App wasn't found in CasaOS - this could mean it's already uninstalled or in transition
+          console.log(`⚠️ App not found in CasaOS on attempt ${attempt} (may be in transition or already removed)`);
+        } else {
+          console.log(`❌ CasaOS API did not confirm success on attempt ${attempt}:`, response);
+        }
+      } catch (parseError) {
+        // Not valid JSON - check for obvious success patterns
+        if (stdout.trim() === '' || stdout.includes('"success":true')) {
+          apiSuccess = true;
+          console.log(`✅ CasaOS API likely successful on attempt ${attempt} (empty/success response)`);
+          break;
+        } else {
+          console.log(`❌ Could not parse CasaOS response as success on attempt ${attempt}: ${stdout.trim()}`);
+        }
+      }
+      
+      // If not the last attempt, wait before retrying
+      if (attempt < maxRetries) {
+        console.log(`⏳ Waiting 5 seconds before retry attempt ${attempt + 1}...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
+    
+    // After all API attempts, check if we need to force-stop containers before verification
+    if (!apiSuccess) {
+      console.log(`⚠️ CasaOS API uninstall failed after ${maxRetries} attempts - trying force container stop before verification`);
+      // Force stop any running containers that might be preventing clean uninstall
+      try {
+        await performManualCleanup(appName, false); // Don't delete data yet, just stop containers
+        console.log(`🛑 Forced container stop completed, proceeding with verification`);
+      } catch (error) {
+        console.log(`⚠️ Force container stop had issues: ${error}`);
       }
     }
 
-    // Perform additional cleanup regardless of API success
-    // This ensures residual files and containers are removed
-    await performManualCleanup(appName, !preserveData);
+    // Step 2: Verify the uninstallation by checking if app is actually removed
+    console.log(`🔍 Verifying uninstallation by checking CasaOS app list...`);
+    const isStillInstalled = await isAppInstalledInCasaOS(appName);
+    
+    if (isStillInstalled) {
+      console.log(`❌ VERIFICATION FAILED: App ${appName} is still installed in CasaOS`);
+      // Even if API claimed success, the app is still there - this is a failure
+      await performManualCleanup(appName, !preserveData);
+      return {
+        success: false,
+        message: `Uninstall failed: App is still registered in CasaOS after uninstall attempt. Manual cleanup performed.`
+      };
+    }
+
+    // Step 3: If verification passed, perform cleanup based on preserveData setting
+    console.log(`✅ Verification passed: App ${appName} successfully removed from CasaOS`);
+    await performManualCleanup(appName, !preserveData); // !preserveData means removeData
+
+    const message = preserveData 
+      ? `App ${appName} uninstalled from CasaOS`
+      : `App ${appName} fully uninstalled from CasaOS`;
 
     return {
       success: true,
-      message: apiSuccess 
-        ? `App ${appName} uninstallation completed with cleanup`
-        : `App ${appName} manually cleaned up (API response unclear)`
+      message
     };
     
   } catch (error) {
-    console.error(`❌ Error uninstalling ${appName}:`, error);
+    console.error(`❌ Critical error during uninstall of ${appName}:`, error);
     return {
       success: false,
-      message: `Error uninstalling app: ${error}`
+      message: `Critical error during uninstall: ${error}`
     };
   }
 }

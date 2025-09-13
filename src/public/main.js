@@ -21,7 +21,55 @@ class RepoManager {
             type: 'github',
             url: ''
         };
+        this.activeOperations = new Set();
         this.init();
+    }
+
+    // Strategic button disable system
+    setCardDisabled(repoId, disabled = true) {
+        const repoRow = document.querySelector(`[data-repo-id="${repoId}"]`);
+        if (!repoRow) return;
+        
+        if (disabled) {
+            repoRow.classList.add('disabled-card');
+        } else {
+            repoRow.classList.remove('disabled-card');
+        }
+    }
+
+    setButtonLoading(buttonId, loadingText, loadingIcon) {
+        const button = document.getElementById(buttonId);
+        if (!button) return null;
+        
+        const originalData = {
+            innerHTML: button.innerHTML,
+            disabled: button.disabled
+        };
+        
+        button.disabled = true;
+        button.innerHTML = `<i class="fas ${loadingIcon}"></i> ${loadingText}`;
+        
+        return originalData;
+    }
+
+    restoreButton(buttonId, originalData) {
+        const button = document.getElementById(buttonId);
+        if (!button || !originalData) return;
+        
+        button.innerHTML = originalData.innerHTML;
+        button.disabled = originalData.disabled;
+    }
+
+    startOperation(operationId) {
+        if (this.activeOperations.has(operationId)) {
+            return false;
+        }
+        this.activeOperations.add(operationId);
+        return true;
+    }
+
+    endOperation(operationId) {
+        this.activeOperations.delete(operationId);
     }
 
     // Extract authentication hash from URL parameters
@@ -130,12 +178,57 @@ class RepoManager {
             const url = this.authHash ? `/api/repos?hash=${this.authHash}` : '/api/repos';
             const response = await axios.get(url);
             this.repos = response.data.repos || [];
+            
+            // Render first, then reapply disabled states (prevents HTML regeneration from wiping CSS classes)
             this.renderReposPreservingFocus();
+            this.reapplyDisabledStates();
         } catch (error) {
             console.error('Failed to load repositories:', error);
             this.repos = [];
             this.renderReposPreservingFocus();
+            this.reapplyDisabledStates();
         }
+    }
+
+    clearAllDisabledCards() {
+        // Clear disabled states ONLY for cards that don't have active operations
+        document.querySelectorAll('.repo-item[data-repo-id]').forEach(row => {
+            const repoId = row.getAttribute('data-repo-id');
+            if (repoId) {
+                // Check if this repo has any active operations
+                const hasActiveOperation = Array.from(this.activeOperations).some(opId => 
+                    opId.includes(repoId) || opId.includes('empty')
+                );
+                
+                // Only clear disabled state if no active operations
+                if (!hasActiveOperation) {
+                    this.setCardDisabled(repoId, false);
+                }
+            }
+        });
+    }
+
+    clearDisabledCardForRepo(repoId) {
+        // Force clear disabled state for a specific repo (used when operations complete)
+        this.setCardDisabled(repoId, false);
+    }
+
+    reapplyDisabledStates() {
+        // Reapply disabled states after HTML regeneration to restore visual states
+        document.querySelectorAll('.repo-item[data-repo-id]').forEach(row => {
+            const repoId = row.getAttribute('data-repo-id');
+            if (repoId) {
+                // Check if this repo has any active operations
+                const hasActiveOperation = Array.from(this.activeOperations).some(opId => 
+                    opId.includes(repoId) || opId.includes('empty')
+                );
+                
+                // Reapply disabled state if there are active operations
+                if (hasActiveOperation) {
+                    this.setCardDisabled(repoId, true);
+                }
+            }
+        });
     }
 
     renderReposPreservingFocus() {
@@ -148,7 +241,7 @@ class RepoManager {
             this.updateExistingRepos();
         } else {
             // Safe to do full re-render
-            this.renderRepos();
+            this.renderReposWithStatePreservation();
         }
     }
 
@@ -192,6 +285,12 @@ class RepoManager {
         } catch (error) {
             console.error('Failed to load global settings:', error);
         }
+    }
+
+    renderReposWithStatePreservation() {
+        // Wrapper function that renders and preserves disabled states
+        this.renderRepos();
+        this.reapplyDisabledStates();
     }
 
     renderRepos() {
@@ -487,6 +586,12 @@ class RepoManager {
             case 'error':
                 const retryText = repo.type === 'github' ? 'Retry Build' : 'Retry Install';
                 return `<button class="btn btn-small btn-danger" title="${retryText}" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-redo"></i></button>`;
+            case 'starting':
+                return `<button class="btn btn-small btn-secondary" title="App Starting..." disabled><i class="fas fa-spinner fa-spin"></i></button>`;
+            case 'stopping':
+                return `<button class="btn btn-small btn-secondary" title="App Stopping..." disabled><i class="fas fa-spinner fa-spin"></i></button>`;
+            case 'uninstalling':
+                return `<button class="btn btn-small btn-secondary" title="Uninstalling..." disabled><i class="fas fa-spinner fa-spin"></i></button>`;
             default: // idle, empty
                 const defaultActionText = repo.type === 'github' ? 'Import' : 'Install';
                 const defaultIcon = repo.type === 'github' ? 'fa-download' : 'fa-cogs';
@@ -526,7 +631,7 @@ class RepoManager {
     handleTypeChange(repoId, type) {
         if (repoId === 'empty') {
             this.emptyRepoState.type = type;
-            this.renderRepos();
+            this.renderReposWithStatePreservation();
         }
     }
     
@@ -539,13 +644,23 @@ class RepoManager {
     async importRepo(repoId) {
         if (repoId !== 'empty') return;
         
+        // Start import operation tracking
+        const importOperationId = `import-empty`;
+        if (!this.startOperation(importOperationId)) {
+            this.showNotification('Import operation already in progress', 'warning');
+            return;
+        }
+        
         this.disableActionButton('empty');
+        this.setCardDisabled('empty', true);
         const { url } = this.emptyRepoState;
         const name = this.extractRepoName(url);
 
         if (!name) {
             this.showNotification('Could not determine repository name from URL.', 'error');
             this.enableActionButton('empty');
+            this.clearDisabledCardForRepo('empty');
+            this.endOperation(importOperationId);
             return;
         }
 
@@ -561,17 +676,27 @@ class RepoManager {
             
             // Now trigger the actual import process for the newly created repo
             this.updateRepoStatus(repo.id, 'importing');
+            this.setCardDisabled(repo.id, true);
             this.showNotification(`Importing ${repo.name}...`, 'info');
+            
             const response = await axios.post(`/api/repos/${repo.id}/import`, this.addAuthToRequest({}));
             if (response.data.success) {
                 this.showNotification(`${repo.name} imported successfully! Ready to build.`, 'success');
+                // End the operation before loadRepos to prevent race condition
+                this.endOperation(importOperationId);
                 await this.loadRepos();
+                return; // Skip the try/catch finally since we handled success here
             } else {
                 throw new Error(response.data.message);
             }
         } catch (error) {
             this.showNotification(`Failed to import: ${error.message}`, 'error');
             this.enableActionButton('empty');
+            this.clearDisabledCardForRepo('empty');
+            if (error.repoId) {
+                this.clearDisabledCardForRepo(error.repoId);
+            }
+            this.endOperation(importOperationId);
         }
     }
 
@@ -633,7 +758,7 @@ class RepoManager {
                 repoToUpdate.status = 'error';
                 repoToUpdate.statusMessage = 'Failed to start';
             }
-            this.renderRepos();
+            this.renderReposWithStatePreservation();
         }
     }
 
@@ -651,19 +776,46 @@ class RepoManager {
 
     async toggleApp(repoId) {
         const repo = this.repos.find(r => r.id === repoId);
-        if (!repo || !repo.isInstalled || repo.status === 'starting' || repo.status === 'stopping') return;
+        if (!repo || !repo.isInstalled) return;
+
+        // Check if operation is already active
+        const operationId = `toggle-${repoId}`;
+        if (!this.startOperation(operationId)) {
+            this.showNotification('App toggle operation already in progress', 'warning');
+            return;
+        }
 
         const action = repo.isRunning ? 'stop' : 'start';
+        const actioningState = action === 'stop' ? 'stopping' : 'starting';
+        
+        // Set loading states
+        this.updateRepoStatus(repoId, actioningState);
+        this.renderReposWithStatePreservation();
+        
         try {
             const response = await axios.post(`/api/repos/${repoId}/toggle`, this.addAuthToRequest({ start: !repo.isRunning }));
             if (response.data.success) {
                 this.showNotification(`Application ${action}ed successfully`, 'success');
+                // End operation before loadRepos to prevent race condition
+                this.endOperation(operationId);
                 await this.loadRepos();
+                return; // Skip the finally block since we handled it here
             } else {
                 throw new Error(response.data.message);
             }
         } catch (error) {
             this.showNotification(`Error ${action}ing application: ${error.response?.data?.message || error.message}`, 'error');
+            
+            // Revert states on error - use force clear to override operation check
+            this.updateRepoStatus(repoId, 'error');
+            this.clearDisabledCardForRepo(repoId);
+            this.renderReposWithStatePreservation();
+            
+            // Refresh after a delay to get actual status
+            setTimeout(() => this.loadRepos(), 2000);
+        } finally {
+            // Always end the operation
+            this.endOperation(operationId);
         }
     }
 
@@ -671,17 +823,53 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
         
-        const result = await this.showUninstallConfirmation(repo);
-        if (result.proceed) {
+        // Check if operation is already active BEFORE showing confirmation
+        const operationId = `remove-${repoId}`;
+        if (!this.startOperation(operationId)) {
+            this.showNotification('Remove operation already in progress', 'warning');
+            return;
+        }
+        
+        // Disable the entire card for critical uninstall operations
+        this.setCardDisabled(repoId, true);
+        
+        try {
+            const result = await this.showUninstallConfirmation(repo);
+            if (!result.proceed) {
+                // User cancelled, restore the card and end the operation
+                this.setCardDisabled(repoId, false);
+                this.endOperation(operationId);
+                return;
+            }
+
             try {
                 const url = this.authHash ? `/api/repos/${repoId}?hash=${this.authHash}` : `/api/repos/${repoId}`;
                 const requestData = this.addAuthToRequest({ preserveData: result.preserveData });
-                await axios.delete(url, { data: requestData });
+                const response = await axios.delete(url, { data: requestData });
+                // End operation before loadRepos to prevent race condition with successful removal
+                this.endOperation(operationId);
                 await this.loadRepos();
-                this.showNotification('Repository removed successfully', 'success');
+                this.showNotification(response.data.message || 'Repository removed successfully', 'success');
+                return; // Skip finally block since we handled operation end here
             } catch (error) {
-                this.showNotification('Failed to remove repository', 'error');
+                const errorMessage = error.response?.data?.message || error.message || 'Unknown error occurred';
+                this.showNotification(`Failed to remove repository: ${errorMessage}`, 'error');
+                
+                // Revert loading state and card on error - use force clear to override operation check
+                this.clearDisabledCardForRepo(repoId);
+                this.updateRepoStatus(repoId, 'error');
+                this.renderReposWithStatePreservation();
+                // Refresh after delay to get actual status
+                setTimeout(() => this.loadRepos(), 2000);
             }
+        } catch (error) {
+            // Handle any errors during confirmation dialog
+            this.clearDisabledCardForRepo(repoId);
+            this.updateRepoStatus(repoId, 'error');
+            this.renderReposWithStatePreservation();
+        } finally {
+            // Always end the operation
+            this.endOperation(operationId);
         }
     }
 
@@ -812,7 +1000,7 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (repo) {
             repo.status = status;
-            this.renderRepos();
+            this.renderReposWithStatePreservation();
         }
     }
     
@@ -821,7 +1009,7 @@ class RepoManager {
         if (repo) {
             repo.status = 'loading';
         }
-        this.renderRepos();
+        this.renderReposWithStatePreservation();
     }
     
     enableActionButton(repoId) {
@@ -1587,16 +1775,16 @@ class RepoManager {
                         }
 
                         <div class="data-preservation">
-                            <h3>Application Data</h3>
+                            <h3>Data Handling</h3>
                             <div class="data-option">
                                 <label class="data-checkbox">
                                     <input type="checkbox" id="preserve-app-data" ${!repo.isInstalled ? 'disabled' : ''}>
                                     <span class="data-checkmark"></span>
                                     <div class="data-content">
-                                        <strong>Delete application data and configuration files</strong>
+                                        <strong>Also delete application data</strong>
                                         <div class="data-description">
                                             ${repo.isInstalled ? 
-                                                'Remove all files in /DATA/AppData/' + repo.name + '/ permanently. Leave unchecked to keep your data.' : 
+                                                'By default, data in /DATA/AppData/' + repo.name + '/ will be preserved. Check this to delete it permanently.' : 
                                                 'No application data to delete (app is not installed).'
                                             }
                                         </div>
@@ -1817,7 +2005,7 @@ class RepoManager {
             });
 
             confirmBtn.addEventListener('click', () => {
-                // Invert logic: unchecked = preserve (safer default), checked = delete
+                // Checkbox checked = delete data, unchecked = preserve data (default)
                 const preserveData = !preserveDataCheckbox.checked;
                 popup.remove();
                 resolve({ proceed: true, preserveData: preserveData });
