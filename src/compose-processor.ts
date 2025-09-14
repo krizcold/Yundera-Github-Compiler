@@ -1,6 +1,9 @@
 import type { GlobalSettings } from './storage';
 
-export async function executePreInstallCommand(composeObject: any, logCollector?: any, runAsUser: string = 'ubuntu'): Promise<void> {
+export async function executePreInstallCommand(composeObject: any, logCollector?: any, runAsUser?: string): Promise<void> {
+    // Use PUID from environment to match real AppStore behavior, fallback to ubuntu
+    const defaultUser = process.env.PUID ? `${process.env.PUID}` : 'ubuntu';
+    const actualRunAsUser = runAsUser || defaultUser;
     // Helper function to log both to console and stream
     const log = (message: string, type: 'system' | 'info' | 'warning' | 'error' | 'success' = 'info') => {
         console.log(message);
@@ -27,7 +30,7 @@ export async function executePreInstallCommand(composeObject: any, logCollector?
         const { promisify } = require('util');
         const execAsync = promisify(exec);
         
-        log(`🔄 Executing pre-install command via Docker exec to CasaOS host...`, 'info');
+        log(`🔄 Executing pre-install command via Docker exec to CasaOS host (user: ${actualRunAsUser})...`, 'info');
         
         // Execute on host using docker exec to casaos container - same level of access as CasaOS pre-install-cmd
         const crypto = await import('crypto');
@@ -63,7 +66,7 @@ ${cmd}
         const scriptBase64 = Buffer.from(scriptContent).toString('base64');
         
         // Execute via docker exec to casaos container with selected user - this gives us the same access as CasaOS pre-install-cmd
-        const dockerCommand = `docker exec --user ${runAsUser} casaos bash -c '
+        const dockerCommand = `docker exec --user ${actualRunAsUser} casaos bash -c '
 # Set permissive umask for all files created during this session
 umask 022
 
