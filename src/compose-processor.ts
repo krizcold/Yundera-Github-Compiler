@@ -362,7 +362,7 @@ export interface ProcessedCompose {
  */
 export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null, appToken?: string | null): ProcessedCompose {
     console.log('🔧 Pre-processing App Store-style compose file...');
-    
+
     // Create a deep copy to avoid modifying the original object in memory
     const richCompose = JSON.parse(JSON.stringify(composeObject));
 
@@ -375,6 +375,10 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
 
     // Get the main service key from x-casaos
     const mainServiceKey = richCompose['x-casaos']?.main;
+
+    // Generate a unique AUTH_HASH for this app installation (once for the entire app)
+    const crypto = require('crypto');
+    const authHash = crypto.randomBytes(32).toString('hex');
 
     // Process services
     if (richCompose.services) {
@@ -436,10 +440,10 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             const replaceTemplateVars = (value: string): string => {
                 const originalValue = value;
                 const webUiPort = richCompose['x-casaos']?.webui_port || 80;
-                const domainValue = webUiPort === 80 
+                const domainValue = webUiPort === 80
                     ? `${appId}${settings.refSeparator}${settings.refDomain}`
                     : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
-                
+
                 let result = value
                     .replace(/\$\{?PUID\}?/g, settings.puid)
                     .replace(/\$\{?PGID\}?/g, settings.pgid)
@@ -447,13 +451,14 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                     .replace(/\$AppID/g, appId)  // Handle $AppID without braces
                     .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
                     .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme)
-                    .replace(/\$\{?REF_PORT\}?/g, settings.refPort);
-                
+                    .replace(/\$\{?REF_PORT\}?/g, settings.refPort)
+                    .replace(/\$\{?AUTH_HASH\}?/g, authHash);  // Replace AUTH_HASH globally
+
                 // Replace $API_HASH with the app's specific token if available
                 if (appToken) {
                     result = result.replace(/\$\{?API_HASH\}?/g, appToken);
                 }
-                
+
                 return result;
             };
 
@@ -468,15 +473,12 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             }
 
             // Inject AUTH_HASH for apps that need authentication
-            // Generate a unique AUTH_HASH for this app installation
             if (!service.environment) {
                 service.environment = {};
             }
-            
+
             // Only add AUTH_HASH if the service doesn't already have it
             if (!service.environment.AUTH_HASH) {
-                const crypto = require('crypto');
-                const authHash = crypto.randomBytes(32).toString('hex');
                 service.environment.AUTH_HASH = authHash;
             }
 
@@ -574,7 +576,8 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                         .replace(/\$AppID/g, appId)
                         .replace(/\$\{?REF_DOMAIN\}?/g, settings.refDomain || '')
                         .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme || '')
-                        .replace(/\$\{?REF_PORT\}?/g, settings.refPort || '');
+                        .replace(/\$\{?REF_PORT\}?/g, settings.refPort || '')
+                        .replace(/\$\{?AUTH_HASH\}?/g, authHash);
                 }
                 return volume;
             });
