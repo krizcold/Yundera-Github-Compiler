@@ -380,6 +380,49 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
     const crypto = require('crypto');
     const authHash = crypto.randomBytes(32).toString('hex');
 
+    // Helper function to replace template variables in strings
+    const replaceTemplateVars = (value: string): string => {
+        const originalValue = value;
+        const webUiPort = richCompose['x-casaos']?.webui_port || 80;
+        const domainValue = webUiPort === 80
+            ? `${appId}${settings.refSeparator}${settings.refDomain}`
+            : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
+
+        let result = value
+            .replace(/\$\{?PUID\}?/g, settings.puid)
+            .replace(/\$\{?PGID\}?/g, settings.pgid)
+            .replace(/\$\{?APP_ID\}?/g, appId)
+            .replace(/\$AppID/g, appId)  // Handle $AppID without braces
+            .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
+            .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme)
+            .replace(/\$\{?REF_PORT\}?/g, settings.refPort)
+            .replace(/\$\{?AUTH_HASH\}?/g, authHash);  // Replace AUTH_HASH globally
+
+        // Replace $API_HASH with the app's specific token if available
+        if (appToken) {
+            result = result.replace(/\$\{?API_HASH\}?/g, appToken);
+        }
+
+        return result;
+    };
+
+    // Helper function to recursively process template variables in any object
+    const processTemplateVarsRecursively = (obj: any): any => {
+        if (typeof obj === 'string') {
+            return replaceTemplateVars(obj);
+        } else if (Array.isArray(obj)) {
+            return obj.map(item => processTemplateVarsRecursively(item));
+        } else if (obj && typeof obj === 'object') {
+            const result: any = {};
+            for (const [key, value] of Object.entries(obj)) {
+                result[key] = processTemplateVarsRecursively(value);
+            }
+            return result;
+        } else {
+            return obj; // primitives (numbers, booleans, null, undefined)
+        }
+    };
+
     // Process services
     if (richCompose.services) {
         for (const serviceName in richCompose.services) {
@@ -436,31 +479,6 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 }
             }
 
-            // Helper function to replace template variables in strings
-            const replaceTemplateVars = (value: string): string => {
-                const originalValue = value;
-                const webUiPort = richCompose['x-casaos']?.webui_port || 80;
-                const domainValue = webUiPort === 80
-                    ? `${appId}${settings.refSeparator}${settings.refDomain}`
-                    : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
-
-                let result = value
-                    .replace(/\$\{?PUID\}?/g, settings.puid)
-                    .replace(/\$\{?PGID\}?/g, settings.pgid)
-                    .replace(/\$\{?APP_ID\}?/g, appId)
-                    .replace(/\$AppID/g, appId)  // Handle $AppID without braces
-                    .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
-                    .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme)
-                    .replace(/\$\{?REF_PORT\}?/g, settings.refPort)
-                    .replace(/\$\{?AUTH_HASH\}?/g, authHash);  // Replace AUTH_HASH globally
-
-                // Replace $API_HASH with the app's specific token if available
-                if (appToken) {
-                    result = result.replace(/\$\{?API_HASH\}?/g, appToken);
-                }
-
-                return result;
-            };
 
             // Process template substitutions in environment variables
             if (service.environment) {
@@ -548,6 +566,27 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
         }
     }
 
+    // Process template variables in ENTIRE x-casaos section (including index, hostname, descriptions, etc.)
+    if (richCompose['x-casaos']) {
+        console.log('🔧 Processing template variables in x-casaos section...');
+
+        // Process all x-casaos fields for template variables using recursive helper
+        // But exclude some fields that should NOT be processed (to avoid breaking metadata)
+        const fieldsToSkip = ['is_uncontrolled', 'store_app_id', 'architectures']; // Skip these as they're metadata, not user content
+
+        const processedXCasaOS: any = {};
+        for (const [key, value] of Object.entries(richCompose['x-casaos'])) {
+            if (fieldsToSkip.includes(key)) {
+                processedXCasaOS[key] = value; // Keep as-is
+            } else {
+                processedXCasaOS[key] = processTemplateVarsRecursively(value);
+            }
+        }
+
+        richCompose['x-casaos'] = processedXCasaOS;
+        console.log('✅ Template variables processed in x-casaos section');
+    }
+
     // Add required CasaOS metadata to x-casaos section
     if (richCompose['x-casaos']) {
         // Add missing required fields for CasaOS compatibility
@@ -565,23 +604,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             }
         }
 
-        // Process template variables in x-casaos volumes
-        if (richCompose['x-casaos'].volumes && Array.isArray(richCompose['x-casaos'].volumes)) {
-            richCompose['x-casaos'].volumes = richCompose['x-casaos'].volumes.map((volume: string) => {
-                if (typeof volume === 'string') {
-                    return volume
-                        .replace(/\$\{?PUID\}?/g, settings.puid)
-                        .replace(/\$\{?PGID\}?/g, settings.pgid)
-                        .replace(/\$\{?APP_ID\}?/g, appId)
-                        .replace(/\$AppID/g, appId)
-                        .replace(/\$\{?REF_DOMAIN\}?/g, settings.refDomain || '')
-                        .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme || '')
-                        .replace(/\$\{?REF_PORT\}?/g, settings.refPort || '')
-                        .replace(/\$\{?AUTH_HASH\}?/g, authHash);
-                }
-                return volume;
-            });
-        }
+        // Note: x-casaos template variable processing (including volumes) is now handled above by recursive processing
 
     }
 

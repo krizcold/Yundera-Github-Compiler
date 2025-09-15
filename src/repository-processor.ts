@@ -227,6 +227,38 @@ export async function processRepo(
     fs.writeFileSync(hostComposePath, yaml.stringify(clean));
     log(`✅ Compose file saved successfully`, 'success');
 
+    // Fix ownership of the docker-compose.yml file to ensure CasaOS can manage it
+    log(`🔧 Fixing ownership of docker-compose.yml for CasaOS management...`, 'info');
+    try {
+        const { exec } = await import('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+
+        // Try to fix ownership via docker exec to CasaOS container first
+        try {
+            await execAsync(`docker exec casaos chown ubuntu:ubuntu "${hostComposePath}"`, {
+                timeout: 10000,
+                maxBuffer: 1024 * 1024
+            });
+            await execAsync(`docker exec casaos chmod 644 "${hostComposePath}"`, {
+                timeout: 10000,
+                maxBuffer: 1024 * 1024
+            });
+            log(`✅ Fixed docker-compose.yml ownership via CasaOS container`, 'success');
+        } catch (dockerError: any) {
+            // Fallback to direct chown with numeric IDs
+            await execAsync(`chown 1000:1000 "${hostComposePath}"`, {
+                timeout: 5000
+            });
+            await execAsync(`chmod 644 "${hostComposePath}"`, {
+                timeout: 5000
+            });
+            log(`✅ Fixed docker-compose.yml ownership via direct chown`, 'success');
+        }
+    } catch (error: any) {
+        log(`⚠️ Warning: Could not fix docker-compose.yml ownership: ${error.message}. CasaOS may have trouble managing this app.`, 'warning');
+    }
+
     // Step 5: Install the containers by calling Docker Compose directly.
     log('🚀 Starting Docker Compose installation...', 'info');
     updateRepository(repository.id, { status: 'installing' });
@@ -294,6 +326,27 @@ export async function processRepo(
             log(`✅ Fixed ownership of Docker Compose directory: ${appDataPath}`, 'success');
         } else {
         }
+
+        // Also fix ownership of the metadata directory in case Docker Compose created additional files
+        log(`🔧 Ensuring metadata directory ownership is correct...`, 'info');
+        try {
+            await execAsync(`docker exec casaos chown -R ubuntu:ubuntu "${hostMetadataDir}"`, {
+                timeout: 10000,
+                maxBuffer: 1024 * 1024
+            });
+            log(`✅ Fixed ownership of metadata directory: ${hostMetadataDir}`, 'success');
+        } catch (metadataError: any) {
+            // Fallback to direct chown with numeric IDs
+            try {
+                await execAsync(`chown -R 1000:1000 "${hostMetadataDir}"`, {
+                    timeout: 5000
+                });
+                log(`✅ Fixed ownership of metadata directory via direct chown`, 'success');
+            } catch (fallbackError: any) {
+                log(`⚠️ Warning: Could not fix metadata directory ownership: ${fallbackError.message}`, 'warning');
+            }
+        }
+
     } catch (error: any) {
         log(`⚠️ Warning: Could not fix ownership of Docker Compose directories: ${error.message}`, 'warning');
     }
