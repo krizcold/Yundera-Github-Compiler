@@ -9,7 +9,7 @@ import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler"
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
-import { validateAuthHash, protectWebUI, validateAppTokenMiddleware, AppAuthenticatedRequest } from "./auth-middleware";
+import { validateAppTokenMiddleware, AppAuthenticatedRequest } from "./auth-middleware";
 import { createAppToken, removeAppToken, hasPermission } from "./app-tokens";
 
 
@@ -441,14 +441,8 @@ setInterval(async () => {
 
 // Protected routes MUST come before static middleware
 // Root serves the loading page (now index.html) - protected with auth
-app.get("/", protectWebUI, (req, res) => {
-  console.log(`✅ Serving index.html after authentication`);
+app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-// Main app interface (redirected from loading page when ready) - protected with auth
-app.get("/main", protectWebUI, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "main.html"));
 });
 
 // Serve static files from the 'public' directory (after protected routes)
@@ -465,8 +459,8 @@ app.use("/public", express.static(path.join(__dirname, "public"), {
 }));
 
 // Explicitly serve specific static assets that are safe
-app.get("/main.js", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "main.js"));
+app.get("/index.js", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.js"));
 });
 
 app.get("/style.css", (req, res) => {
@@ -503,8 +497,8 @@ function getAppNameFromCompose(yamlContent: string): string {
 
 // Repository Management API endpoints
 
-// GET /api/repos - List all managed repositories
-app.get("/api/repos", validateAuthHash, async (req, res) => {
+// GET /api/admin/repos - List all managed repositories
+app.get("/api/admin/repos", async (req, res) => {
   // Sync with CasaOS before returning
   await syncWithCasaOS();
   const repositories = loadRepositories();
@@ -512,13 +506,13 @@ app.get("/api/repos", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/settings - Get global settings
-app.get("/api/settings", validateAuthHash, (req, res) => {
+app.get("/api/admin/settings", (req, res) => {
   const settings = loadSettings();
   res.json(settings);
 });
 
 // PUT /api/settings - Update global settings
-app.put("/api/settings", validateAuthHash, (req, res) => {
+app.put("/api/admin/settings", (req, res) => {
   const settings = loadSettings();
   const updates = req.body;
   
@@ -529,7 +523,7 @@ app.put("/api/settings", validateAuthHash, (req, res) => {
 });
 
 // POST /api/repos - Create a new GitHub repository
-app.post("/api/repos", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos", async (req, res) => {
   const { name, url, type, autoUpdate, autoUpdateInterval, apiUpdatesEnabled, status } = req.body;
   
   if (!name || !type) {
@@ -564,7 +558,7 @@ app.post("/api/repos", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/repos/create-from-compose - Create a new Docker Compose repository
-app.post("/api/repos/create-from-compose", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos/create-from-compose", async (req, res) => {
   const { yaml } = req.body;
   if (!yaml) {
     return res.status(400).json({ success: false, message: "YAML content is required" });
@@ -604,7 +598,7 @@ app.post("/api/repos/create-from-compose", validateAuthHash, async (req, res) =>
 
 
 // PUT /api/repos/:id - Update a repository
-app.put("/api/repos/:id", validateAuthHash, (req, res) => {
+app.put("/api/admin/repos/:id", (req, res) => {
   const { id } = req.params;
   const updates = req.body;
   
@@ -632,7 +626,7 @@ app.put("/api/repos/:id", validateAuthHash, (req, res) => {
 });
 
 // POST /api/repos/:id/import - Import repository from GitHub (clone and analyze)
-app.post("/api/repos/:id/import", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos/:id/import", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -735,7 +729,7 @@ app.post("/api/repos/:id/import", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/repos/:id/compile - Compile/build a repository
-app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos/:id/compile", async (req, res) => {
   const { id } = req.params;
   const { runAsUser } = req.body;
   const repo = getRepository(id);
@@ -767,7 +761,7 @@ app.post("/api/repos/:id/compile", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/repos/:id/compose - Get docker-compose.yml content
-app.get("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
+app.get("/api/admin/repos/:id/compose", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -805,7 +799,7 @@ app.get("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
 });
 
 // PUT /api/repos/:id/compose - Update docker-compose.yml content
-app.put("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
+app.put("/api/admin/repos/:id/compose", async (req, res) => {
   const { id } = req.params;
   const { yaml } = req.body;
   const repo = getRepository(id);
@@ -851,7 +845,7 @@ app.put("/api/repos/:id/compose", validateAuthHash, async (req, res) => {
 });
 
 // DELETE /api/repos/:id - Remove a repository (and uninstall app if installed)
-app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
+app.delete("/api/admin/repos/:id", async (req, res) => {
   const { id } = req.params;
   const { preserveData } = req.body || {};
   
@@ -1017,7 +1011,7 @@ app.delete("/api/repos/:id", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/repos/:id/check-updates - Check if a specific repository has updates available
-app.get("/api/repos/:id/check-updates", validateAuthHash, async (req, res) => {
+app.get("/api/admin/repos/:id/check-updates", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -1061,7 +1055,7 @@ app.get("/api/repos/:id/check-updates", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/repos/check-updates - Check for updates on all repositories
-app.post("/api/repos/check-updates", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos/check-updates", async (req, res) => {
   try {
     console.log("🔍 Checking updates for all managed repositories...");
     
@@ -1134,7 +1128,7 @@ app.post("/api/repos/check-updates", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/build-queue/status - Get build queue status
-app.get("/api/build-queue/status", validateAuthHash, (req, res) => {
+app.get("/api/admin/build-queue/status", (req, res) => {
   try {
     const status = buildQueue.getQueueStatus();
     res.json({ success: true, data: status });
@@ -1144,7 +1138,7 @@ app.get("/api/build-queue/status", validateAuthHash, (req, res) => {
 });
 
 // GET /api/build-queue/history - Get recent build history
-app.get("/api/build-queue/history", validateAuthHash, (req, res) => {
+app.get("/api/admin/build-queue/history", (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
     const history = buildQueue.getRecentJobs(limit);
@@ -1155,7 +1149,7 @@ app.get("/api/build-queue/history", validateAuthHash, (req, res) => {
 });
 
 // DELETE /api/build-queue/:repositoryId - Cancel a queued build
-app.delete("/api/build-queue/:repositoryId", validateAuthHash, (req, res) => {
+app.delete("/api/admin/build-queue/:repositoryId", (req, res) => {
   try {
     const { repositoryId } = req.params;
     const cancelled = buildQueue.cancelQueuedJob(repositoryId);
@@ -1171,7 +1165,7 @@ app.delete("/api/build-queue/:repositoryId", validateAuthHash, (req, res) => {
 });
 
 // GET /api/system/ready - Simple readiness check for UI loading (NO docker commands)
-app.get("/api/system/ready", validateAuthHash, (req, res) => {
+app.get("/api/admin/system/ready", (req, res) => {
   const checks = {
     dockerSock: false,
     storageInitialized: false,
@@ -1233,7 +1227,7 @@ app.get("/api/system/ready", validateAuthHash, (req, res) => {
 });
 
 // GET /api/system/status - Check system status (Docker, CasaOS, etc.)
-app.get("/api/system/status", validateAuthHash, async (req, res) => {
+app.get("/api/admin/system/status", async (req, res) => {
   const status = {
     docker: false,
     casaos: true, // Assume true since we are not calling it anymore
@@ -1268,7 +1262,7 @@ app.get("/api/system/status", validateAuthHash, async (req, res) => {
 
 
 // POST /api/repos/:id/uninstall - Uninstall app from CasaOS
-app.post("/api/repos/:id/uninstall", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos/:id/uninstall", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -1329,7 +1323,7 @@ app.post("/api/repos/:id/uninstall", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/repos/:id/toggle - Start/Stop app in CasaOS
-app.post("/api/repos/:id/toggle", validateAuthHash, async (req, res) => {
+app.post("/api/admin/repos/:id/toggle", async (req, res) => {
   const { id } = req.params;
   const { start } = req.body; // true to start, false to stop
   const repo = getRepository(id);
@@ -1392,7 +1386,7 @@ app.post("/api/repos/:id/toggle", validateAuthHash, async (req, res) => {
 });
 
 // DEBUG: Get detailed app status for troubleshooting
-app.get("/api/repos/:id/debug", validateAuthHash, async (req, res) => {
+app.get("/api/admin/repos/:id/debug", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -1453,7 +1447,7 @@ app.get("/api/repos/:id/debug", validateAuthHash, async (req, res) => {
 });
 
 // Log streaming endpoint for real-time terminal output
-app.get("/api/repos/:id/logs", validateAuthHash, (req, res) => {
+app.get("/api/admin/repos/:id/logs", (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
   
@@ -1511,7 +1505,7 @@ app.get("/api/repos/:id/logs", validateAuthHash, (req, res) => {
 });
 
 // POST /api/terminal/execute - Execute command in interactive terminal
-app.post("/api/terminal/execute", validateAuthHash, async (req, res) => {
+app.post("/api/admin/terminal/execute", async (req, res) => {
   const { command, runAsUser = 'ubuntu', currentDir = '/', envVars = {} } = req.body;
   
   if (!command || typeof command !== 'string') {
@@ -1639,7 +1633,7 @@ app.post("/api/terminal/execute", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/terminal/autocomplete - Provide file/folder autocomplete for terminal
-app.post("/api/terminal/autocomplete", validateAuthHash, async (req, res) => {
+app.post("/api/admin/terminal/autocomplete", async (req, res) => {
   const { path: inputPath, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
   
   // Handle empty path - list current directory
@@ -1846,7 +1840,7 @@ app.post("/api/terminal/autocomplete", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/terminal/rename - Rename a file or directory
-app.post("/api/terminal/rename", validateAuthHash, async (req, res) => {
+app.post("/api/admin/terminal/rename", async (req, res) => {
   const { oldName, newName, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
   
   if (!oldName || !newName || oldName === newName) {
@@ -1914,7 +1908,7 @@ app.post("/api/terminal/rename", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/terminal/delete - Delete files or directories
-app.post("/api/terminal/delete", validateAuthHash, async (req, res) => {
+app.post("/api/admin/terminal/delete", async (req, res) => {
   const { fileNames, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
   
   if (!fileNames || !Array.isArray(fileNames) || fileNames.length === 0) {
@@ -1983,7 +1977,7 @@ app.post("/api/terminal/delete", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/services/:service/logs - Get logs for a specific service
-app.get("/api/services/:service/logs", validateAuthHash, async (req, res) => {
+app.get("/api/admin/services/:service/logs", async (req, res) => {
   const { service } = req.params;
   const { lines = 100 } = req.query;
   
@@ -2047,7 +2041,7 @@ app.get("/api/services/:service/logs", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/services/execute - Execute command in a service container
-app.post("/api/services/execute", validateAuthHash, async (req, res) => {
+app.post("/api/admin/services/execute", async (req, res) => {
   const { service, command } = req.body;
   
   if (!service || !command) {
@@ -2124,7 +2118,7 @@ app.post("/api/services/execute", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/services/status - Get status of all monitored services
-app.get("/api/services/status", validateAuthHash, async (req, res) => {
+app.get("/api/admin/services/status", async (req, res) => {
   console.log(`🔍 Checking status of all services`);
   
   try {
@@ -2169,7 +2163,7 @@ app.get("/api/services/status", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/services/:service/logs/stream - Stream logs in real-time using Server-Sent Events
-app.get("/api/services/:service/logs/stream", validateAuthHash, async (req, res) => {
+app.get("/api/admin/services/:service/logs/stream", async (req, res) => {
   const { service } = req.params;
   const { lines = 10 } = req.query;
   
@@ -2278,7 +2272,7 @@ app.get("/api/services/:service/logs/stream", validateAuthHash, async (req, res)
 });
 
 // POST /api/services/autocomplete - Provide autocomplete for service terminal commands
-app.post("/api/services/autocomplete", validateAuthHash, async (req, res) => {
+app.post("/api/admin/services/autocomplete", async (req, res) => {
   const { service, path: inputPath, currentDir = '/' } = req.body;
   
   if (!service) {
@@ -2346,7 +2340,7 @@ app.post("/api/services/autocomplete", validateAuthHash, async (req, res) => {
 });
 
 // GET /api/docker/:containerName/logs/stream - Stream logs for any Docker container
-app.get("/api/docker/:containerName/logs/stream", validateAuthHash, async (req, res) => {
+app.get("/api/admin/docker/:containerName/logs/stream", async (req, res) => {
   const { containerName } = req.params;
   const { lines = 10 } = req.query;
   
@@ -2442,7 +2436,7 @@ app.get("/api/docker/:containerName/logs/stream", validateAuthHash, async (req, 
 });
 
 // POST /api/docker/execute - Execute command in any Docker container
-app.post("/api/docker/execute", validateAuthHash, async (req, res) => {
+app.post("/api/admin/docker/execute", async (req, res) => {
   const { containerName, command } = req.body;
   
   if (!containerName || !command) {
@@ -2506,7 +2500,7 @@ app.post("/api/docker/execute", validateAuthHash, async (req, res) => {
 });
 
 // POST /api/docker/autocomplete - Provide autocomplete for Docker container terminal
-app.post("/api/docker/autocomplete", validateAuthHash, async (req, res) => {
+app.post("/api/admin/docker/autocomplete", async (req, res) => {
   const { containerName, path: inputPath, currentDir = '/' } = req.body;
   
   if (!containerName) {

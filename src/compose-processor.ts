@@ -1,4 +1,111 @@
 import type { GlobalSettings } from './storage';
+import * as yaml from 'yaml';
+
+// PCS Processing Types and Functions (1:1 with CasaOS AppStore)
+interface PCSEnvironment {
+    PUID: string;
+    PGID: string;
+    DATA_ROOT: string;
+    REF_NET: string;
+    REF_SCHEME: string;
+    REF_PORT: string;
+    REF_DOMAIN: string;
+    REF_SEPARATOR: string;
+}
+
+function getPCSEnvironment(): PCSEnvironment {
+    return {
+        PUID: process.env.PUID || '1000',
+        PGID: process.env.PGID || '1000',
+        DATA_ROOT: process.env.DATA_ROOT || '/DATA',
+        REF_NET: process.env.REF_NET || 'pcs',
+        REF_SCHEME: process.env.REF_SCHEME || 'http',
+        REF_PORT: process.env.REF_PORT || '80',
+        REF_DOMAIN: process.env.REF_DOMAIN || '',
+        REF_SEPARATOR: process.env.REF_SEPARATOR || '-'
+    };
+}
+
+// Critical User Rights Injection Logic (matches CasaOS exactly)
+function shouldAddUserToService(service: any, puid: string, pgid: string): boolean {
+    // CRITICAL: Only inject user if NO user is defined
+    // If user is already defined (including "root"), RESPECT IT
+    const hasUser = service.user !== undefined && service.user !== '';
+
+    if (hasUser) {
+        console.log(`Service ${service.container_name || 'unnamed'} already has user: ${service.user}, skipping injection`);
+        return false;
+    } else {
+        console.log(`Service ${service.container_name || 'unnamed'} has no user defined, will inject PUID:PGID`);
+        return true;
+    }
+}
+
+function processServiceUserRights(service: any, pcsEnv: PCSEnvironment): any {
+    const serviceCopy = { ...service };
+
+    // Apply user rights based on CasaOS logic
+    if (shouldAddUserToService(serviceCopy, pcsEnv.PUID, pcsEnv.PGID)) {
+        serviceCopy.user = `${pcsEnv.PUID}:${pcsEnv.PGID}`;
+        console.log(`Injected user ${serviceCopy.user} to service`);
+    }
+
+    return serviceCopy;
+}
+
+// Volume and Network Processing Functions
+function processVolumes(volumes: any[], dataRoot: string): any[] {
+    if (!volumes || !dataRoot) return volumes;
+
+    return volumes.map(volume => {
+        if (typeof volume === 'string') {
+            // Replace /DATA with actual DATA_ROOT
+            return volume.replace(/^\/DATA/, dataRoot);
+        } else if (volume && typeof volume === 'object') {
+            // Handle object-style volumes
+            if (volume.source && volume.source.startsWith('/DATA')) {
+                volume.source = volume.source.replace(/^\/DATA/, dataRoot);
+            }
+        }
+        return volume;
+    });
+}
+
+function processNetworks(service: any, compose: any, refNet: string, isMainService: boolean): any {
+    const serviceCopy = { ...service };
+
+    // Skip if NetworkMode is set and not bridge
+    if (serviceCopy.network_mode && serviceCopy.network_mode !== 'bridge') {
+        console.log(`Service has network_mode ${serviceCopy.network_mode}, skipping network config`);
+        return serviceCopy;
+    }
+
+    // Only apply refNet to main service
+    if (refNet && isMainService) {
+        // Add network to compose networks
+        if (!compose.networks) {
+            compose.networks = {};
+        }
+        compose.networks[refNet] = {
+            external: true,
+            name: refNet
+        };
+
+        // Add network to service
+        if (!serviceCopy.networks) {
+            serviceCopy.networks = [];
+        }
+        if (Array.isArray(serviceCopy.networks)) {
+            if (!serviceCopy.networks.includes(refNet)) {
+                serviceCopy.networks.push(refNet);
+            }
+        } else {
+            serviceCopy.networks[refNet] = {};
+        }
+    }
+
+    return serviceCopy;
+}
 
 export async function executePreInstallCommand(composeObject: any, logCollector?: any, runAsUser?: string): Promise<void> {
     // Use PUID from environment to match real AppStore behavior, fallback to ubuntu
@@ -130,6 +237,119 @@ exit $SCRIPT_EXIT_CODE
     }
 }
 
+// Helper Functions for PCS Processing
+function hasPUIDInEnv(environment: any): boolean {
+    if (!environment) return false;
+
+    if (Array.isArray(environment)) {
+        return environment.some(env =>
+            typeof env === 'string' && env.toUpperCase().startsWith('PUID=')
+        );
+    } else {
+        return Object.keys(environment).some(key =>
+            key.toUpperCase() === 'PUID'
+        );
+    }
+}
+
+function getMainServiceName(compose: any): string {
+    if (!compose['x-casaos']?.main) {
+        // Default to first service if no main specified
+        return Object.keys(compose.services || {})[0] || '';
+    }
+    return compose['x-casaos'].main;
+}
+
+function updateCasaOSExtensions(compose: any, pcsEnv: PCSEnvironment): any {
+    if (!compose['x-casaos']) {
+        return compose;
+    }
+
+    const casaos = compose['x-casaos'];
+
+    // Update scheme/port/domain in URLs
+    if (casaos.scheme) {
+        casaos.scheme = pcsEnv.REF_SCHEME;
+    }
+
+    if (casaos.port) {
+        casaos.port = pcsEnv.REF_PORT;
+    }
+
+    // Process tips.before_install environment variables
+    if (casaos.tips?.before_install) {
+        for (const [lang, tip] of Object.entries(casaos.tips.before_install)) {
+            if (typeof tip === 'string') {
+                // Expand environment variables
+                casaos.tips.before_install[lang] = (tip as string)
+                    .replace(/\$DATA_ROOT/g, pcsEnv.DATA_ROOT)
+                    .replace(/\$PUID/g, pcsEnv.PUID)
+                    .replace(/\$PGID/g, pcsEnv.PGID);
+            }
+        }
+    }
+
+    return compose;
+}
+
+// Main PCS Processing Function (1:1 with CasaOS AppStore)
+export function applyPCSProcessing(composeContent: string): string {
+    const compose = yaml.parse(composeContent) as any;
+    const pcsEnv = getPCSEnvironment();
+
+    console.log('🔧 Applying PCS processing (1:1 with CasaOS AppStore)...');
+
+    // Determine main service
+    const mainServiceName = getMainServiceName(compose);
+
+    // Process each service
+    if (compose.services) {
+        const processedServices: any = {};
+
+        for (const [serviceName, service] of Object.entries(compose.services)) {
+            let processedService = service as any;
+
+            // 1. Apply user rights (CRITICAL STEP)
+            processedService = processServiceUserRights(processedService, pcsEnv);
+
+            // 2. Process volumes
+            if (processedService.volumes) {
+                processedService.volumes = processVolumes(processedService.volumes, pcsEnv.DATA_ROOT);
+            }
+
+            // 3. Process networks
+            const isMainService = serviceName === mainServiceName;
+            processedService = processNetworks(processedService, compose, pcsEnv.REF_NET, isMainService);
+
+            // 4. Inject environment variables (if not already present)
+            if (!processedService.environment) {
+                processedService.environment = {};
+            }
+
+            // Only inject PUID/PGID if not already present
+            if (!hasPUIDInEnv(processedService.environment)) {
+                if (Array.isArray(processedService.environment)) {
+                    processedService.environment.push(`PUID=${pcsEnv.PUID}`);
+                    processedService.environment.push(`PGID=${pcsEnv.PGID}`);
+                } else {
+                    processedService.environment.PUID = pcsEnv.PUID;
+                    processedService.environment.PGID = pcsEnv.PGID;
+                }
+            }
+
+            processedServices[serviceName] = processedService;
+        }
+
+        compose.services = processedServices;
+    }
+
+    // Process x-casaos extensions
+    updateCasaOSExtensions(compose, pcsEnv);
+
+    console.log('✅ PCS processing complete');
+    return yaml.stringify(compose);
+}
+
 // Keep the rest of the existing functions
 export interface ProcessedCompose {
     rich: any;
@@ -200,8 +420,8 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 // Add hostname
                 service.hostname = appId;
 
-                // Add proper user (PUID:PGID from settings)
-                service.user = `${settings.puid}:${settings.pgid}`;
+                // NOTE: User assignment now handled by PCS processing to respect explicit user settings
+                // PCS will inject PUID:PGID only if no user is defined, respecting explicit users like "root"
 
                 // Add icon as label if available from x-casaos
                 if (richCompose['x-casaos']?.icon) {
@@ -369,9 +589,24 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
     if (cleanCompose['x-casaos'] && cleanCompose['x-casaos']['pre-install-cmd']) {
         delete cleanCompose['x-casaos']['pre-install-cmd'];
     }
-    
+
+    // CRITICAL: Apply PCS processing at the very end (1:1 with CasaOS AppStore)
+    // This ensures PUID:PGID injection happens correctly
+    console.log('🔧 Applying PCS processing to both rich and clean compose versions...');
+
+    const richComposeYaml = yaml.stringify(richCompose);
+    const cleanComposeYaml = yaml.stringify(cleanCompose);
+
+    const pcsProcessedRichYaml = applyPCSProcessing(richComposeYaml);
+    const pcsProcessedCleanYaml = applyPCSProcessing(cleanComposeYaml);
+
+    const finalRichCompose = yaml.parse(pcsProcessedRichYaml);
+    const finalCleanCompose = yaml.parse(pcsProcessedCleanYaml);
+
+    console.log('✅ PCS processing applied to compose files');
+
     return {
-        rich: richCompose,
-        clean: cleanCompose
+        rich: finalRichCompose,
+        clean: finalCleanCompose
     };
 }

@@ -72,44 +72,24 @@ class RepoManager {
         this.activeOperations.delete(operationId);
     }
 
-    // Extract authentication hash from URL parameters
     getAuthHashFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
-        const hash = urlParams.get('hash');
-        if (!hash) {
-            console.warn('⚠️ No authentication hash found in URL parameters');
-        }
-        return hash;
+        return urlParams.get('hash');
     }
 
-    // Get authentication parameters for URLs
-    get authParams() {
-        return this.authHash ? `hash=${this.authHash}` : '';
-    }
-
-    // Handle authentication errors (session expired)
-    handleAuthError() {
-        console.error('🔒 Authentication failed - session likely expired');
-        
-        // Show user-friendly message
-        this.showNotification('Session expired. Redirecting to refresh authentication...', 'error');
-        
-        // Wait a moment then refresh with the hash to re-authenticate
-        setTimeout(() => {
-            if (this.authHash) {
-                window.location.href = `${window.location.pathname}?hash=${this.authHash}`;
-            } else {
-                window.location.href = '/';
-            }
-        }, 2000);
-    }
-
-    // Add authentication hash to request data
+    // Legacy function - kept for backward compatibility but should not be used for new code
     addAuthToRequest(data = {}) {
         if (this.authHash) {
             data.hash = this.authHash;
         }
         return data;
+    }
+
+    // New helper function - adds hash to URL parameters (nginx can see this)
+    addHashToUrl(url) {
+        if (!this.authHash) return url;
+        const separator = url.includes('?') ? '&' : '?';
+        return `${url}${separator}hash=${this.authHash}`;
     }
 
     init() {
@@ -175,7 +155,7 @@ class RepoManager {
 
     async loadRepos() {
         try {
-            const url = this.authHash ? `/api/repos?hash=${this.authHash}` : '/api/repos';
+            const url = this.addHashToUrl('/api/admin/repos');
             const response = await axios.get(url);
             this.repos = response.data.repos || [];
             
@@ -274,7 +254,7 @@ class RepoManager {
 
     async loadGlobalSettings() {
         try {
-            const url = this.authHash ? `/api/settings?hash=${this.authHash}` : '/api/settings';
+            const url = this.addHashToUrl('/api/admin/settings');
             const response = await axios.get(url);
             this.globalSettings = {
                 globalApiUpdatesEnabled: response.data.globalApiUpdatesEnabled !== false,
@@ -679,7 +659,7 @@ class RepoManager {
             this.setCardDisabled(repo.id, true);
             this.showNotification(`Importing ${repo.name}...`, 'info');
             
-            const response = await axios.post(`/api/repos/${repo.id}/import`, this.addAuthToRequest({}));
+            const response = await axios.post(this.addHashToUrl(`/api/admin/repos/${repo.id}/import`), {});
             if (response.data.success) {
                 this.showNotification(`${repo.name} imported successfully! Ready to build.`, 'success');
                 // End the operation before loadRepos to prevent race condition
@@ -702,13 +682,13 @@ class RepoManager {
 
     async createNewRepo(name, url, type) {
         try {
-            const response = await axios.post('/api/repos', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/repos'), {
                 name, url, type,
                 autoUpdate: false,
                 autoUpdateInterval: 60,
                 apiUpdatesEnabled: true,
                 status: 'empty'
-            }));
+            });
             if (response.data.success) return response.data.repo;
             throw new Error(response.data.message);
         } catch (error) {
@@ -740,8 +720,7 @@ class RepoManager {
         this.openTerminalPopup(repo.name, repoId, action);
 
         try {
-            const requestData = this.addAuthToRequest({ runAsUser: selectedUser });
-            await axios.post(`/api/repos/${repoId}/compile`, requestData);
+            await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compile`), { runAsUser: selectedUser });
             console.log(`[${repo.name}] ${action} process initiated via API.`);
             
             // Refresh the UI immediately after successful initiation, then again after a delay
@@ -764,8 +743,7 @@ class RepoManager {
 
     async viewCompose(repoId) {
         try {
-            const url = this.authHash ? `/api/repos/${repoId}/compose?hash=${this.authHash}` : `/api/repos/${repoId}/compose`;
-            const response = await axios.get(url);
+            const response = await axios.get(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`));
             this.currentEditingRepo = repoId;
             document.getElementById('yaml-textarea').value = response.data.yaml || '';
             this.openModal('yaml-modal');
@@ -793,7 +771,7 @@ class RepoManager {
         this.renderReposWithStatePreservation();
         
         try {
-            const response = await axios.post(`/api/repos/${repoId}/toggle`, this.addAuthToRequest({ start: !repo.isRunning }));
+            const response = await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/toggle`), { start: !repo.isRunning });
             if (response.data.success) {
                 this.showNotification(`Application ${action}ed successfully`, 'success');
                 // End operation before loadRepos to prevent race condition
@@ -843,9 +821,8 @@ class RepoManager {
             }
 
             try {
-                const url = this.authHash ? `/api/repos/${repoId}?hash=${this.authHash}` : `/api/repos/${repoId}`;
-                const requestData = this.addAuthToRequest({ preserveData: result.preserveData });
-                const response = await axios.delete(url, { data: requestData });
+                const url = `/api/admin/repos/${repoId}`;
+                const response = await axios.delete(this.addHashToUrl(url), { data: { preserveData: result.preserveData } });
                 // End operation before loadRepos to prevent race condition with successful removal
                 this.endOperation(operationId);
                 await this.loadRepos();
@@ -878,7 +855,7 @@ class RepoManager {
         if (Object.keys(settings).length === 0) return;
 
         try {
-            const response = await axios.put(`/api/repos/${repoId}`, this.addAuthToRequest(settings));
+            const response = await axios.put(this.addHashToUrl(`/api/admin/repos/${repoId}`), settings);
             if (response.data.success) {
                 await this.loadRepos();
             } else {
@@ -921,7 +898,7 @@ class RepoManager {
                 refDomain: document.getElementById('ref-domain').value,
             };
             
-            const response = await axios.put('/api/settings', this.addAuthToRequest(newSettings));
+            const response = await axios.put(this.addHashToUrl('/api/admin/settings'), newSettings);
             if (response.data.success) {
                 this.globalSettings = newSettings;
                 this.updateSettingsUI();
@@ -946,8 +923,8 @@ class RepoManager {
     async checkAllUpdates() {
         try {
             this.showNotification('Checking for updates...', 'info');
-            console.log('🔍 Checking all updates - calling POST /api/repos/check-updates');
-            const response = await axios.post('/api/repos/check-updates', this.addAuthToRequest({}));
+            console.log('🔍 Checking all updates - calling POST /api/admin/repos/check-updates');
+            const response = await axios.post(this.addHashToUrl('/api/admin/repos/check-updates'), {});
             console.log('✅ Check all updates response:', response.data);
             if (response.data.success) {
                 await this.loadRepos();
@@ -968,12 +945,9 @@ class RepoManager {
             if (!repo) return;
             
             this.showNotification(`Checking updates for ${repo.name}...`, 'info');
-            console.log(`🔍 Checking single repo update - calling GET /api/repos/${repoId}/check-updates`);
+            console.log(`🔍 Checking single repo update - calling GET /api/admin/repos/${repoId}/check-updates`);
             
-            // For GET requests, use query parameters for auth
-            const url = this.authHash ? 
-                `/api/repos/${repoId}/check-updates?hash=${this.authHash}` : 
-                `/api/repos/${repoId}/check-updates`;
+            const url = this.addHashToUrl(`/api/admin/repos/${repoId}/check-updates`);
                 
             const response = await axios.get(url);
             console.log('✅ Single repo update response:', response.data);
@@ -1030,7 +1004,7 @@ class RepoManager {
             const yamlContent = document.getElementById('yaml-textarea').value;
             if (this.currentEditingRepo === 'new-compose') {
                 // This is a new compose repo
-                const response = await axios.post('/api/repos/create-from-compose', this.addAuthToRequest({ yaml: yamlContent }));
+                const response = await axios.post(this.addHashToUrl('/api/admin/repos/create-from-compose'), { yaml: yamlContent });
                 if (response.data.success) {
                     this.showNotification(`Application '${response.data.repo.name}' created successfully.`, 'success');
                     await this.loadRepos();
@@ -1039,7 +1013,7 @@ class RepoManager {
                 }
             } else if (this.currentEditingRepo) {
                 // This is an existing repo
-                await axios.put(`/api/repos/${this.currentEditingRepo}/compose`, this.addAuthToRequest({ yaml: yamlContent }));
+                await axios.put(this.addHashToUrl(`/api/admin/repos/${this.currentEditingRepo}/compose`), { yaml: yamlContent });
                 this.showNotification('Docker Compose file saved successfully', 'success');
                 await this.loadRepos();
             }
@@ -1244,7 +1218,7 @@ class RepoManager {
 
         try {
             // Use EventSource for real-time log streaming
-            const eventSource = new EventSource(`/api/repos/${repoId}/logs?hash=${this.authHash}`);
+            const eventSource = new EventSource(this.addHashToUrl(`/api/admin/repos/${repoId}/logs`));
             
             eventSource.onmessage = (event) => {
                 try {
@@ -1297,7 +1271,7 @@ class RepoManager {
 
     async checkForPreInstallCommand(repoId) {
         try {
-            const response = await axios.get(`/api/repos/${repoId}/compose`, this.addAuthToRequest({}));
+            const response = await axios.get(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`));
             const composeContent = response.data.yaml || response.data.content;
             
             // Parse YAML to check for pre-install-cmd
@@ -3393,10 +3367,10 @@ class RepoManager {
         // Check if this is an app or a system service
         if (service.isApp) {
             // For apps, use the Docker container logs endpoint
-            streamUrl = `/api/docker/${service.container}/logs/stream?${this.authParams}&lines=50`;
+            streamUrl = this.addHashToUrl(`/api/admin/docker/${service.container}/logs/stream`) + '&lines=50';
         } else {
             // For system services, use the services endpoint
-            streamUrl = `/api/services/${selectedServiceKey}/logs/stream?${this.authParams}&lines=50`;
+            streamUrl = this.addHashToUrl(`/api/admin/services/${selectedServiceKey}/logs/stream`) + '&lines=50';
         }
         
         console.log(`📡 Starting log stream for ${selectedServiceKey} (${service.name})`);
@@ -3593,10 +3567,10 @@ class RepoManager {
 
         try {
             // Simplify API call - just use services endpoint for better performance
-            const response = await axios.post('/api/services/execute', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/services/execute'), {
                 service: this.serviceLogsState.selectedService,
                 command: command
-            }));
+            });
 
             if (response.data.success) {
                 // Add output to terminal
@@ -3636,7 +3610,7 @@ class RepoManager {
 
     async updateServiceStatus() {
         try {
-            const url = this.authHash ? `/api/services/status?hash=${this.authHash}` : '/api/services/status';
+            const url = this.addHashToUrl('/api/admin/services/status');
             const response = await axios.get(url);
             if (response.data.success) {
                 const services = response.data.services;
@@ -3705,7 +3679,7 @@ class RepoManager {
 
         // Load containers in the background
         try {
-            const response = await fetch(`/api/repos/${repoId}/debug?${this.authParams}`);
+            const response = await fetch(this.addHashToUrl(`/api/admin/repos/${repoId}/debug`));
             
             if (response.status === 401) {
                 this.handleAuthError();
@@ -4452,7 +4426,7 @@ class RepoManager {
 
         console.log(`📡 Starting log stream for container: ${containerName}`);
         
-        const streamUrl = `/api/docker/${containerName}/logs/stream?${this.authParams}&lines=200`;
+        const streamUrl = this.addHashToUrl(`/api/admin/docker/${containerName}/logs/stream`) + '&lines=200';
         
         try {
             const eventSource = new EventSource(streamUrl);
@@ -4583,7 +4557,7 @@ class RepoManager {
         input.value = '';
 
         try {
-            const response = await fetch(`/api/docker/execute?${this.authParams}`, {
+            const response = await fetch(this.addHashToUrl(`/api/admin/docker/execute`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ containerName, command })
@@ -4675,10 +4649,9 @@ class RepoManager {
 
         try {
             // Call uninstall API (reuse existing app management endpoint)
-            const response = await axios.post(`/api/apps/${repoId}/stop`, this.addAuthToRequest({
-                uninstall: true,
+            const response = await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/uninstall`), {
                 preserveData: result.preserveData
-            }));
+            });
 
             if (response.data.success) {
                 this.showNotification(`Application "${repo.name}" uninstalled successfully`, 'success');
@@ -4959,11 +4932,11 @@ class RepoManager {
                 runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
             }
 
-            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/autocomplete'), {
                 path: '',
                 currentDir: this.terminalSession.currentDir,
                 runAsUser: runAsUser
-            }));
+            });
 
             if (response.data.success && response.data.completions) {
                 console.log('Received directory listing:', response.data.completions);
@@ -5250,11 +5223,11 @@ class RepoManager {
                 runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
             }
 
-            const response = await axios.post('/api/terminal/delete', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/delete'), {
                 fileNames: fileNames,
                 currentDir: this.terminalSession.currentDir,
                 runAsUser: runAsUser
-            }));
+            });
 
             // Add to terminal history
             this.addToTerminalHistory(`rm ${fileNames.map(f => `"${f}"`).join(' ')}`, response.data.success ? response.data.message : `❌ ${response.data.message}`);
@@ -5286,12 +5259,12 @@ class RepoManager {
                     runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
                 }
 
-                const response = await axios.post('/api/terminal/rename', this.addAuthToRequest({
+                const response = await axios.post(this.addHashToUrl('/api/admin/terminal/rename'), {
                     oldName: fileName,
                     newName: newName,
                     currentDir: this.terminalSession.currentDir,
                     runAsUser: runAsUser
-                }));
+                });
 
                 // Add to terminal history
                 this.addToTerminalHistory(`mv "${fileName}" "${newName}"`, response.data.success ? response.data.message : `❌ ${response.data.message}`);
@@ -5332,12 +5305,12 @@ class RepoManager {
                     `${this.terminalSession.currentDir}/${dirName}`;
             }
 
-            const response = await axios.post('/api/terminal/execute', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/execute'), {
                 command: `cd "${targetDir}"`,
                 runAsUser: runAsUser,
                 currentDir: this.terminalSession.currentDir,
                 envVars: this.terminalSession.envVars
-            }));
+            });
 
             if (response.data.success && response.data.newDir) {
                 this.terminalSession.currentDir = response.data.newDir;
@@ -5473,11 +5446,11 @@ class RepoManager {
             }
             
             
-            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/autocomplete'), {
                 path: currentWord,
                 currentDir: this.terminalSession.currentDir,
                 runAsUser: runAsUser
-            }));
+            });
             
             
             if (response.data.success && response.data.completions.length > 0) {
@@ -5607,11 +5580,11 @@ class RepoManager {
                 runAsUser = customUserInput ? customUserInput.value.trim() || 'ubuntu' : 'ubuntu';
             }
 
-            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/autocomplete'), {
                 path: '',
                 currentDir: fullPath,
                 runAsUser: runAsUser
-            }));
+            });
 
             if (response.data.success && response.data.completions) {
                 console.log('[DEBUG] PROACTIVE CACHE - Raw response for', fullPath, ':', response.data.completions);
@@ -5680,11 +5653,11 @@ class RepoManager {
                 actualUser = customUserInput.value.trim() || 'user';
             }
             
-            const response = await axios.post('/api/terminal/autocomplete', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/autocomplete'), {
                 path: '',
                 currentDir: directory,
                 runAsUser: actualUser
-            }));
+            });
             
             if (response.data.success) {
                 // Cache the directory listing with a timestamp
@@ -5736,12 +5709,12 @@ class RepoManager {
         output.scrollTop = output.scrollHeight;
 
         try {
-            const response = await axios.post('/api/terminal/execute', this.addAuthToRequest({
+            const response = await axios.post(this.addHashToUrl('/api/admin/terminal/execute'), {
                 command: command,
                 runAsUser: runAsUser,
                 currentDir: this.terminalSession.currentDir,
                 envVars: this.terminalSession.envVars
-            }));
+            });
 
             // Remove executing message
             executingLine.remove();
