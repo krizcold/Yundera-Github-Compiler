@@ -71,8 +71,32 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
     }
   }
 
-  // For GitHub repos, use simple service name. For Compose repos, use original image or service:latest
-  const localTag = isGitHubRepo ? serviceToBuildKey : (serviceToBuild.image || `${serviceToBuildKey}:latest`);
+  // Generate proper image tag for GitHub repos
+  let localTag: string;
+  if (isGitHubRepo) {
+    // Try to get git commit hash for more specific tagging
+    let gitTag = 'latest';
+    try {
+      const gitHash = execSync('git rev-parse --short HEAD', {
+        cwd: repoDir,
+        encoding: 'utf8',
+        stdio: 'pipe',
+        timeout: 5000
+      }).trim();
+      if (gitHash) {
+        gitTag = `git-${gitHash}`;
+        console.log(`📋 [${repo.path}] Using git hash ${gitHash} for image tag`);
+      }
+    } catch (error) {
+      console.log(`📋 [${repo.path}] Could not determine git hash, using 'latest' tag`);
+    }
+
+    // Use format: servicename:git-abc123 or servicename:latest
+    localTag = `${serviceToBuildKey}:${gitTag}`;
+  } else {
+    // For Compose repos, use original image or service:latest
+    localTag = serviceToBuild.image || `${serviceToBuildKey}:latest`;
+  }
   
   console.log(`🐳 [${repo.path}] Building image '${localTag}' from ${repoDir}`);
   
