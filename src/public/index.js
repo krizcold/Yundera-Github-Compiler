@@ -558,10 +558,10 @@ class RepoManager {
                     if (hasUpdates) {
                         return `<button class="btn btn-small btn-primary" title="Update Application" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-download"></i></button>`;
                     } else {
-                        return `<button class="btn btn-small btn-secondary" title="Reinstall Application" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
+                        return `<button class="btn btn-small btn-warning" title="Re-install" onclick="repoManager.reinstallRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
                     }
                 } else {
-                    return `<button class="btn btn-small btn-warning" title="Re-install" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
+                    return `<button class="btn btn-small btn-warning" title="Re-install" onclick="repoManager.reinstallRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
                 }
             case 'error':
                 const retryText = repo.type === 'github' ? 'Retry Build' : 'Retry Install';
@@ -695,6 +695,20 @@ class RepoManager {
             const message = error.response?.data?.message || error.message || 'Unknown error';
             throw new Error(message);
         }
+    }
+
+    async reinstallRepo(repoId) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo) return;
+
+        // Show re-install confirmation popup
+        const confirmed = await this.showReinstallConfirmation(repo);
+        if (!confirmed) {
+            return; // User cancelled
+        }
+
+        // Proceed with the regular build process (no pre-install warning for re-installs)
+        await this.buildRepo(repoId);
     }
 
     async buildRepo(repoId) {
@@ -1375,6 +1389,187 @@ class RepoManager {
         }
     }
 
+    async showReinstallConfirmation(repo) {
+        return new Promise((resolve) => {
+            // Create reinstall confirmation popup
+            const popup = document.createElement('div');
+            popup.id = 'reinstall-confirmation';
+            popup.innerHTML = `
+                <div class="uninstall-backdrop"></div>
+                <div class="uninstall-container">
+                    <div class="uninstall-header">
+                        <div class="uninstall-icon">🔄</div>
+                        <h2>Re-install Application</h2>
+                    </div>
+                    <div class="uninstall-content">
+                        <p><strong>Are you sure you want to re-install "${repo.displayName || repo.name}"?</strong></p>
+
+                        <div class="uninstall-notice">
+                            <p><i class="fas fa-info-circle"></i> This will rebuild and redeploy the application with the latest configuration.</p>
+                        </div>
+
+                        <div class="uninstall-warning">
+                            <p><strong>⚠️ Important Information</strong></p>
+                            <ul>
+                                <li>The application will be temporarily stopped during re-installation</li>
+                                <li>Any unsaved data in the containers will be lost</li>
+                                <li>Persistent data in mounted volumes will be preserved</li>
+                                <li>The process may take several minutes to complete</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="uninstall-actions">
+                        <button class="btn btn-secondary" id="cancel-reinstall">Cancel</button>
+                        <button class="btn btn-warning" id="confirm-reinstall">Re-install Application</button>
+                    </div>
+                </div>
+
+                <style>
+                #reinstall-confirmation {
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    z-index: 10000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    animation: fadeIn 0.15s ease-out;
+                }
+                </style>
+            `;
+
+            // Ensure uninstall styles are available (inject only if not already present)
+            if (!document.getElementById('uninstall-popup-styles')) {
+                const style = document.createElement('style');
+                style.id = 'uninstall-popup-styles';
+                style.textContent = `
+                    .uninstall-backdrop {
+                        position: absolute;
+                        top: 0; left: 0; right: 0; bottom: 0;
+                        background: rgba(0, 0, 0, 0.8);
+                        backdrop-filter: blur(4px);
+                    }
+
+                    .uninstall-container {
+                        position: relative;
+                        width: 90%;
+                        max-width: 500px;
+                        max-height: 80vh;
+                        background: white;
+                        border-radius: 12px;
+                        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                        display: flex;
+                        flex-direction: column;
+                    }
+
+                    .uninstall-header {
+                        background: #dc2626;
+                        color: white;
+                        padding: 20px;
+                        border-radius: 12px 12px 0 0;
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                    }
+
+                    .uninstall-icon {
+                        font-size: 24px;
+                    }
+
+                    .uninstall-header h2 {
+                        margin: 0;
+                        font-size: 20px;
+                        color: white;
+                    }
+
+                    .uninstall-content {
+                        padding: 20px;
+                        overflow-y: auto;
+                        flex: 1;
+                    }
+
+                    .uninstall-notice {
+                        background: #f0f9ff;
+                        border: 1px solid #0ea5e9;
+                        border-radius: 8px;
+                        padding: 12px;
+                        margin: 16px 0;
+                        color: #0c4a6e;
+                    }
+
+                    .uninstall-notice i {
+                        margin-right: 8px;
+                    }
+
+                    .uninstall-warning {
+                        background: #fef2f2;
+                        border: 1px solid #f87171;
+                        border-radius: 8px;
+                        padding: 12px;
+                        margin: 16px 0;
+                        color: #991b1b;
+                    }
+
+                    .uninstall-warning strong {
+                        display: block;
+                        margin-bottom: 8px;
+                    }
+
+                    .uninstall-warning ul {
+                        margin: 8px 0 0 0;
+                        padding-left: 20px;
+                    }
+
+                    .uninstall-warning li {
+                        margin-bottom: 4px;
+                    }
+
+                    .uninstall-actions {
+                        padding: 20px;
+                        border-top: 1px solid #e5e7eb;
+                        display: flex;
+                        gap: 12px;
+                        justify-content: flex-end;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            document.body.appendChild(popup);
+
+            // Handle cancel
+            const cancelBtn = document.getElementById('cancel-reinstall');
+            const confirmBtn = document.getElementById('confirm-reinstall');
+
+            cancelBtn.onclick = () => {
+                document.body.removeChild(popup);
+                resolve(false);
+            };
+
+            // Handle confirmation
+            confirmBtn.onclick = () => {
+                document.body.removeChild(popup);
+                resolve(true);
+            };
+
+            // Handle click on backdrop
+            popup.querySelector('.uninstall-backdrop').addEventListener('click', () => {
+                document.body.removeChild(popup);
+                resolve(false);
+            });
+
+            // Handle escape key
+            const escapeHandler = (e) => {
+                if (e.key === 'Escape') {
+                    document.body.removeChild(popup);
+                    document.removeEventListener('keydown', escapeHandler);
+                    resolve(false);
+                }
+            };
+            document.addEventListener('keydown', escapeHandler);
+        });
+    }
+
     async showPreInstallWarning(repo, preInstallCommand) {
         return new Promise((resolve) => {
             // Create warning popup
@@ -1836,17 +2031,19 @@ class RepoManager {
                 </div>
             `;
 
-            // Add styles
-            const style = document.createElement('style');
-            style.textContent = `
-                #uninstall-confirmation {
-                    position: fixed;
-                    top: 0; left: 0; right: 0; bottom: 0;
-                    z-index: 10000;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                }
+            // Add styles (only if not already present)
+            if (!document.getElementById('uninstall-popup-styles')) {
+                const style = document.createElement('style');
+                style.id = 'uninstall-popup-styles';
+                style.textContent = `
+                    #uninstall-confirmation {
+                        position: fixed;
+                        top: 0; left: 0; right: 0; bottom: 0;
+                        z-index: 10000;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    }
                 
                 .uninstall-backdrop {
                     position: absolute;
@@ -2016,9 +2213,9 @@ class RepoManager {
                     gap: 12px;
                     justify-content: flex-end;
                 }
-            `;
-            
-            document.head.appendChild(style);
+                `;
+                document.head.appendChild(style);
+            }
             document.body.appendChild(popup);
 
             // Handle button clicks
