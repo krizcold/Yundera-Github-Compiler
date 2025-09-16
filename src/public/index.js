@@ -1322,6 +1322,59 @@ class RepoManager {
         }
     }
 
+    async checkForPostInstallCommand(repoId) {
+        try {
+            const response = await axios.get(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`));
+            const composeContent = response.data.yaml || response.data.content;
+
+            // Parse YAML to check for post-install-cmd
+            const lines = composeContent.split('\n');
+            let inXCasaOS = false;
+
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const line = lines[lineIndex];
+                const trimmed = line.trim();
+
+                if (trimmed === 'x-casaos:') {
+                    inXCasaOS = true;
+                } else if (inXCasaOS && trimmed.startsWith('post-install-cmd:')) {
+                    // Extract the command content
+                    let command = trimmed.substring('post-install-cmd:'.length).trim();
+
+                    // Handle multiline commands
+                    if (command === '|') {
+                        // Multiline command, collect following indented lines
+                        const commandLines = [];
+                        for (let i = lineIndex + 1; i < lines.length; i++) {
+                            const nextLine = lines[i];
+                            if (nextLine.trim() === '' || nextLine.startsWith('    ')) {
+                                commandLines.push(nextLine.substring(4)); // Remove indentation
+                            } else {
+                                break;
+                            }
+                        }
+                        command = commandLines.join('\n').trim();
+                    }
+
+                    return command;
+                } else if (inXCasaOS && trimmed && !trimmed.startsWith('#')) {
+                    // Check if this line has the same or less indentation than x-casaos (meaning we've left the section)
+                    const currentIndentation = line.length - line.trimLeft().length;
+                    const xCasaOSIndentation = 0; // x-casaos: is at root level
+
+                    if (currentIndentation <= xCasaOSIndentation && trimmed.endsWith(':') && !line.startsWith(' ')) {
+                        // We've moved to another top-level key, stop looking
+                        inXCasaOS = false;
+                    }
+                }
+            }
+            return null;
+        } catch (error) {
+            console.error('Failed to check for post-install command:', error);
+            return null;
+        }
+    }
+
     async showPreInstallWarning(repo, preInstallCommand) {
         return new Promise((resolve) => {
             // Create warning popup

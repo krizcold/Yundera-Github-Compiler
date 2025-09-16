@@ -2,7 +2,7 @@ import { Repository, updateRepository, loadSettings } from './storage';
 import { cloneOrUpdateRepo } from './GitHandler';
 import { buildImageFromRepo } from './DockerHandler';
 import { isAppInstalledInCasaOS } from './casaos-status';
-import { executePreInstallCommand, preprocessAppstoreCompose } from './compose-processor';
+import { executePreInstallCommand, executePostInstallCommand, preprocessAppstoreCompose } from './compose-processor';
 import { CasaOSInstaller } from './CasaOSInstaller';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -372,7 +372,21 @@ export async function processRepo(
     
     const statusMessage = isRunning ? 'App is running successfully' : 'App installed but not running';
     log(`✅ Installation process completed. ${statusMessage}`, 'success');
-    
+
+    // Execute post-install command if app is running successfully
+    if (isRunning) {
+        log(`🎉 Executing post-install command...`, 'info');
+        try {
+            await executePostInstallCommand(composeObject, logCollector, runAsUser);
+            log(`✅ Post-install command completed`, 'success');
+        } catch (error: any) {
+            log(`⚠️ Post-install command failed: ${error.message}`, 'warning');
+            // Continue with installation process - post-install failures are non-fatal
+        }
+    } else {
+        log(`⏭️ Skipping post-install command - app is not running`, 'info');
+    }
+
     // Trigger immediate sync to update UI
     log(`🔄 Triggering UI sync...`, 'info');
     setTimeout(async () => {

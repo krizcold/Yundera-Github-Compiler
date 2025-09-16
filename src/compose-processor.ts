@@ -107,6 +107,138 @@ function processNetworks(service: any, compose: any, refNet: string, isMainServi
     return serviceCopy;
 }
 
+export async function executePostInstallCommand(composeObject: any, logCollector?: any, runAsUser?: string): Promise<void> {
+    // Use PUID from environment to match real AppStore behavior, fallback to ubuntu
+    const defaultUser = process.env.PUID ? `${process.env.PUID}` : 'ubuntu';
+    const actualRunAsUser = runAsUser || defaultUser;
+    // Helper function to log both to console and stream
+    const log = (message: string, type: 'system' | 'info' | 'warning' | 'error' | 'success' = 'info') => {
+        console.log(message);
+        if (logCollector) {
+            logCollector.addLog(message, type);
+        }
+    };
+
+    const cmd = composeObject?.['x-casaos']?.['post-install-cmd'];
+    if (!cmd || typeof cmd !== 'string') {
+        log('ℹ️ No post-install-cmd found, skipping.', 'info');
+        return;
+    }
+
+    log(`🎉 Executing post-install command on host...`, 'info');
+    log(`📜 Command: ${cmd}`, 'system');
+
+    try {
+        // SIMPLE APPROACH: Execute directly in host context
+        // Since we're running in the GitHub Compiler container, we need to execute
+        // the post-install command in a way that accesses the host filesystem
+
+        const { exec } = await import('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+
+        log(`🔄 Executing post-install command via Docker exec to CasaOS host (user: ${actualRunAsUser})...`, 'info');
+
+        // Execute on host using docker exec to casaos container - same level of access as CasaOS post-install-cmd
+        const crypto = await import('crypto');
+
+        try {
+            // Check if docker command is available and casaos container exists
+            const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+                timeout: 10000,
+                maxBuffer: 1024 * 1024
+            });
+
+            if (dockerTest.stdout.trim() !== 'casaos') {
+                throw new Error(`CasaOS container not found. Available containers: ${dockerTest.stdout}`);
+            }
+
+        } catch (error: any) {
+            log(`❌ Docker access test failed: ${error.message}`, 'error');
+            throw new Error(`Cannot access Docker or CasaOS container: ${error.message}`);
+        }
+
+        // Create temporary script with the command
+        const scriptId = crypto.randomBytes(8).toString('hex');
+        const scriptContent = `#!/bin/bash
+set -e
+
+# Execute the post-install command
+${cmd}
+`;
+
+        const tempScript = `/tmp/yundera-postinstall-${scriptId}.sh`;
+
+        // Encode script content to base64 to avoid heredoc conflicts
+        const scriptBase64 = Buffer.from(scriptContent).toString('base64');
+
+        // Execute via docker exec to casaos container with selected user - this gives us the same access as CasaOS post-install-cmd
+        const dockerCommand = `docker exec --user ${actualRunAsUser} casaos bash -c '
+# Set permissive umask for all files created during this session
+umask 022
+
+# Create script with proper permissions
+echo "${scriptBase64}" | base64 -d > ${tempScript}
+
+# Verify script was created and set proper permissions
+if [ ! -f "${tempScript}" ]; then
+  echo "ERROR: Failed to create script file ${tempScript}"
+  exit 1
+fi
+
+# Set script permissions: readable/executable by all, writable by owner
+chmod 755 ${tempScript}
+
+# Verify permissions
+if [ ! -x "${tempScript}" ]; then
+  echo "ERROR: Script ${tempScript} is not executable"
+  ls -la ${tempScript}
+  exit 1
+fi
+
+# Execute the script
+echo "Executing post-install script: ${tempScript}"
+bash ${tempScript}
+SCRIPT_EXIT_CODE=$?
+
+# Exit with the same code as the script
+exit $SCRIPT_EXIT_CODE
+'`;
+
+        const result = await execAsync(dockerCommand, {
+            timeout: 300000, // 5 minute timeout
+            maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+            shell: '/bin/sh'
+        });
+
+        if (result.stdout) {
+            const lines = result.stdout.trim().split('\n');
+            lines.forEach((line: string) => {
+                if (line.trim()) {
+                    log(`📤 ${line}`, 'info');
+                }
+            });
+        }
+
+        if (result.stderr) {
+            const lines = result.stderr.trim().split('\n');
+            lines.forEach((line: string) => {
+                if (line.trim()) {
+                    log(`⚠️ ${line}`, 'warning');
+                }
+            });
+        }
+
+        log('✅ Post-install command executed successfully.', 'success');
+
+    } catch (error: any) {
+        log(`❌ Post-install command execution failed: ${error.message}`, 'error');
+        // NOTE: Post-install command failures should be warnings, not installation failures
+        log(`⚠️ Post-install command failed, but installation will continue`, 'warning');
+        // Don't throw error - just log the failure
+    }
+}
+
 export async function executePreInstallCommand(composeObject: any, logCollector?: any, runAsUser?: string): Promise<void> {
     // Use PUID from environment to match real AppStore behavior, fallback to ubuntu
     const defaultUser = process.env.PUID ? `${process.env.PUID}` : 'ubuntu';
@@ -611,9 +743,12 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
     // Create clean version by removing pre-install-cmd and other CasaOS-specific stuff
     const cleanCompose = JSON.parse(JSON.stringify(richCompose));
     
-    // Remove pre-install-cmd from clean version
+    // Remove pre-install-cmd and post-install-cmd from clean version
     if (cleanCompose['x-casaos'] && cleanCompose['x-casaos']['pre-install-cmd']) {
         delete cleanCompose['x-casaos']['pre-install-cmd'];
+    }
+    if (cleanCompose['x-casaos'] && cleanCompose['x-casaos']['post-install-cmd']) {
+        delete cleanCompose['x-casaos']['post-install-cmd'];
     }
 
     // CRITICAL: Apply PCS processing at the very end (1:1 with CasaOS AppStore)
