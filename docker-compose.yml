@@ -37,7 +37,6 @@ services:
     environment:
       # Application settings
       WEBUI_PORT: "3000"
-      DISABLE_AUTH: "true"
       
       # CasaOS integration
       DEPLOYMENT_MODE: "appstore"

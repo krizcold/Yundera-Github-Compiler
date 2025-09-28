@@ -28,6 +28,8 @@ export interface Repository {
   icon?: string; // icon URL extracted from docker-compose.yml
   lastUpdated?: string; // for backward compatibility
   hasCompose?: boolean; // for backward compatibility
+  rawDockerCompose?: string; // Original docker-compose.yml from repo (for comparison)
+  modifiedDockerCompose?: string; // User-modified docker-compose.yml
 }
 
 export interface GlobalSettings {

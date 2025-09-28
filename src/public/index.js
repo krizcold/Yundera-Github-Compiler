@@ -22,6 +22,8 @@ class RepoManager {
             url: ''
         };
         this.activeOperations = new Set();
+        // Protection mechanism for button state restoration
+        this.protectedRepos = new Map(); // repoId -> timestamp when protection expires
         this.init();
     }
 
@@ -70,6 +72,26 @@ class RepoManager {
 
     endOperation(operationId) {
         this.activeOperations.delete(operationId);
+    }
+
+    // Protect repository from automatic UI overwrites for a short period
+    protectRepoFromRefresh(repoId, durationMs = 5000) {
+        const expirationTime = Date.now() + durationMs;
+        this.protectedRepos.set(repoId, expirationTime);
+        console.log(`🛡️ Protected repo ${repoId} from refresh for ${durationMs}ms`);
+    }
+
+    // Check if repository is currently protected from refresh
+    isRepoProtected(repoId) {
+        const expirationTime = this.protectedRepos.get(repoId);
+        if (!expirationTime) return false;
+
+        if (Date.now() > expirationTime) {
+            // Protection expired, remove it
+            this.protectedRepos.delete(repoId);
+            return false;
+        }
+        return true;
     }
 
     getAuthHashFromUrl() {
@@ -322,8 +344,15 @@ class RepoManager {
 
         const updateStatus = this.getUpdateStatus(repo);
         const updateStatusHTML = updateStatus.status !== 'none' ? `
-            <div class="update-status update-status-${updateStatus.status}" title="${updateStatus.version}" ${updateStatus.status === 'unknown' ? `onclick="repoManager.checkSingleRepoUpdate('${repoId}')"` : ''}>
-                ${updateStatus.display}
+            <div class="update-status-container">
+                <div class="update-status update-status-${updateStatus.status}" title="${updateStatus.version}" ${updateStatus.status === 'unknown' ? `onclick="repoManager.checkSingleRepoUpdate('${repoId}')"` : ''}>
+                    ${updateStatus.display}
+                </div>
+                ${(updateStatus.status === 'unknown' || updateStatus.showRefreshButton) ? `
+                    <button class="update-refresh-btn" title="Check for updates" onclick="repoManager.checkSingleRepoUpdate('${repoId}')">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                ` : ''}
             </div>
         ` : '';
 
@@ -444,22 +473,24 @@ class RepoManager {
         }
 
         const isUpToDate = repo.currentVersion === repo.latestVersion;
-        const lastChecked = repo.lastUpdateCheck ? new Date(repo.lastUpdateCheck).toLocaleTimeString('en-US', { 
-            hour: '2-digit', minute: '2-digit', hour12: false 
+        const lastChecked = repo.lastUpdateCheck ? new Date(repo.lastUpdateCheck).toLocaleTimeString('en-US', {
+            hour: '2-digit', minute: '2-digit', hour12: false
         }) : '';
 
         if (isUpToDate) {
-            return { 
-                status: 'uptodate', 
-                display: '✅ Up to date', 
-                version: `${repo.currentVersion} • ${lastChecked}`
+            return {
+                status: 'uptodate',
+                display: '✅ Up to date',
+                version: `${repo.currentVersion} • ${lastChecked}`,
+                showRefreshButton: true // Allow re-checking even when up to date
             };
         } else {
             const behindText = repo.commitsBehind > 0 ? ` (${repo.commitsBehind} commits behind)` : '';
-            return { 
-                status: 'available', 
-                display: '🔄 Update available', 
-                version: `${repo.currentVersion} → ${repo.latestVersion}${behindText} • ${lastChecked}`
+            return {
+                status: 'available',
+                display: '🔄 Update available',
+                version: `${repo.currentVersion} → ${repo.latestVersion}${behindText} • ${lastChecked}`,
+                showRefreshButton: true // Allow re-checking when updates available
             };
         }
     }
@@ -715,20 +746,59 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
-        // Check if this repo has pre-install commands and show warning (only for first installation)
-        const hasPreInstall = await this.checkForPreInstallCommand(repoId);
-        let selectedUser = 'ubuntu'; // Default user
-        if (hasPreInstall && !repo.isInstalled) {
-            // Only show warning for first installation, not updates
-            const warningResult = await this.showPreInstallWarning(repo, hasPreInstall);
-            if (!warningResult || !warningResult.proceed) {
-                return; // User cancelled
-            }
-            selectedUser = warningResult.runAsUser;
-        }
-
+        // IMMEDIATELY disable the button to prevent double-clicks
         const action = repo.type === 'github' ? 'building' : 'installing';
         this.updateRepoStatus(repoId, action); // This will re-render and disable the button
+
+        let selectedUser = 'ubuntu'; // Default user - declare outside try block
+
+        try {
+            // For GitHub repos that are already installed, show update analysis popup
+            let updateResult = null;
+            if (repo.type === 'github' && repo.isInstalled) {
+                updateResult = await this.showUpdateAvailablePopup(repo);
+                if (!updateResult || !updateResult.proceed) {
+                    // User cancelled - restore button state
+                    this.updateRepoStatus(repoId, repo.status || 'ready');
+                    return;
+                }
+
+                // Apply environment variable transfer if requested and compose was changed
+                if (updateResult.transferEnvs && updateResult.newCompose && updateResult.oldCompose) {
+                    try {
+                        console.log('🔄 Applying environment variable transfer before build...');
+                        const transferredCompose = this.transferEnvironmentVariables(updateResult.oldCompose, updateResult.newCompose);
+
+                        // Update the stored compose with the transferred version
+                        await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`), {
+                            yaml: transferredCompose
+                        });
+                        console.log('✅ Environment variables transferred successfully');
+                    } catch (error) {
+                        console.error('❌ Failed to transfer environment variables:', error);
+                        this.showNotification('Warning: Failed to transfer environment variables, proceeding with original compose', 'warning');
+                    }
+                }
+            }
+
+            // Check if this repo has pre-install commands and show warning (only for first installation)
+            const hasPreInstall = await this.checkForPreInstallCommand(repoId);
+            if (hasPreInstall && !repo.isInstalled) {
+                // Only show warning for first installation, not updates
+                const warningResult = await this.showPreInstallWarning(repo, hasPreInstall);
+                if (!warningResult || !warningResult.proceed) {
+                    // User cancelled - restore button state
+                    this.updateRepoStatus(repoId, repo.status || 'ready');
+                    return;
+                }
+                selectedUser = warningResult.runAsUser;
+            }
+        } catch (error) {
+            // On any error during dialogs, restore button state
+            console.error('Error during build repo dialogs:', error);
+            this.updateRepoStatus(repoId, repo.status || 'ready');
+            return;
+        }
         
         // Open terminal log popup
         this.openTerminalPopup(repo.name, repoId, action);
@@ -736,7 +806,7 @@ class RepoManager {
         try {
             await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compile`), { runAsUser: selectedUser });
             console.log(`[${repo.name}] ${action} process initiated via API.`);
-            
+
             // Refresh the UI immediately after successful initiation, then again after a delay
             setTimeout(() => this.loadRepos(), 1000);
             setTimeout(() => this.loadRepos(), 3000);
@@ -754,6 +824,7 @@ class RepoManager {
             this.renderReposWithStatePreservation();
         }
     }
+
 
     async viewCompose(repoId) {
         try {
@@ -987,6 +1058,12 @@ class RepoManager {
     updateRepoStatus(repoId, status) {
         const repo = this.repos.find(r => r.id === repoId);
         if (repo) {
+            // Check if this repo is protected from automatic updates
+            if (this.isRepoProtected(repoId)) {
+                console.log(`🛡️ Skipping status update for protected repo ${repoId} (${status})`);
+                return;
+            }
+
             repo.status = status;
             this.renderReposWithStatePreservation();
         }
@@ -1389,6 +1466,1279 @@ class RepoManager {
         }
     }
 
+    async showDockerComposeChangePopup(composeChangeInfo, repo) {
+        return new Promise((resolve) => {
+            // Load JSDiff library if not already loaded
+            this.loadJSDiffLibrary().then(() => {
+                const popup = document.createElement('div');
+                popup.id = 'docker-compose-change-popup';
+
+                // Generate highlighted diff content
+                const currentCompose = composeChangeInfo.modifiedCompose || composeChangeInfo.oldCompose;
+                const newCompose = composeChangeInfo.newCompose;
+
+                // Start with original highlighting (no environment transfer applied)
+                const currentHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'old');
+                // IMPORTANT: Use original escaped text to preserve YAML formatting
+                const newHighlighted = this.escapeHtml(newCompose);
+
+                popup.innerHTML = `
+                    <div class="uninstall-backdrop"></div>
+                    <div class="compose-change-container">
+                        <div class="compose-change-header">
+                            <div class="compose-change-icon">🔄</div>
+                            <h2>Docker Compose Changes Detected</h2>
+                        </div>
+                        <div class="compose-change-content">
+                            <p><strong>The docker-compose.yml file has changed since the last update for "${repo.displayName || repo.name}".</strong></p>
+                            <p>You must review and approve these changes before proceeding with the update.</p>
+
+                            <div class="compose-change-options">
+                                <label class="compose-option">
+                                    <input type="checkbox" id="update-compose" checked>
+                                    <span class="option-text">
+                                        <strong>Update Docker Compose</strong><br>
+                                        <small>Replace the current configuration with the new one from the repository.</small>
+                                    </span>
+                                </label>
+
+                                <label class="compose-option" id="transfer-env-option">
+                                    <input type="checkbox" id="transfer-envs" checked>
+                                    <span class="option-text">
+                                        <strong>Transfer Environment Variables</strong><br>
+                                        <small>Copy your custom environment variable values to the new configuration.</small>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <div class="compose-diff-container">
+                                <div class="diff-section">
+                                    <h4>Current (Modified) Configuration</h4>
+                                    <div class="compose-content" id="current-compose">
+                                        <pre>${currentHighlighted}</pre>
+                                    </div>
+                                </div>
+                                <div class="diff-section">
+                                    <h4>New Repository Configuration</h4>
+                                    <div class="compose-content" id="new-compose">
+                                        <pre>${newHighlighted}</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="compose-change-actions">
+                            <button class="btn btn-secondary" id="cancel-compose-change">Cancel</button>
+                            <button class="btn btn-primary" id="apply-compose-changes">Apply Changes</button>
+                        </div>
+                    </div>
+
+                <style>
+                #docker-compose-change-popup {
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    z-index: 10001;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    animation: fadeIn 0.15s ease-out;
+                }
+
+                .compose-change-container {
+                    position: relative;
+                    width: 95%;
+                    max-width: 800px;
+                    max-height: 90vh;
+                    background: white;
+                    border-radius: 12px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
+
+                .compose-change-header {
+                    background: #2563eb;
+                    color: white;
+                    padding: 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+                .compose-change-icon {
+                    font-size: 24px;
+                }
+
+                .compose-change-header h2 {
+                    margin: 0;
+                    font-size: 20px;
+                    color: white;
+                }
+
+                .compose-change-content {
+                    padding: 20px;
+                    overflow-y: auto;
+                    flex: 1;
+                }
+
+                .compose-change-options {
+                    margin: 20px 0;
+                    padding: 16px;
+                    background: #f8fafc;
+                    border-radius: 8px;
+                }
+
+                .compose-option {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    margin-bottom: 16px;
+                    cursor: pointer;
+                    padding: 12px;
+                    border-radius: 8px;
+                    transition: background-color 0.2s;
+                }
+
+                .compose-option:hover {
+                    background: #e2e8f0;
+                }
+
+                .compose-option:last-child {
+                    margin-bottom: 0;
+                }
+
+                .compose-option input[type="checkbox"] {
+                    width: 18px;
+                    height: 18px;
+                    margin-top: 2px;
+                }
+
+                .compose-option.disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                }
+
+                .compose-option.disabled input {
+                    cursor: not-allowed;
+                }
+
+                .option-text strong {
+                    font-weight: 600;
+                    color: #1f2937;
+                }
+
+                .option-text small {
+                    color: #6b7280;
+                    line-height: 1.4;
+                }
+
+                .compose-diff-container {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 20px;
+                    margin-top: 20px;
+                }
+
+                .diff-section h4 {
+                    margin: 0 0 12px 0;
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: #374151;
+                }
+
+                .compose-content {
+                    border: 1px solid #d1d5db;
+                    border-radius: 8px;
+                    background: #f9fafb;
+                    max-height: 400px;
+                    overflow: auto;
+                    word-break: break-all;
+                    width: 100%;
+                    box-sizing: border-box;
+                }
+
+                .compose-content pre {
+                    margin: 0;
+                    padding: 16px;
+                    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                    font-size: 12px;
+                    line-height: 1.5;
+                    white-space: pre-wrap;
+                    word-break: break-all;
+                    overflow-x: hidden;
+                }
+
+                .compose-change-actions {
+                    padding: 20px;
+                    border-top: 1px solid #e5e7eb;
+                    display: flex;
+                    gap: 12px;
+                    justify-content: flex-end;
+                }
+
+                @media (max-width: 768px) {
+                    .compose-diff-container {
+                        grid-template-columns: 1fr;
+                        gap: 16px;
+                    }
+                }
+
+                /* Diff highlighting styles */
+                .diff-added {
+                    background-color: #d4f6d4;
+                    color: #155724;
+                    padding: 1px 2px;
+                    border-radius: 2px;
+                }
+
+                .diff-removed {
+                    background-color: #fdd;
+                    color: #721c24;
+                    padding: 1px 2px;
+                    border-radius: 2px;
+                }
+
+                .diff-env-transfer {
+                    background-color: #fff3cd;
+                    color: #856404;
+                    border: 1px solid #ffc107;
+                    padding: 1px 2px;
+                    border-radius: 2px;
+                }
+                </style>
+            `;
+
+            document.body.appendChild(popup);
+
+            // Handle checkbox interactions
+            const updateComposeCheckbox = document.getElementById('update-compose');
+            const transferEnvsCheckbox = document.getElementById('transfer-envs');
+            const transferEnvOption = document.getElementById('transfer-env-option');
+
+            updateComposeCheckbox.addEventListener('change', () => {
+                if (updateComposeCheckbox.checked) {
+                    transferEnvOption.classList.remove('disabled');
+                    transferEnvsCheckbox.disabled = false;
+                } else {
+                    transferEnvOption.classList.add('disabled');
+                    transferEnvsCheckbox.disabled = true;
+                    transferEnvsCheckbox.checked = false;
+                }
+                // Update highlighting when checkbox state changes
+                this.updateDiffHighlighting(currentCompose, newCompose, transferEnvsCheckbox.checked, updateComposeCheckbox.checked);
+            });
+
+            // Add environment variable transfer highlighting toggle
+            transferEnvsCheckbox.addEventListener('change', () => {
+                this.updateDiffHighlighting(currentCompose, newCompose, transferEnvsCheckbox.checked, updateComposeCheckbox.checked);
+            });
+
+            // Apply initial highlighting with default checkbox state (after DOM is ready)
+            setTimeout(() => {
+                this.updateDiffHighlighting(currentCompose, newCompose, transferEnvsCheckbox.checked, updateComposeCheckbox.checked);
+            }, 0);
+
+            // Handle buttons
+            const cancelBtn = document.getElementById('cancel-compose-change');
+            const applyBtn = document.getElementById('apply-compose-changes');
+
+            cancelBtn.onclick = () => {
+                // Protect repo from automatic refresh overwrites
+                if (repo && repo.id) {
+                    const repoManager = window.repoManager || this;
+                    if (repoManager && repoManager.protectRepoFromRefresh) {
+                        repoManager.protectRepoFromRefresh(repo.id, 5000); // 5 seconds protection
+                    }
+                }
+
+                // Restore button state when user cancels - use multiple approaches
+                try {
+                    // Method 1: Direct DOM manipulation to find and restore the update button
+                    const updateButtons = document.querySelectorAll(`[onclick*="repoManager.buildRepo('${repo.id}')"]`);
+                    updateButtons.forEach(button => {
+                        button.disabled = false;
+                        // Set correct icon based on whether updates are available
+                        const hasUpdates = repo.hasUpdates || button.getAttribute('title')?.includes('Update');
+                        button.innerHTML = hasUpdates ? '<i class="fas fa-download"></i>' : '<i class="fas fa-sync-alt"></i>';
+                    });
+
+                    // Method 2: Try the repo manager approach as fallback
+                    if (repo && repo.id) {
+                        const repoManager = window.repoManager || this;
+                        if (repoManager && repoManager.updateRepoStatus) {
+                            repoManager.updateRepoStatus(repo.id, 'ready');
+                        }
+                    }
+
+                    // Method 3: Final fallback - reload repo list to reset all states
+                    if (window.repoManager && window.repoManager.loadRepos) {
+                        setTimeout(() => window.repoManager.loadRepos(), 100);
+                    }
+                } catch (error) {
+                    console.warn('Error restoring button state:', error);
+                }
+
+                document.body.removeChild(popup);
+                resolve({ proceed: false });
+            };
+
+            applyBtn.onclick = () => {
+                const updateCompose = updateComposeCheckbox.checked;
+                const transferEnvs = transferEnvsCheckbox.checked;
+
+                document.body.removeChild(popup);
+                resolve({
+                    proceed: true,
+                    updateCompose,
+                    transferEnvs,
+                    oldCompose: composeChangeInfo.oldCompose,
+                    newCompose: composeChangeInfo.newCompose,
+                    modifiedCompose: composeChangeInfo.modifiedCompose
+                });
+            };
+
+            // Handle backdrop click
+            popup.querySelector('.uninstall-backdrop').addEventListener('click', () => {
+                // Protect repo from automatic refresh overwrites
+                if (repo && repo.id) {
+                    const repoManager = window.repoManager || this;
+                    if (repoManager && repoManager.protectRepoFromRefresh) {
+                        repoManager.protectRepoFromRefresh(repo.id, 5000); // 5 seconds protection
+                    }
+                }
+
+                // Restore button state when user cancels via backdrop - use multiple approaches
+                try {
+                    // Method 1: Direct DOM manipulation
+                    const updateButtons = document.querySelectorAll(`[onclick*="repoManager.buildRepo('${repo.id}')"]`);
+                    updateButtons.forEach(button => {
+                        button.disabled = false;
+                        // Set correct icon based on whether updates are available
+                        const hasUpdates = repo.hasUpdates || button.getAttribute('title')?.includes('Update');
+                        button.innerHTML = hasUpdates ? '<i class="fas fa-download"></i>' : '<i class="fas fa-sync-alt"></i>';
+                    });
+
+                    // Method 2: Try the repo manager approach as fallback
+                    if (repo && repo.id) {
+                        const repoManager = window.repoManager || this;
+                        if (repoManager && repoManager.updateRepoStatus) {
+                            repoManager.updateRepoStatus(repo.id, 'ready');
+                        }
+                    }
+
+                    // Method 3: Final fallback - reload repo list to reset all states
+                    if (window.repoManager && window.repoManager.loadRepos) {
+                        setTimeout(() => window.repoManager.loadRepos(), 100);
+                    }
+                } catch (error) {
+                    console.warn('Error restoring button state:', error);
+                }
+
+                document.body.removeChild(popup);
+                resolve({ proceed: false });
+            });
+
+            // Handle escape key
+            const escapeHandler = (e) => {
+                if (e.key === 'Escape') {
+                    // Restore button state when user cancels via escape
+                    if (repo && repo.id) {
+                        const repoManager = window.repoManager || this;
+                        if (repoManager && repoManager.updateRepoStatus) {
+                            repoManager.updateRepoStatus(repo.id, 'ready');
+                        }
+                    }
+                    document.body.removeChild(popup);
+                    document.removeEventListener('keydown', escapeHandler);
+                    resolve({ proceed: false });
+                }
+            };
+            document.addEventListener('keydown', escapeHandler);
+            }); // Close the then callback
+        });
+    }
+
+    // Helper function to load JSDiff library
+    async loadJSDiffLibrary() {
+        return new Promise((resolve, reject) => {
+            // Check if JSDiff is already loaded
+            if (window.Diff) {
+                resolve();
+                return;
+            }
+
+            // Create script element to load JSDiff from CDN
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js';
+            script.crossOrigin = 'anonymous';
+            script.onload = () => {
+                console.log('✅ JSDiff library loaded successfully');
+                resolve();
+            };
+            script.onerror = () => {
+                console.warn('⚠️ Failed to load JSDiff library, falling back to plain text');
+                // Fallback: create a minimal Diff object for graceful degradation
+                window.Diff = {
+                    diffWords: (oldText, newText) => [{ value: newText }]
+                };
+                resolve();
+            };
+            document.head.appendChild(script);
+        });
+    }
+
+    // Helper function to generate diff highlighting with optional environment transfer awareness
+    generateDiffHighlight(oldText, newText, side, envTransfers = null) {
+        try {
+            if (!window.Diff) {
+                // Fallback if JSDiff is not available
+                return this.escapeHtml(side === 'old' ? oldText : newText);
+            }
+
+            // Pre-identify environment variable ranges for smart detection
+            const envRanges = this.identifyEnvironmentVariableRanges(side === 'old' ? oldText : newText, envTransfers);
+
+            // Always use word-based diffing for granular highlighting
+            const diff = window.Diff.diffWords(oldText, newText);
+            let html = '';
+            let currentPosition = 0;
+
+            for (const part of diff) {
+                const escaped = this.escapeHtml(part.value);
+
+                // Check if this part falls within an environment variable range
+                const partStart = currentPosition;
+                const partEnd = currentPosition + part.value.length;
+                const isInEnvRange = envRanges.some(range =>
+                    (partStart >= range.start && partStart < range.end) ||
+                    (partEnd > range.start && partEnd <= range.end) ||
+                    (partStart <= range.start && partEnd >= range.end)
+                );
+
+                if (side === 'old') {
+                    // For old side: highlight removed parts
+                    if (part.removed) {
+                        if (isInEnvRange) {
+                            html += `<span class="diff-env-transfer">${escaped}</span>`;
+                        } else {
+                            html += `<span class="diff-removed">${escaped}</span>`;
+                        }
+                    } else if (!part.added) {
+                        html += escaped;
+                    }
+                    // Skip added parts on old side
+                } else {
+                    // For new side: highlight added parts
+                    if (part.added) {
+                        if (isInEnvRange) {
+                            html += `<span class="diff-env-transfer">${escaped}</span>`;
+                        } else {
+                            html += `<span class="diff-added">${escaped}</span>`;
+                        }
+                    } else if (!part.removed) {
+                        html += escaped;
+                    }
+                    // Skip removed parts on new side
+                }
+
+                // Update position for next iteration
+                if ((side === 'old' && !part.added) || (side === 'new' && !part.removed)) {
+                    currentPosition = partEnd;
+                }
+            }
+
+            return html;
+        } catch (error) {
+            console.warn('Error generating diff highlight:', error);
+            return this.escapeHtml(side === 'old' ? oldText : newText);
+        }
+    }
+
+    // Helper function to identify environment variable ranges in text
+    identifyEnvironmentVariableRanges(text, envTransfers) {
+        if (!envTransfers || envTransfers.size === 0) {
+            return [];
+        }
+
+        const ranges = [];
+        const lines = text.split('\n');
+        let currentPosition = 0;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lineStart = currentPosition;
+            const lineEnd = currentPosition + line.length;
+
+            // Check if this line contains an environment variable that will be transferred
+            for (const [serviceName, envMap] of envTransfers) {
+                for (const [envKey, transferredValue] of envMap) {
+                    const envPatternArray = new RegExp(`-\\s*${this.escapeRegex(envKey)}\\s*=`);
+                    const envPatternObject = new RegExp(`^\\s*${this.escapeRegex(envKey)}\\s*:`);
+
+                    if (envPatternArray.test(line) || envPatternObject.test(line)) {
+                        ranges.push({
+                            start: lineStart,
+                            end: lineEnd,
+                            envKey: envKey
+                        });
+                        break; // Found match for this line, move to next line
+                    }
+                }
+            }
+
+            // Move to next line (including newline character)
+            currentPosition = lineEnd + 1;
+        }
+
+        console.log('🔍 ENV RANGES: Identified ranges:', ranges);
+        return ranges;
+    }
+
+    // Helper function to check if a diff part represents an environment variable transfer
+    isEnvironmentTransfer(diffValue, envTransfers) {
+        if (!envTransfers || envTransfers.size === 0) {
+            console.log('🔍 ENV TRANSFER: No envTransfers provided');
+            return false;
+        }
+
+        console.log('🔍 ENV TRANSFER: Checking diffValue:', diffValue.slice(0, 200));
+        console.log('🔍 ENV TRANSFER: Available envTransfers:', envTransfers);
+
+        // Check if this diff value contains an environment variable that will be transferred
+        for (const [serviceName, envMap] of envTransfers) {
+            for (const [envKey, transferredValue] of envMap) {
+                // Create more flexible regex patterns for line-based diffs
+                const envPatternArray = new RegExp(`-\\s*${this.escapeRegex(envKey)}\\s*=`, 'm');
+                const envPatternObject = new RegExp(`^\\s*${this.escapeRegex(envKey)}\\s*:`, 'm');
+
+                console.log(`🔍 ENV TRANSFER: Checking ${envKey} with patterns:`, envPatternArray, envPatternObject);
+
+                // Check if the diff value contains this environment variable key
+                if (envPatternArray.test(diffValue) || envPatternObject.test(diffValue)) {
+                    console.log(`✅ ENV TRANSFER: Found match for ${envKey}!`);
+                    return true;
+                }
+            }
+        }
+
+        console.log('❌ ENV TRANSFER: No matches found');
+        return false;
+    }
+
+    // Helper function to escape HTML characters
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Helper function to normalize environment variables to object format
+    normalizeEnvironment(env) {
+        if (!env) return {};
+
+        if (Array.isArray(env)) {
+            const result = {};
+            env.forEach(item => {
+                if (typeof item === 'string') {
+                    const [key, ...valueParts] = item.split('=');
+                    if (key) {
+                        result[key] = valueParts.join('=') || '';
+                    }
+                }
+            });
+            return result;
+        }
+
+        if (typeof env === 'object' && env !== null) {
+            return { ...env }; // Return a copy to avoid mutations
+        }
+
+        return {};
+    }
+
+    // Helper function to update diff highlighting - NEVER calls transferEnvironmentVariables for display
+    updateDiffHighlighting(currentCompose, newCompose, showEnvTransfer, updateComposeEnabled = true) {
+        try {
+            if (!updateComposeEnabled) {
+                // When "Update Docker Compose" is disabled, both panels show the same content (current compose)
+                const currentHighlighted = this.escapeHtml(currentCompose);
+                document.getElementById('current-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
+                document.getElementById('new-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
+            } else if (showEnvTransfer) {
+                // Show environment variable preview without reformatting YAML
+                const newHighlighted = this.showEnvironmentPreview(currentCompose, newCompose);
+                document.getElementById('new-compose').innerHTML = `<pre>${newHighlighted}</pre>`;
+
+                // Show current compose with basic diff highlighting
+                const currentHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'old');
+                document.getElementById('current-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
+            } else {
+                // Show original files with regular diff highlighting (NO transfer applied)
+                // IMPORTANT: Use original newCompose text to preserve formatting
+                const newHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'new');
+                document.getElementById('new-compose').innerHTML = `<pre>${newHighlighted}</pre>`;
+
+                // Update current compose highlighting (comparing original versions)
+                const currentHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'old');
+                document.getElementById('current-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
+            }
+        } catch (error) {
+            console.warn('Error updating diff highlighting:', error);
+            // Fallback: show escaped original text without highlighting
+            document.getElementById('new-compose').innerHTML = `<pre>${this.escapeHtml(newCompose)}</pre>`;
+            document.getElementById('current-compose').innerHTML = `<pre>${this.escapeHtml(currentCompose)}</pre>`;
+        }
+    }
+
+    // Helper function to show environment variable preview using multi-layer highlighting
+    showEnvironmentPreview(currentCompose, newCompose) {
+        try {
+            // Step 1: Generate base diff (shows all changes with placeholder values)
+            const baseDiffHTML = this.generateDiffHighlight(currentCompose, newCompose, 'new');
+
+            // Step 2: Parse YAML to build environment transfer map
+            const envTransfers = this.buildEnvironmentTransferMap(currentCompose, newCompose);
+            if (envTransfers.size === 0) {
+                return baseDiffHTML;
+            }
+
+            // Step 3: Process HTML to replace placeholder values with transferred values
+            const finalHTML = this.processEnvironmentValuesInHTML(baseDiffHTML, envTransfers);
+
+            return finalHTML;
+
+        } catch (error) {
+            console.warn('Error in showEnvironmentPreview:', error);
+            // Fallback: show regular diff highlighting
+            return this.generateDiffHighlight(currentCompose, newCompose, 'new');
+        }
+    }
+
+    // Helper function to build environment transfer map
+    buildEnvironmentTransferMap(currentCompose, newCompose) {
+        const envTransfers = new Map();
+
+        try {
+            const yaml = window.jsyaml;
+            if (!yaml) return envTransfers;
+
+            const currentConfig = yaml.load(currentCompose);
+            const newConfig = yaml.load(newCompose);
+
+            if (currentConfig?.services && newConfig?.services) {
+                Object.keys(newConfig.services).forEach(serviceName => {
+                    const currentService = currentConfig.services[serviceName];
+                    const newService = newConfig.services[serviceName];
+
+                    if (currentService?.environment && newService?.environment) {
+                        const currentEnv = this.normalizeEnvironment(currentService.environment);
+                        const newEnv = this.normalizeEnvironment(newService.environment);
+
+                        Object.keys(newEnv).forEach(envKey => {
+                            if (currentEnv.hasOwnProperty(envKey) && currentEnv[envKey] !== newEnv[envKey]) {
+                                if (!envTransfers.has(serviceName)) {
+                                    envTransfers.set(serviceName, new Map());
+                                }
+                                envTransfers.get(serviceName).set(envKey, currentEnv[envKey]);
+                            }
+                        });
+                    }
+                });
+            }
+        } catch (error) {
+            console.warn('Error building environment transfer map:', error);
+        }
+
+        return envTransfers;
+    }
+
+    // Helper function to process environment values in HTML
+    processEnvironmentValuesInHTML(htmlContent, envTransfers) {
+        let processedHTML = htmlContent;
+
+        try {
+            // For each environment variable that needs transfer
+            envTransfers.forEach((envMap, serviceName) => {
+                envMap.forEach((transferredValue, envKey) => {
+
+                    // Fixed patterns that properly handle JSDiff HTML structure
+                    const patterns = [
+                        // Match KEY: '<span class="diff-added">VALUE</span>' format
+                        new RegExp(`(${this.escapeRegex(envKey)}:\\s*'<span[^>]*>)([^<]+?)(<\\/span>')`, 'g'),
+                        // Match KEY: "<span class="diff-added">VALUE</span>" format (double quotes)
+                        new RegExp(`(${this.escapeRegex(envKey)}:\\s*"<span[^>]*>)([^<]+?)(<\\/span>")`, 'g'),
+                        // Match KEY: <span class="diff-added">VALUE</span> format (no quotes around span)
+                        new RegExp(`(${this.escapeRegex(envKey)}:\\s*<span[^>]*>)([^<]+?)(<\\/span>)`, 'g'),
+                        // Array format: - KEY=VALUE with possible span wrapping
+                        new RegExp(`(-\\s*${this.escapeRegex(envKey)}=<span[^>]*>)([^<]+?)(<\\/span>)`, 'g')
+                    ];
+
+                    let replacementCount = 0;
+                    patterns.forEach((pattern, index) => {
+                        const beforeReplace = processedHTML;
+                        processedHTML = processedHTML.replace(pattern, (match, prefix, value, suffix) => {
+                            replacementCount++;
+
+                            // Replace the value and apply environment transfer highlighting
+                            const escapedTransferredValue = this.escapeHtml(transferredValue);
+
+                            // Replace the entire span content with our yellow highlighting
+                            // Transform from: KEY: '<span class="diff-added">OLD_VALUE</span>'
+                            // Transform to:   KEY: '<span class="diff-env-transfer">NEW_VALUE</span>'
+                            let newSuffix = suffix;
+                            if (suffix.includes('</span>')) {
+                                newSuffix = suffix.replace('diff-added', 'diff-env-transfer');
+                            }
+                            return `${prefix}${escapedTransferredValue}${newSuffix}`;
+                        });
+                    });
+
+                });
+            });
+
+        } catch (error) {
+            console.warn('Error processing environment values in HTML:', error);
+        }
+
+        return processedHTML;
+    }
+
+    // Helper function to replace only environment sections while preserving YAML formatting
+    replaceEnvironmentSectionsInYaml(originalYaml, modifiedConfig, envTransfers) {
+        try {
+            let result = originalYaml;
+
+            envTransfers.forEach((envMap, serviceName) => {
+                envMap.forEach((transferredValue, envKey) => {
+                    // Pattern for array format: - KEY=value
+                    const envPattern = new RegExp(
+                        `(\\s*-\\s*${this.escapeRegex(envKey)}=)[^\\n\\r]*`,
+                        'g'
+                    );
+                    // Pattern for object format: KEY: value (with possible quotes)
+                    const envPatternObj = new RegExp(
+                        `(\\s*${this.escapeRegex(envKey)}:\\s*)['"]?[^\\n\\r'"]*(["']?)`,
+                        'g'
+                    );
+
+                    // Replace with transferred value, preserving quotes if they existed
+                    result = result.replace(envPattern, `$1${transferredValue}`);
+                    result = result.replace(envPatternObj, `$1'${transferredValue}'`);
+                });
+            });
+
+            return result;
+        } catch (error) {
+            console.warn('Error replacing environment sections:', error);
+            return originalYaml;
+        }
+    }
+
+    // Helper function to escape regex special characters
+    escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // Helper function to highlight environment variable transfers (smart highlighting)
+    generateEnvTransferHighlight(originalNew, processedNew) {
+        try {
+            if (!window.Diff) {
+                return this.escapeHtml(processedNew);
+            }
+
+            // Parse both YAML files to identify actual environment variable changes
+            const yaml = window.jsyaml;
+            if (yaml) {
+                const originalConfig = yaml.load(originalNew);
+                const processedConfig = yaml.load(processedNew);
+
+                // Find environment variables that were actually added or removed (not just transferred)
+                const envChanges = this.detectEnvironmentVariableChanges(originalConfig, processedConfig);
+
+                if (envChanges.length === 0) {
+                    // No structural env var changes, just show the final result without highlighting
+                    return this.escapeHtml(processedNew);
+                }
+            }
+
+            // Fall back to word diff for any remaining changes
+            const diff = window.Diff.diffWords(originalNew, processedNew);
+            let html = '';
+
+            for (const part of diff) {
+                const escaped = this.escapeHtml(part.value);
+
+                if (part.added) {
+                    // Only highlight if it's a true addition (not just a value transfer)
+                    html += `<span class="diff-env-transfer">${escaped}</span>`;
+                } else if (!part.removed) {
+                    html += escaped;
+                }
+                // Skip removed parts
+            }
+
+            return html;
+        } catch (error) {
+            console.warn('Error generating env transfer highlight:', error);
+            return this.escapeHtml(processedNew);
+        }
+    }
+
+    // Helper function to detect actual environment variable structure changes
+    detectEnvironmentVariableChanges(originalConfig, processedConfig) {
+        const changes = [];
+
+        try {
+            if (!originalConfig?.services || !processedConfig?.services) {
+                return changes;
+            }
+
+            for (const serviceName in processedConfig.services) {
+                // Use normalized environment objects for proper comparison
+                const originalEnv = this.normalizeEnvironment(originalConfig.services[serviceName]?.environment);
+                const processedEnv = this.normalizeEnvironment(processedConfig.services[serviceName]?.environment);
+
+                // Find added variables
+                for (const envVar in processedEnv) {
+                    if (!(envVar in originalEnv)) {
+                        changes.push({ type: 'added', service: serviceName, variable: envVar });
+                    }
+                }
+
+                // Find removed variables
+                for (const envVar in originalEnv) {
+                    if (!(envVar in processedEnv)) {
+                        changes.push({ type: 'removed', service: serviceName, variable: envVar });
+                    }
+                }
+            }
+
+            // Also check for services that had environment variables but are now missing entirely
+            for (const serviceName in originalConfig.services) {
+                if (!(serviceName in processedConfig.services)) {
+                    const originalEnv = this.normalizeEnvironment(originalConfig.services[serviceName]?.environment);
+                    for (const envVar in originalEnv) {
+                        changes.push({ type: 'removed', service: serviceName, variable: envVar });
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Error detecting environment variable changes:', error);
+        }
+
+        return changes;
+    }
+
+    // Helper function to transfer environment variables between docker compose configurations
+    transferEnvironmentVariables(oldCompose, newCompose) {
+        try {
+            // Comprehensive input validation
+            if (!oldCompose || !newCompose || typeof oldCompose !== 'string' || typeof newCompose !== 'string') {
+                console.warn('Invalid input to transferEnvironmentVariables');
+                return newCompose || '';
+            }
+
+            const yaml = window.jsyaml || (typeof require !== 'undefined' ? require('js-yaml') : null);
+            if (!yaml) {
+                console.error('YAML parser not available');
+                return newCompose;
+            }
+
+            let oldConfig, newConfig;
+
+            try {
+                oldConfig = yaml.load(oldCompose);
+                newConfig = yaml.load(newCompose);
+            } catch (yamlError) {
+                console.warn('Failed to parse YAML:', yamlError);
+                return newCompose;
+            }
+
+            // Validate parsed configurations
+            if (!oldConfig || !newConfig || typeof oldConfig !== 'object' || typeof newConfig !== 'object') {
+                console.warn('Invalid YAML structure for environment transfer');
+                return newCompose;
+            }
+
+            if (!oldConfig.services || !newConfig.services ||
+                typeof oldConfig.services !== 'object' || typeof newConfig.services !== 'object') {
+                console.warn('No services found in docker-compose configurations');
+                return newCompose;
+            }
+
+            // Transfer environment variables from old to new services
+            Object.keys(newConfig.services).forEach(serviceName => {
+                // Additional safety checks
+                if (!serviceName || typeof serviceName !== 'string') {
+                    return; // Skip invalid service names
+                }
+
+                const oldService = oldConfig.services[serviceName];
+                const newService = newConfig.services[serviceName];
+
+                // Validate service objects
+                if (!newService || typeof newService !== 'object') {
+                    return; // Skip if new service is invalid
+                }
+
+                // Only transfer if BOTH old and new services have environment variables
+                // This respects when the new version removes environment variables entirely
+                if (oldService && typeof oldService === 'object' &&
+                    oldService.environment && newService.environment) {
+                    // Helper function to normalize environment (local scope since we're not in class context here)
+                    const normalizeEnv = (env) => {
+                        if (!env) return {};
+                        if (Array.isArray(env)) {
+                            const result = {};
+                            env.forEach(item => {
+                                if (typeof item === 'string') {
+                                    const [key, ...valueParts] = item.split('=');
+                                    if (key) {
+                                        result[key] = valueParts.join('=') || '';
+                                    }
+                                }
+                            });
+                            return result;
+                        }
+                        if (typeof env === 'object' && env !== null) {
+                            return { ...env };
+                        }
+                        return {};
+                    };
+
+                    // Use normalized environment objects for consistent handling
+                    const oldEnvMap = normalizeEnv(oldService.environment);
+                    const newEnvMap = normalizeEnv(newService.environment);
+
+                    // Transfer values from old to new for matching keys only
+                    const transferredEnvMap = { ...newEnvMap }; // Start with new structure
+                    Object.keys(newEnvMap).forEach(key => {
+                        if (oldEnvMap.hasOwnProperty(key)) {
+                            transferredEnvMap[key] = oldEnvMap[key]; // Transfer old value
+                        }
+                    });
+
+                    // Convert back to the same format as the new configuration
+                    if (Array.isArray(newService.environment)) {
+                        newService.environment = Object.keys(transferredEnvMap).map(key =>
+                            `${key}=${transferredEnvMap[key]}`
+                        );
+                    } else {
+                        newService.environment = transferredEnvMap;
+                    }
+                }
+                // If newService.environment is null/undefined, we leave it that way
+                // This ensures services without environment variables stay that way
+            });
+
+            // Final safety check before dumping YAML
+            try {
+                const result = yaml.dump(newConfig, {
+                    indent: 2,
+                    lineWidth: 120,
+                    noRefs: true
+                });
+                return result || newCompose; // Fallback if dump returns empty string
+            } catch (dumpError) {
+                console.warn('Failed to dump YAML after environment transfer:', dumpError);
+                return newCompose;
+            }
+        } catch (error) {
+            console.error('Error transferring environment variables:', error);
+            return newCompose || ''; // Ensure we always return a string
+        }
+    }
+
+    async showUpdateAvailablePopup(repo) {
+        return new Promise(async (resolve) => {
+            const popup = document.createElement('div');
+            popup.id = 'update-available-popup';
+
+            // Start with loading/analysis state
+            popup.innerHTML = `
+                <div class="update-popup-backdrop"></div>
+                <div class="uninstall-container">
+                    <div class="uninstall-header">
+                        <div class="uninstall-icon">
+                            <div class="loading-spinner"></div>
+                        </div>
+                        <h2>Analyzing Docker Compose</h2>
+                    </div>
+                    <div class="uninstall-content">
+                        <p>Comparing current docker-compose.yml with repository version...</p>
+                    </div>
+                </div>
+
+                <style>
+                #update-available-popup {
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    z-index: 10000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    animation: fadeIn 0.15s ease-out;
+                }
+                .loading-spinner {
+                    width: 40px;
+                    height: 40px;
+                    border: 4px solid #e5e7eb;
+                    border-top: 4px solid #3b82f6;
+                    border-radius: 50%;
+                    animation: spin 1s linear infinite;
+                }
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+                </style>
+            `;
+
+            // Ensure update popup styles are available
+            if (!document.getElementById('update-popup-styles')) {
+                const style = document.createElement('style');
+                style.id = 'update-popup-styles';
+                style.textContent = `
+                    .update-popup-backdrop {
+                        position: fixed;
+                        top: 0; left: 0; right: 0; bottom: 0;
+                        background: rgba(0, 0, 0, 0.75);
+                        backdrop-filter: blur(4px);
+                    }
+                    .uninstall-container {
+                        background: white;
+                        border-radius: 12px;
+                        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+                        max-width: 500px;
+                        width: 90%;
+                        max-height: 90vh;
+                        overflow-y: auto;
+                        position: relative;
+                        z-index: 10001;
+                    }
+                    .uninstall-header {
+                        padding: 24px 24px 16px 24px;
+                        border-bottom: 1px solid #e5e7eb;
+                        text-align: center;
+                    }
+                    .uninstall-icon {
+                        font-size: 48px;
+                        margin-bottom: 12px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 60px;
+                    }
+                    .uninstall-header h2 {
+                        margin: 0;
+                        color: #1f2937;
+                        font-size: 20px;
+                        font-weight: 600;
+                    }
+                    .uninstall-content {
+                        padding: 20px 24px;
+                        text-align: center;
+                    }
+                    .uninstall-content p {
+                        margin: 0 0 16px 0;
+                        color: #374151;
+                        line-height: 1.5;
+                    }
+                    .uninstall-actions {
+                        padding: 16px 24px 24px 24px;
+                        display: flex;
+                        gap: 12px;
+                        justify-content: flex-end;
+                        border-top: 1px solid #e5e7eb;
+                    }
+                    @keyframes fadeIn {
+                        from { opacity: 0; transform: scale(0.95); }
+                        to { opacity: 1; transform: scale(1); }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            document.body.appendChild(popup);
+
+            const cleanup = () => {
+                if (popup.parentNode) {
+                    document.body.removeChild(popup);
+                }
+            };
+
+            try {
+                // Add minimum 3-second delay so user can see the analysis popup
+                const [analysisResult] = await Promise.all([
+                    this.performDockerComposeAnalysis(repo),
+                    new Promise(resolve => setTimeout(resolve, 3000)) // 3 second minimum
+                ]);
+
+                if (analysisResult.composeChanged) {
+                    // Docker-compose has changed - show comparison popup
+                    cleanup();
+                    const compareResult = await this.showDockerComposeChangePopup(analysisResult.composeChangeInfo, repo);
+                    resolve(compareResult); // Return full result with transfer settings
+                } else {
+                    // No changes, proceed with normal update
+                    cleanup();
+                    resolve({ proceed: true });
+                }
+            } catch (error) {
+                cleanup();
+                this.showNotification('Failed to analyze docker-compose: ' + error.message, 'error');
+                resolve(false);
+            }
+        });
+    }
+
+    async performDockerComposeAnalysis(repo) {
+        console.log('🔍 ANALYSIS: Starting docker-compose analysis for repo:', repo.name);
+        console.log('🔍 ANALYSIS: Repo data:', { id: repo.id, type: repo.type, isInstalled: repo.isInstalled });
+
+        // Get the current stored docker-compose (what user has now)
+        let currentDockerCompose = repo.modifiedDockerCompose;
+
+        console.log('🔍 ANALYSIS: Current stored docker-compose exists:', !!currentDockerCompose);
+
+        // If we don't have the current composition, fetch it
+        if (!currentDockerCompose) {
+            console.log('🔍 ANALYSIS: Missing current data, fetching from API...');
+            try {
+                const response = await axios.get(this.addHashToUrl(`/api/admin/repos/${repo.id}/compose`));
+                if (response.data.success) {
+                    currentDockerCompose = response.data.yaml;
+                    console.log('🔍 ANALYSIS: Fetched current docker-compose length:', currentDockerCompose?.length || 0);
+                }
+            } catch (error) {
+                console.warn('🔍 ANALYSIS: Could not fetch current docker-compose:', error);
+                return { proceed: true, composeChanged: false };
+            }
+        }
+
+        // Now fetch the LATEST docker-compose.yml from GitHub using direct raw URL
+        console.log('🔍 ANALYSIS: Fetching latest docker-compose.yml from GitHub...');
+        let latestDockerCompose = null;
+
+        try {
+            // Extract GitHub repo info from the URL
+            const githubUrl = repo.url;
+            console.log('🔍 ANALYSIS: Repository URL:', githubUrl);
+
+            // Use GitHub API instead of raw URLs to handle private repos with tokens
+            if (githubUrl.includes('github.com')) {
+                // Extract token and repo info
+                let token = null;
+                let cleanUrl = githubUrl;
+
+                // Check if URL has authentication token
+                const tokenMatch = githubUrl.match(/https:\/\/([^@]+)@github\.com/);
+                if (tokenMatch) {
+                    token = tokenMatch[1];
+                    cleanUrl = githubUrl.replace(/^https:\/\/[^@]+@/, 'https://');
+                }
+
+                cleanUrl = cleanUrl.replace(/\.git$/, ''); // Remove .git suffix
+                const urlParts = cleanUrl.replace('https://github.com/', '').split('/');
+
+                if (urlParts.length >= 2) {
+                    const owner = urlParts[0];
+                    const repoName = urlParts[1];
+
+                    // Try main branch first using GitHub API
+                    let apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/docker-compose.yml?ref=main`;
+                    console.log('🔍 ANALYSIS: Trying GitHub API with main branch');
+
+                    const headers = {
+                        'Accept': 'application/vnd.github.v3.raw'
+                    };
+
+                    // Add authorization if token is present
+                    if (token) {
+                        headers['Authorization'] = `token ${token}`;
+                        console.log('🔍 ANALYSIS: Using authentication token for private repo');
+                    }
+
+                    try {
+                        // NOTE: You may see GitHub cookie warnings in the console like:
+                        // Cookie "_gh_sess" has been rejected because it is in a cross-site context and its "SameSite" is "Lax" or "Strict"
+                        // These warnings are harmless and occur when accessing GitHub's API from a different domain.
+                        // They do not affect functionality and can be safely ignored.
+                        const response = await fetch(apiUrl, { headers });
+                        if (response.ok) {
+                            latestDockerCompose = await response.text();
+                            console.log('🔍 ANALYSIS: Successfully fetched from main branch via API');
+                        } else if (response.status === 404) {
+                            // Try master branch instead
+                            apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/docker-compose.yml?ref=master`;
+                            console.log('🔍 ANALYSIS: Trying GitHub API with master branch');
+
+                            const masterResponse = await fetch(apiUrl, { headers });
+                            if (masterResponse.ok) {
+                                latestDockerCompose = await masterResponse.text();
+                                console.log('🔍 ANALYSIS: Successfully fetched from master branch via API');
+                            } else {
+                                console.warn('🔍 ANALYSIS: GitHub API returned:', response.status, await response.text());
+                            }
+                        } else {
+                            console.warn('🔍 ANALYSIS: GitHub API returned:', response.status, await response.text());
+                        }
+                    } catch (fetchError) {
+                        console.warn('🔍 ANALYSIS: Failed to fetch from GitHub API:', fetchError);
+                    }
+                }
+            }
+
+            if (latestDockerCompose) {
+                console.log('🔍 ANALYSIS: Latest docker-compose length:', latestDockerCompose.length);
+            } else {
+                console.log('🔍 ANALYSIS: Could not fetch from GitHub, using fallback');
+                latestDockerCompose = repo.rawDockerCompose;
+            }
+        } catch (error) {
+            console.warn('🔍 ANALYSIS: Error during GitHub fetch:', error);
+            latestDockerCompose = repo.rawDockerCompose;
+            console.log('🔍 ANALYSIS: Using fallback rawDockerCompose');
+        }
+
+        // If we still don't have both, proceed with normal installation
+        if (!currentDockerCompose || !latestDockerCompose) {
+            console.log('🔍 ANALYSIS: Missing data after all attempts, proceeding with normal installation');
+            return { proceed: true, composeChanged: false };
+        }
+
+        const currentTrimmed = currentDockerCompose.trim();
+        const latestTrimmed = latestDockerCompose.trim();
+
+        console.log('🔍 ANALYSIS: Comparing docker-compose files...');
+        console.log('🔍 ANALYSIS: Current (user has) length:', currentTrimmed.length);
+        console.log('🔍 ANALYSIS: Latest (from GitHub) length:', latestTrimmed.length);
+        console.log('🔍 ANALYSIS: Content comparison (first 100 chars):');
+        console.log('🔍 ANALYSIS: Current: "' + currentTrimmed.substring(0, 100) + '"');
+        console.log('🔍 ANALYSIS: Latest:  "' + latestTrimmed.substring(0, 100) + '"');
+        console.log('🔍 ANALYSIS: Are they identical?', currentTrimmed === latestTrimmed);
+
+        if (currentTrimmed === latestTrimmed) {
+            // No changes, proceed with normal installation
+            console.log('🔍 ANALYSIS: No changes detected, proceeding with normal installation');
+            return { proceed: true, composeChanged: false };
+        }
+
+        // Compose has changed, return change info for comparison popup
+        console.log('🔍 ANALYSIS: Changes detected! Showing comparison popup');
+        return {
+            proceed: true,
+            composeChanged: true,
+            composeChangeInfo: {
+                oldCompose: currentDockerCompose, // What user currently has
+                newCompose: latestDockerCompose,  // Latest from GitHub
+                modifiedCompose: currentDockerCompose // User's current version
+            }
+        };
+    }
+
     async showReinstallConfirmation(repo) {
         return new Promise((resolve) => {
             // Create reinstall confirmation popup
@@ -1438,10 +2788,10 @@ class RepoManager {
                 </style>
             `;
 
-            // Ensure uninstall styles are available (inject only if not already present)
-            if (!document.getElementById('uninstall-popup-styles')) {
+            // Ensure reinstall popup styles are available (inject only if not already present)
+            if (!document.getElementById('reinstall-popup-styles')) {
                 const style = document.createElement('style');
-                style.id = 'uninstall-popup-styles';
+                style.id = 'reinstall-popup-styles';
                 style.textContent = `
                     .uninstall-backdrop {
                         position: absolute;
@@ -2044,14 +3394,14 @@ class RepoManager {
                         align-items: center;
                         justify-content: center;
                     }
-                
+
                 .uninstall-backdrop {
                     position: absolute;
                     top: 0; left: 0; right: 0; bottom: 0;
                     background: rgba(0, 0, 0, 0.8);
                     backdrop-filter: blur(4px);
                 }
-                
+
                 .uninstall-container {
                     position: relative;
                     width: 90%;

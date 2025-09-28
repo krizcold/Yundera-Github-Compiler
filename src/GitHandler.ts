@@ -77,7 +77,14 @@ export function cloneOrUpdateRepo(repo: RepoConfig, baseDir: string): void {
         GIT_TERMINAL_PROMPT: '0'
       };
       
-      execSync(`git -C "${repoDir}" pull`, { 
+      // First fetch to get latest refs - this should always work
+      execSync(`git -C "${repoDir}" fetch origin`, {
+        stdio: "inherit",
+        env: gitEnv
+      });
+
+      // Try to pull - if this fails, we'll handle it in the repository processor
+      execSync(`git -C "${repoDir}" pull`, {
         stdio: "inherit",
         env: gitEnv
       });

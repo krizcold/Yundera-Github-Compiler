@@ -579,7 +579,9 @@ app.post("/api/admin/repos/create-from-compose", async (req, res) => {
       autoUpdate: false,
       autoUpdateInterval: 60,
       apiUpdatesEnabled: true,
-      status: 'imported'
+      status: 'imported',
+      rawDockerCompose: yaml,
+      modifiedDockerCompose: yaml
     });
 
     // Save the docker-compose.yml to persistent storage
@@ -596,6 +598,138 @@ app.post("/api/admin/repos/create-from-compose", async (req, res) => {
   }
 });
 
+// POST /api/repos/:id/update-compose - Apply docker-compose changes after manual review
+app.post("/api/admin/repos/:id/update-compose", async (req, res) => {
+  const { id } = req.params;
+  const { updateCompose, transferEnvs, oldCompose, newCompose, modifiedCompose } = req.body;
+
+  const repo = getRepository(id);
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+
+  try {
+    let finalCompose = newCompose;
+
+    // If user chose to transfer environment variables, do that first
+    if (transferEnvs && updateCompose) {
+      const yaml = await import('yaml');
+
+      try {
+        const sourceCompose = modifiedCompose || oldCompose;
+        const sourceConfig = yaml.parse(sourceCompose);
+        const targetConfig = yaml.parse(newCompose);
+
+        if (sourceConfig.services && targetConfig.services) {
+          // Transfer environment variables from source to target services
+          Object.keys(targetConfig.services).forEach(serviceName => {
+            const sourceService = sourceConfig.services[serviceName];
+            const targetService = targetConfig.services[serviceName];
+
+            if (sourceService && sourceService.environment && targetService) {
+              if (!targetService.environment) {
+                targetService.environment = {};
+              }
+
+              // Handle both object and array format for environment
+              const sourceEnvMap: Record<string, string> = {};
+              const targetEnvMap: Record<string, string> = {};
+
+              // Parse source environment
+              if (Array.isArray(sourceService.environment)) {
+                sourceService.environment.forEach((env: string) => {
+                  const [key, ...valueParts] = env.split('=');
+                  if (key) sourceEnvMap[key] = valueParts.join('=') || '';
+                });
+              } else if (typeof sourceService.environment === 'object') {
+                Object.assign(sourceEnvMap, sourceService.environment);
+              }
+
+              // Parse target environment
+              if (Array.isArray(targetService.environment)) {
+                targetService.environment.forEach((env: string) => {
+                  const [key, ...valueParts] = env.split('=');
+                  if (key) targetEnvMap[key] = valueParts.join('=') || '';
+                });
+              } else if (typeof targetService.environment === 'object') {
+                Object.assign(targetEnvMap, targetService.environment);
+              }
+
+              // Transfer values from source to target for matching keys
+              Object.keys(targetEnvMap).forEach(key => {
+                if (sourceEnvMap.hasOwnProperty(key)) {
+                  targetEnvMap[key] = sourceEnvMap[key];
+                }
+              });
+
+              // Convert back to the same format as the target configuration
+              if (Array.isArray(targetService.environment)) {
+                targetService.environment = Object.keys(targetEnvMap).map(key =>
+                  `${key}=${targetEnvMap[key]}`
+                );
+              } else {
+                targetService.environment = targetEnvMap;
+              }
+            }
+          });
+
+          finalCompose = yaml.stringify(targetConfig, {
+            indent: 2,
+            lineWidth: 120
+          });
+        }
+      } catch (transferError: any) {
+        console.error('Error transferring environment variables:', transferError);
+        // Continue with original newCompose if transfer fails
+      }
+    }
+
+    if (updateCompose) {
+      // Update the docker-compose file
+      const persistentDir = path.join('/app/uidata', repo.name);
+      const persistentComposePath = path.join(persistentDir, "docker-compose.yml");
+
+      if (!fs.existsSync(persistentDir)) {
+        fs.mkdirSync(persistentDir, { recursive: true });
+      }
+
+      fs.writeFileSync(persistentComposePath, finalCompose, 'utf8');
+
+      // Also update cloned repo if it exists
+      if (repo.url) {
+        const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
+        const clonedDir = path.join(baseDir, repoPath);
+        const clonedComposePath = path.join(clonedDir, "docker-compose.yml");
+
+        if (fs.existsSync(clonedDir)) {
+          fs.writeFileSync(clonedComposePath, finalCompose, 'utf8');
+        }
+      }
+
+      // Update repository metadata
+      updateRepository(id, {
+        rawDockerCompose: newCompose,
+        modifiedDockerCompose: finalCompose,
+        hasCompose: true
+      });
+
+      console.log(`✅ Updated docker-compose.yml for ${repo.name} with environment transfer: ${transferEnvs}`);
+    }
+
+    // Now proceed with the build process
+    const result = await buildQueue.addJob(repo, true);
+
+    if (result.success) {
+      res.json({ success: true, message: result.message });
+    } else {
+      res.status(500).json({ success: false, message: result.message });
+    }
+
+  } catch (error: any) {
+    console.error(`Error updating compose for ${repo.id}:`, error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 // PUT /api/repos/:id - Update a repository
 app.put("/api/admin/repos/:id", (req, res) => {
@@ -665,16 +799,18 @@ app.post("/api/admin/repos/:id/import", async (req, res) => {
     let hasCompose = false;
     let icon = '';
     let displayName;
-    
+    let rawDockerCompose;
+
     if (fs.existsSync(sourcePath)) {
-      fs.copyFileSync(sourcePath, targetPath);
+      const composeContent = fs.readFileSync(sourcePath, 'utf8');
+      fs.writeFileSync(targetPath, composeContent, 'utf8');
       hasCompose = true;
+      rawDockerCompose = composeContent; // Store raw content for comparison
       console.log(`📋 Copied docker-compose.yml to ${targetPath}`);
-      
+
       // Analyze docker-compose.yml for icon and display name
       try {
         const yaml = await import('yaml');
-        const composeContent = fs.readFileSync(targetPath, 'utf8');
         const composeData = yaml.parse(composeContent);
         
         // Extract display name from compose file's name property
@@ -696,12 +832,14 @@ app.post("/api/admin/repos/:id/import", async (req, res) => {
     }
     
     // Update repository status to imported
-    const updateData: any = { 
+    const updateData: any = {
       status: 'imported',
       hasCompose,
-      icon: icon || undefined
+      icon: icon || undefined,
+      rawDockerCompose: rawDockerCompose || undefined,
+      modifiedDockerCompose: rawDockerCompose || undefined // Initially same as raw
     };
-    
+
     // Add displayName if we found one in the compose file
     if (displayName) {
       updateData.displayName = displayName;
@@ -770,9 +908,15 @@ app.get("/api/admin/repos/:id/compose", async (req, res) => {
   }
   
   try {
-    // First try to read from persistent storage (/app/uidata/)
+    // First try to get from modified docker-compose in memory
+    if (repo.modifiedDockerCompose) {
+      res.json({ success: true, yaml: repo.modifiedDockerCompose });
+      return;
+    }
+
+    // Fallback: try to read from persistent storage (/app/uidata/)
     const persistentComposePath = path.join('/app/uidata', repo.name, "docker-compose.yml");
-    
+
     if (fs.existsSync(persistentComposePath)) {
       const yamlContent = fs.readFileSync(persistentComposePath, 'utf8');
       res.json({ success: true, yaml: yamlContent });
@@ -835,8 +979,11 @@ app.put("/api/admin/repos/:id/compose", async (req, res) => {
       }
     }
     
-    // Update repository metadata
-    updateRepository(id, { hasCompose: true });
+    // Update repository metadata and store modified docker-compose
+    updateRepository(id, {
+      hasCompose: true,
+      modifiedDockerCompose: yaml
+    });
     
     res.json({ success: true, message: "Docker Compose file updated successfully" });
   } catch (error: any) {
@@ -2653,7 +2800,41 @@ app.post("/api/app/update", validateAppTokenMiddleware, async (req, res) => {
   }
   
   console.log(`🔄 App ${appToken.appName} requesting self-update`);
-  
+
+  // First check if this update would require manual review (compose changes)
+  try {
+    if (repo.type === 'github' && repo.rawDockerCompose) {
+      // Clone/update to get the latest docker-compose
+      const { cloneOrUpdateRepo } = await import('./GitHandler');
+      const repoConfig = { url: repo.url!, path: repo.name, autoUpdate: repo.autoUpdate };
+      cloneOrUpdateRepo(repoConfig, baseDir);
+
+      // Read the current docker-compose from the repo
+      const repoPath = repo.url!.replace(/\.git$/, '').split('/').pop() || 'repo';
+      const sourcePath = path.join(baseDir, repoPath, "docker-compose.yml");
+
+      if (fs.existsSync(sourcePath)) {
+        const currentDockerCompose = fs.readFileSync(sourcePath, 'utf8');
+
+        if (currentDockerCompose.trim() !== repo.rawDockerCompose.trim()) {
+          // Docker compose has changed - reject API update
+          console.log(`⚠️ API update rejected for ${appToken.appName}: docker-compose.yml has changed`);
+          return res.status(409).json({
+            success: false,
+            code: 'COMPOSE_CHANGED',
+            message: 'The docker-compose.yml file has changed and requires manual review on the server',
+            requiresManualReview: true,
+            appName: appToken.appName,
+            repositoryId: repo.id
+          });
+        }
+      }
+    }
+  } catch (error: any) {
+    console.error(`Error checking compose changes for API update: ${error.message}`);
+    // Continue with normal update if check fails
+  }
+
   // Add to build queue
   const jobResult = await buildQueue.addJob(repo, false);
   if (!jobResult.success) {
@@ -2662,14 +2843,14 @@ app.post("/api/app/update", validateAppTokenMiddleware, async (req, res) => {
       message: jobResult.message
     });
   }
-  
+
   res.json({
     success: true,
     appName: appToken.appName,
     repositoryId: repo.id,
     message: 'Update build queued successfully'
   });
-  
+
   console.log(`✅ Self-update queued for app ${appToken.appName}`);
 });
 

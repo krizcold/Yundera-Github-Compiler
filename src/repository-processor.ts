@@ -19,7 +19,11 @@ export async function processRepo(
   logCollector?: any,
   runAsUser?: string
 ): Promise<{ success: boolean; message:string }> {
-  
+
+  // Debug: Log that build process is starting
+  console.log(`🚀 BUILD PROCESS STARTING for ${repository.name} (${repository.id})`);
+  console.log(`📋 Repository type: ${repository.type}, isInstalled: ${repository.isInstalled}, force: ${force}`);
+
   // Helper function to log both to console and stream
   const log = (message: string, type: 'system' | 'info' | 'warning' | 'error' | 'success' = 'info') => {
     console.log(message);
@@ -42,9 +46,34 @@ export async function processRepo(
       const repoConfig = { url: repository.url!, path: repository.name, autoUpdate: repository.autoUpdate };
       
       log(`📥 Cloning/updating repository from ${repository.url}...`, 'info');
-      cloneOrUpdateRepo(repoConfig, baseDir);
-      log(`✅ Repository clone/update completed`, 'success');
-      
+
+      let gitUpdateSuccessful = true;
+      const repoPath = repository.url!.replace(/\.git$/, '').split('/').pop() || 'repo';
+      const localRepoPath = path.join(baseDir, repoPath);
+
+      try {
+        cloneOrUpdateRepo(repoConfig, baseDir);
+        log(`✅ Repository clone/update completed`, 'success');
+      } catch (gitError: any) {
+        log(`⚠️ Git operation failed: ${gitError.message}`, 'warning');
+        gitUpdateSuccessful = false;
+
+        // Check if repository exists locally - we might still be able to work with it
+        if (!fs.existsSync(localRepoPath)) {
+          log(`❌ No local repository found, cannot proceed`, 'error');
+          throw gitError; // If no local repo exists, we can't continue
+        } else {
+          log(`📂 Using existing local repository despite git error`, 'info');
+        }
+      }
+
+
+
+      // Only proceed with build if git was successful or we have a working local repo
+      if (!gitUpdateSuccessful) {
+        log(`⚠️ Proceeding with build using existing local repository`, 'warning');
+      }
+
       log(`🏗️ Building Docker image from repository...`, 'info');
       updateRepository(repository.id, { status: 'building' });
       localImageName = await buildImageFromRepo(repoConfig, baseDir, true, logCollector); // true = isGitHubRepo
@@ -58,7 +87,7 @@ export async function processRepo(
     // Phase 2: Pre-process the compose file
     log(`🔄 Updating repository status to 'installing'...`, 'info');
     updateRepository(repository.id, { status: 'installing' });
-    
+
     log(`📋 Looking for docker-compose.yml file...`, 'info');
     const internalComposePath = path.join('/app/uidata', repository.name, 'docker-compose.yml');
     if (!fs.existsSync(internalComposePath)) {
@@ -66,10 +95,10 @@ export async function processRepo(
         log(`❌ ${errorMsg}`, 'error');
         throw new Error(errorMsg);
     }
-    
+
     log(`✅ Found docker-compose.yml, parsing...`, 'success');
-    const rawYaml = fs.readFileSync(internalComposePath, 'utf8');
-    const composeObject = yaml.parse(rawYaml);
+    const currentDockerCompose = fs.readFileSync(internalComposePath, 'utf8');
+    const composeObject = yaml.parse(currentDockerCompose);
     
     // Extract the actual app name from compose file's name property
     if (composeObject.name && composeObject.name !== repository.name) {
@@ -364,12 +393,41 @@ export async function processRepo(
     // Verify installation status directly
     log(`🔍 Checking if app is running in CasaOS...`, 'info');
     const isRunning = await isAppInstalledInCasaOS(appNameToCheck);
-    updateRepository(repository.id, { 
+
+    // Update repository status and store the new raw docker-compose for future comparisons
+    const repoUpdates: any = {
         status: 'success',
         isInstalled: true,
         isRunning: isRunning
-    });
-    
+    };
+
+    // For GitHub repos, store the new docker-compose as the raw version and update version tracking
+    if (repository.type === 'github' && repository.url) {
+        repoUpdates.rawDockerCompose = currentDockerCompose;
+        repoUpdates.modifiedDockerCompose = currentDockerCompose; // Reset to match raw
+        log(`📝 Updated raw docker-compose.yml for future update comparisons`, 'info');
+
+        // Update version tracking after successful build
+        try {
+            const { checkForUpdates } = await import('./GitHandler');
+            const updateInfo = checkForUpdates(repository.url, '/app/repos');
+
+            // Update both current and latest version to the same value (now up to date)
+            const latestCommit = updateInfo.latestCommit.substring(0, 8);
+            repoUpdates.currentVersion = latestCommit;
+            repoUpdates.latestVersion = latestCommit;
+            repoUpdates.lastUpdateCheck = new Date().toISOString();
+            repoUpdates.commitsBehind = 0;
+
+            log(`📝 Updated version tracking: ${latestCommit} (now up to date)`, 'info');
+        } catch (versionError: any) {
+            log(`⚠️ Failed to update version tracking: ${versionError.message}`, 'warning');
+            // Continue without failing the build
+        }
+    }
+
+    updateRepository(repository.id, repoUpdates);
+
     const statusMessage = isRunning ? 'App is running successfully' : 'App installed but not running';
     log(`✅ Installation process completed. ${statusMessage}`, 'success');
 
