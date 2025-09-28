@@ -770,13 +770,16 @@ class RepoManager {
                         const transferredCompose = this.transferEnvironmentVariables(updateResult.oldCompose, updateResult.newCompose);
 
                         // Update the stored compose with the transferred version
-                        await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`), {
+                        await axios.put(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`), {
                             yaml: transferredCompose
                         });
                         console.log('✅ Environment variables transferred successfully');
                     } catch (error) {
-                        console.error('❌ Failed to transfer environment variables:', error);
-                        this.showNotification('Warning: Failed to transfer environment variables, proceeding with original compose', 'warning');
+                        console.error('❌ CRITICAL: Failed to transfer environment variables:', error);
+                        this.showNotification('Error: Failed to transfer environment variables. Update aborted to prevent breaking the application.', 'error');
+                        // ABORT THE UPDATE - restore button state and return
+                        this.updateRepoStatus(repoId, repo.status || 'ready');
+                        return;
                     }
                 }
             }
@@ -805,7 +808,7 @@ class RepoManager {
 
         try {
             await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compile`), { runAsUser: selectedUser });
-            console.log(`[${repo.name}] ${action} process initiated via API.`);
+            console.log(`[${repo.name}] ${action} process initiated via Dashboard.`);
 
             // Refresh the UI immediately after successful initiation, then again after a delay
             setTimeout(() => this.loadRepos(), 1000);
