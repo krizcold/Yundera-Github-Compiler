@@ -1,9 +1,9 @@
 {
-  "version": "1.0.16",
+  "version": "1.0.17",
   "repository": "krizcold/yundera-github-compiler",
   "lastPublish": {
-    "latest": "2025-09-29T14:40:32.244Z",
-    "dev": "2025-09-29T14:40:54.969Z"
+    "latest": "2025-09-29T18:48:57.365Z",
+    "dev": "2025-09-29T17:53:28.111Z"
   },
-  "buildCount": 16
+  "buildCount": 17
 }

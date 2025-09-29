@@ -2799,40 +2799,110 @@ app.post("/api/app/update", validateAppTokenMiddleware, async (req, res) => {
     });
   }
   
-  console.log(`🔄 App ${appToken.appName} requesting self-update`);
+  console.log(`🔄 App ${appToken.appName} requesting self-update - START OF REQUEST PROCESSING`);
 
   // First check if this update would require manual review (compose changes)
+  // CRITICAL: Do NOT pull updates during comparison - check against remote without pulling
   try {
     if (repo.type === 'github' && repo.rawDockerCompose) {
-      // Clone/update to get the latest docker-compose
-      const { cloneOrUpdateRepo } = await import('./GitHandler');
-      const repoConfig = { url: repo.url!, path: repo.name, autoUpdate: repo.autoUpdate };
-      cloneOrUpdateRepo(repoConfig, baseDir);
+      console.log(`🔍 App API checking for docker-compose changes WITHOUT pulling updates...`);
 
-      // Read the current docker-compose from the repo
-      const repoPath = repo.url!.replace(/\.git$/, '').split('/').pop() || 'repo';
-      const sourcePath = path.join(baseDir, repoPath, "docker-compose.yml");
+      // Use GitHub API to fetch the latest docker-compose.yml without pulling
+      const githubUrl = repo.url!;
+      let latestDockerCompose: string | null = null;
 
-      if (fs.existsSync(sourcePath)) {
-        const currentDockerCompose = fs.readFileSync(sourcePath, 'utf8');
+      if (githubUrl.includes('github.com')) {
+        try {
+          // Extract token and clean URL - same logic as Dashboard
+          let token: string | null = null;
+          let cleanUrl = githubUrl;
 
-        if (currentDockerCompose.trim() !== repo.rawDockerCompose.trim()) {
-          // Docker compose has changed - reject API update
-          console.log(`⚠️ API update rejected for ${appToken.appName}: docker-compose.yml has changed`);
+          const tokenMatch = githubUrl.match(/https:\/\/([^@]+)@github\.com/);
+          if (tokenMatch) {
+            token = tokenMatch[1];
+            cleanUrl = githubUrl.replace(/^https:\/\/[^@]+@/, 'https://');
+          }
+
+          cleanUrl = cleanUrl.replace(/\.git$/, '');
+          const urlParts = cleanUrl.replace('https://github.com/', '').split('/');
+
+          if (urlParts.length >= 2) {
+            const owner = urlParts[0];
+            const repoName = urlParts[1];
+
+            // Try main branch first
+            let apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/docker-compose.yml?ref=main`;
+            console.log(`🔍 Fetching from GitHub API (main): ${apiUrl}`);
+
+            const headers: Record<string, string> = {
+              'Accept': 'application/vnd.github.v3.raw'
+            };
+
+            if (token) {
+              headers['Authorization'] = `token ${token}`;
+              console.log(`🔍 Using authentication token for private repo`);
+            }
+
+            let response = await fetch(apiUrl, { headers });
+
+            if (!response.ok && response.status === 404) {
+              // Try master branch as fallback
+              apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/docker-compose.yml?ref=master`;
+              console.log(`🔍 Trying master branch: ${apiUrl}`);
+              response = await fetch(apiUrl, { headers });
+            }
+
+            if (response.ok) {
+              latestDockerCompose = await response.text();
+              console.log(`✅ Successfully fetched latest docker-compose.yml (${latestDockerCompose.length} chars)`);
+            } else {
+              console.warn(`⚠️ GitHub API returned ${response.status}: ${response.statusText}`);
+            }
+          }
+        } catch (fetchError: any) {
+          console.warn(`⚠️ Failed to fetch from GitHub API: ${fetchError.message}`);
+        }
+      }
+
+      if (latestDockerCompose) {
+        console.log(`🔍 Comparing stored vs latest docker-compose.yml...`);
+
+        // Use intelligent structural comparison (same logic as Dashboard)
+        const { compareDockerComposeStructure } = await import('./compose-comparison');
+        const hasStructuralChanges = compareDockerComposeStructure(repo.rawDockerCompose.trim(), latestDockerCompose.trim());
+
+        if (hasStructuralChanges) {
+          // Docker compose has structural changes - reject API update
+          console.log(`⚠️ API update BLOCKED for ${appToken.appName}: docker-compose.yml has structural changes`);
+          console.log(`🛑 No git pull was performed - repository remains unchanged`);
           return res.status(409).json({
             success: false,
             code: 'COMPOSE_CHANGED',
-            message: 'The docker-compose.yml file has changed and requires manual review on the server',
+            message: 'The docker-compose.yml file has structural changes and requires manual review on the server',
             requiresManualReview: true,
             appName: appToken.appName,
             repositoryId: repo.id
           });
+        } else {
+          console.log(`✅ Docker-compose unchanged for ${appToken.appName} - API update allowed`);
         }
+      } else {
+        console.log(`❌ Could not fetch latest docker-compose.yml - BLOCKING API update for security`);
+        return res.status(500).json({
+          success: false,
+          message: 'Unable to verify docker-compose changes. API updates blocked for security.',
+          requiresManualReview: true
+        });
       }
     }
   } catch (error: any) {
     console.error(`Error checking compose changes for API update: ${error.message}`);
-    // Continue with normal update if check fails
+    console.error(`❌ Change detection failed for ${appToken.appName} - BLOCKING API update for security`);
+    return res.status(500).json({
+      success: false,
+      message: `Unable to verify docker-compose changes: ${error.message}. API updates blocked for security.`,
+      requiresManualReview: true
+    });
   }
 
   // Add to build queue
