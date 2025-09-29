@@ -114,9 +114,13 @@ export async function processRepo(
     let appToken: string | null = null;
     try {
       const { createAppToken } = await import('./app-tokens');
-      const token = createAppToken(appName, repository.id);
+      const token = createAppToken(appName, repository.id, repository.isInstalled);
       appToken = token.token;
-      log(`✅ App token created for ${appName}: ${appToken.substring(0, 8)}...`, 'success');
+      if (appToken) {
+        log(`✅ App token created for ${appName}: ${appToken.substring(0, 8)}...`, 'success');
+      } else {
+        log(`⏭️ Skipping token creation for re-install of ${appName} - preserving existing token`, 'info');
+      }
     } catch (tokenError: any) {
       log(`⚠️ Failed to create app token: ${tokenError.message}`, 'warning');
       // Continue without token - apps that don't use $API_HASH will work fine
@@ -124,6 +128,14 @@ export async function processRepo(
     
     log(`🔧 Loading settings and preprocessing compose file...`, 'info');
     const settings = loadSettings();
+
+    // Verify token consistency for apps using API_HASH
+    const composeString = JSON.stringify(composeObject);
+    if ((composeString.includes('$API_HASH') || composeString.includes('${API_HASH}')) && repository.isInstalled && !appToken) {
+      log(`❌ Token sync issue: App requires API_HASH but no matching token found for "${appName}"`, 'error');
+      throw new Error(`Token synchronization issue: App uses API_HASH but no matching token exists for "${appName}". This may indicate an appName/repositoryId mismatch.`);
+    }
+
     const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName, appToken);
     log(`✅ Compose file preprocessing completed`, 'success');
 

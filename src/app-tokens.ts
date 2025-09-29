@@ -29,17 +29,17 @@ function ensureUIDataDir(): void {
 // Load app tokens from storage
 function loadAppTokens(): AppToken[] {
   ensureUIDataDir();
-  
+
   if (!fs.existsSync(APP_TOKENS_FILE)) {
     return [];
   }
-  
+
   try {
     const data = fs.readFileSync(APP_TOKENS_FILE, 'utf-8');
     const storage: AppTokensStorage = JSON.parse(data);
     return storage.tokens || [];
   } catch (error) {
-    console.error('Error loading app tokens:', error);
+    console.error('❌ Error loading app tokens:', error);
     return [];
   }
 }
@@ -62,28 +62,43 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-// Create a new app token
-export function createAppToken(appName: string, repositoryId: string): AppToken {
+// Create a new app token (or return existing one for re-installs)
+export function createAppToken(appName: string, repositoryId: string, isAppAlreadyInstalled?: boolean): AppToken {
   const tokens = loadAppTokens();
-  
+
   // Check if token already exists for this app
   const existingToken = tokens.find(t => t.appName === appName && t.repositoryId === repositoryId);
+
   if (existingToken) {
-    console.log(`🔑 App token already exists for ${appName}, returning existing token`);
+    console.log(`🔑 Using existing app token for ${appName}`);
     return existingToken;
   }
-  
+
+  // For re-installs with no existing token, skip creation to avoid mismatches
+  if (isAppAlreadyInstalled) {
+    console.log(`⏭️ Skipping token creation for re-install of ${appName} - no existing token found`);
+    return {
+      appName,
+      token: '', // Empty token indicates no update needed
+      repositoryId,
+      permissions: ['check-self-updates', 'update-self', 'get-self-status'],
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  // Create new token for first-time installation
+  const newTokenValue = generateToken();
   const newToken: AppToken = {
     appName,
-    token: generateToken(),
+    token: newTokenValue,
     repositoryId,
     permissions: ['check-self-updates', 'update-self', 'get-self-status'],
     createdAt: new Date().toISOString()
   };
-  
+
   tokens.push(newToken);
   saveAppTokens(tokens);
-  
+
   console.log(`🔑 Created new app token for ${appName}`);
   return newToken;
 }
@@ -92,14 +107,16 @@ export function createAppToken(appName: string, repositoryId: string): AppToken 
 export function validateAppToken(token: string): AppToken | null {
   const tokens = loadAppTokens();
   const appToken = tokens.find(t => t.token === token);
-  
+
   if (appToken) {
     // Update last used timestamp
     appToken.lastUsed = new Date().toISOString();
     saveAppTokens(tokens);
     console.log(`🔑 Valid app token used by ${appToken.appName}`);
+  } else {
+    console.log(`❌ Token validation failed for ${token.substring(0, 8)}...`);
   }
-  
+
   return appToken || null;
 }
 

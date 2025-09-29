@@ -15,7 +15,7 @@ export function validateAppTokenMiddleware(req: AppAuthenticatedRequest, res: Re
     });
   }
 
-  const appToken = require('./app-tokens').validateAppToken(appTokenHeader);
+  const appToken = validateAppToken(appTokenHeader);
 
   if (!appToken) {
     return res.status(401).json({
@@ -25,7 +25,5 @@ export function validateAppTokenMiddleware(req: AppAuthenticatedRequest, res: Re
   }
 
   req.appToken = appToken;
-  console.log(`🔑 App authenticated: ${appToken.appName} (${appToken.repositoryId})`);
-
   next();
 }
