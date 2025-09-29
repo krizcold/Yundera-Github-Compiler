@@ -55,23 +55,13 @@ export async function processRepo(
         cloneOrUpdateRepo(repoConfig, baseDir);
         log(`✅ Repository clone/update completed`, 'success');
       } catch (gitError: any) {
-        log(`⚠️ Git operation failed: ${gitError.message}`, 'warning');
-        gitUpdateSuccessful = false;
+        log(`❌ Git operation failed: ${gitError.message}`, 'error');
 
-        // Check if repository exists locally - we might still be able to work with it
-        if (!fs.existsSync(localRepoPath)) {
-          log(`❌ No local repository found, cannot proceed`, 'error');
-          throw gitError; // If no local repo exists, we can't continue
-        } else {
-          log(`📂 Using existing local repository despite git error`, 'info');
-        }
-      }
-
-
-
-      // Only proceed with build if git was successful or we have a working local repo
-      if (!gitUpdateSuccessful) {
-        log(`⚠️ Proceeding with build using existing local repository`, 'warning');
+        // CRITICAL: If git update fails, we should NOT proceed with build
+        // This would just rebuild the old version without any updates
+        log(`❌ Build aborted: Cannot update without successful git operation`, 'error');
+        updateRepository(repository.id, { status: 'error' });
+        throw new Error(`Git operation failed: ${gitError.message}. Build aborted to prevent installing outdated version.`);
       }
 
       log(`🏗️ Building Docker image from repository...`, 'info');

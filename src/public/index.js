@@ -739,10 +739,10 @@ class RepoManager {
         }
 
         // Proceed with the regular build process (no pre-install warning for re-installs)
-        await this.buildRepo(repoId);
+        await this.buildRepo(repoId, true); // true = isReinstall
     }
 
-    async buildRepo(repoId) {
+    async buildRepo(repoId, isReinstall = false) {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
@@ -754,8 +754,9 @@ class RepoManager {
 
         try {
             // For GitHub repos that are already installed, show update analysis popup
+            // BUT ONLY for actual updates, NOT for re-installs
             let updateResult = null;
-            if (repo.type === 'github' && repo.isInstalled) {
+            if (repo.type === 'github' && repo.isInstalled && !isReinstall) {
                 updateResult = await this.showUpdateAvailablePopup(repo);
                 if (!updateResult || !updateResult.proceed) {
                     // User cancelled - restore button state
@@ -773,7 +774,6 @@ class RepoManager {
                         await axios.put(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`), {
                             yaml: transferredCompose
                         });
-                        console.log('✅ Environment variables transferred successfully');
                     } catch (error) {
                         console.error('❌ CRITICAL: Failed to transfer environment variables:', error);
                         this.showNotification('Error: Failed to transfer environment variables. Update aborted to prevent breaking the application.', 'error');
@@ -1469,6 +1469,98 @@ class RepoManager {
         }
     }
 
+    // Smart docker-compose comparison that ignores environment variable values
+    compareDockerComposeStructure(currentCompose, newCompose) {
+        try {
+            // If they're identical, no changes
+            if (currentCompose === newCompose) {
+                return false;
+            }
+
+            // Parse both YAML files
+            const yaml = window.jsyaml;
+            if (!yaml) {
+                console.warn('js-yaml not available, falling back to string comparison');
+                return currentCompose !== newCompose;
+            }
+
+            // Load YAML with string schema to prevent number precision loss
+            const loadOptions = { schema: yaml.FAILSAFE_SCHEMA };
+            const currentConfig = yaml.load(currentCompose, loadOptions);
+            const newConfig = yaml.load(newCompose, loadOptions);
+
+            // Normalize both configurations (replace env values with placeholders)
+            const normalizedCurrent = this.normalizeDockerComposeForComparison(currentConfig);
+            const normalizedNew = this.normalizeDockerComposeForComparison(newConfig);
+
+            // Compare the normalized structures
+            const currentNormalizedYaml = yaml.dump(normalizedCurrent, { indent: 2, lineWidth: 120 });
+            const newNormalizedYaml = yaml.dump(normalizedNew, { indent: 2, lineWidth: 120 });
+
+            let hasChanges = currentNormalizedYaml !== newNormalizedYaml;
+
+            if (hasChanges) {
+                console.log('🔍 ANALYSIS: Changes detected (structural or formatting)');
+            } else {
+                console.log('🔍 ANALYSIS: Only environment variable values differ, no other changes');
+            }
+
+            return hasChanges;
+
+        } catch (error) {
+            console.warn('Error in smart docker-compose comparison:', error);
+            // Fallback to string comparison if YAML parsing fails
+            return currentCompose !== newCompose;
+        }
+    }
+
+    // Normalize docker-compose for comparison by replacing env values with placeholders
+    normalizeDockerComposeForComparison(config) {
+        if (!config || typeof config !== 'object') {
+            return config;
+        }
+
+        // Deep clone the config to avoid modifying the original
+        const normalized = JSON.parse(JSON.stringify(config));
+
+        // Recursively normalize the structure
+        this.normalizeEnvironmentValues(normalized);
+
+        return normalized;
+    }
+
+    // Recursively find and normalize environment variable values
+    normalizeEnvironmentValues(obj) {
+        if (!obj || typeof obj !== 'object') {
+            return;
+        }
+
+        for (const key in obj) {
+            if (key === 'environment' && obj[key]) {
+                // Handle environment section
+                if (Array.isArray(obj[key])) {
+                    // Array format: ["KEY=value", "KEY2=value2"]
+                    obj[key] = obj[key].map(envVar => {
+                        if (typeof envVar === 'string' && envVar.includes('=')) {
+                            const [envKey] = envVar.split('=', 1);
+                            return `${envKey}=<PLACEHOLDER>`;
+                        }
+                        return envVar;
+                    });
+                } else if (typeof obj[key] === 'object') {
+                    // Object format: {KEY: "value", KEY2: "value2"}
+                    for (const envKey in obj[key]) {
+                        obj[key][envKey] = '<PLACEHOLDER>';
+                    }
+                }
+            } else if (typeof obj[key] === 'object') {
+                // Recursively process nested objects
+                this.normalizeEnvironmentValues(obj[key]);
+            }
+        }
+    }
+
+
     async showDockerComposeChangePopup(composeChangeInfo, repo) {
         return new Promise((resolve) => {
             // Load JSDiff library if not already loaded
@@ -1899,135 +1991,96 @@ class RepoManager {
                 return this.escapeHtml(side === 'old' ? oldText : newText);
             }
 
-            // Pre-identify environment variable ranges for smart detection
-            const envRanges = this.identifyEnvironmentVariableRanges(side === 'old' ? oldText : newText, envTransfers);
-
-            // Always use word-based diffing for granular highlighting
-            const diff = window.Diff.diffWords(oldText, newText);
+            // Use character-based diffing for precise highlighting
+            const diff = window.Diff.diffChars(oldText, newText);
             let html = '';
-            let currentPosition = 0;
 
             for (const part of diff) {
                 const escaped = this.escapeHtml(part.value);
 
-                // Check if this part falls within an environment variable range
-                const partStart = currentPosition;
-                const partEnd = currentPosition + part.value.length;
-                const isInEnvRange = envRanges.some(range =>
-                    (partStart >= range.start && partStart < range.end) ||
-                    (partEnd > range.start && partEnd <= range.end) ||
-                    (partStart <= range.start && partEnd >= range.end)
-                );
-
                 if (side === 'old') {
-                    // For old side: highlight removed parts
                     if (part.removed) {
-                        if (isInEnvRange) {
-                            html += `<span class="diff-env-transfer">${escaped}</span>`;
-                        } else {
-                            html += `<span class="diff-removed">${escaped}</span>`;
-                        }
+                        html += `<span class="diff-removed">${escaped}</span>`;
                     } else if (!part.added) {
+                        // Show unchanged content
                         html += escaped;
                     }
                     // Skip added parts on old side
                 } else {
-                    // For new side: highlight added parts
                     if (part.added) {
-                        if (isInEnvRange) {
-                            html += `<span class="diff-env-transfer">${escaped}</span>`;
-                        } else {
-                            html += `<span class="diff-added">${escaped}</span>`;
-                        }
+                        html += `<span class="diff-added">${escaped}</span>`;
                     } else if (!part.removed) {
+                        // Show unchanged content
                         html += escaped;
                     }
                     // Skip removed parts on new side
                 }
-
-                // Update position for next iteration
-                if ((side === 'old' && !part.added) || (side === 'new' && !part.removed)) {
-                    currentPosition = partEnd;
-                }
             }
 
             return html;
+
         } catch (error) {
-            console.warn('Error generating diff highlight:', error);
+            console.error('Error generating diff highlight:', error);
             return this.escapeHtml(side === 'old' ? oldText : newText);
         }
     }
 
-    // Helper function to identify environment variable ranges in text
-    identifyEnvironmentVariableRanges(text, envTransfers) {
-        if (!envTransfers || envTransfers.size === 0) {
-            return [];
-        }
-
-        const ranges = [];
-        const lines = text.split('\n');
-        let currentPosition = 0;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const lineStart = currentPosition;
-            const lineEnd = currentPosition + line.length;
-
-            // Check if this line contains an environment variable that will be transferred
-            for (const [serviceName, envMap] of envTransfers) {
-                for (const [envKey, transferredValue] of envMap) {
-                    const envPatternArray = new RegExp(`-\\s*${this.escapeRegex(envKey)}\\s*=`);
-                    const envPatternObject = new RegExp(`^\\s*${this.escapeRegex(envKey)}\\s*:`);
-
-                    if (envPatternArray.test(line) || envPatternObject.test(line)) {
-                        ranges.push({
-                            start: lineStart,
-                            end: lineEnd,
-                            envKey: envKey
-                        });
-                        break; // Found match for this line, move to next line
-                    }
-                }
+    // Generate diff highlighting WITH environment transfer (shows yellow highlights on transferred env values)
+    generateDiffWithTransfer(oldText, newText, side) {
+        try {
+            if (!window.Diff) {
+                return this.escapeHtml(side === 'old' ? oldText : newText);
             }
 
-            // Move to next line (including newline character)
-            currentPosition = lineEnd + 1;
-        }
+            if (side === 'old') {
+                // For old side with transfer: show current values with yellow highlights for transferred env vars
+                return this.showEnvironmentPreviewForCurrentSide(oldText, newText);
+            } else {
+                // For new side with transfer: show transferred values with yellow highlighting
+                return this.showEnvironmentPreview(oldText, newText);
+            }
 
-        console.log('🔍 ENV RANGES: Identified ranges:', ranges);
-        return ranges;
+        } catch (error) {
+            console.warn('Error generating diff with transfer:', error);
+            return this.escapeHtml(side === 'old' ? oldText : newText);
+        }
     }
 
-    // Helper function to check if a diff part represents an environment variable transfer
-    isEnvironmentTransfer(diffValue, envTransfers) {
+    // Generate diff highlighting WITHOUT environment transfer (no env highlights)
+    generateDiffWithoutTransfer(oldText, newText, side) {
+        try {
+            // Use structural diff approach - this will show red/green for structural changes
+            // but won't highlight environment values at all
+            return this.generateStructuralDiff(oldText, newText, side);
+
+        } catch (error) {
+            console.warn('Error generating diff without transfer:', error);
+            return this.escapeHtml(side === 'old' ? oldText : newText);
+        }
+    }
+
+
+    // Simple helper to check if content contains environment variables that will be transferred
+    containsEnvironmentVariable(content, envTransfers) {
         if (!envTransfers || envTransfers.size === 0) {
-            console.log('🔍 ENV TRANSFER: No envTransfers provided');
             return false;
         }
 
-        console.log('🔍 ENV TRANSFER: Checking diffValue:', diffValue.slice(0, 200));
-        console.log('🔍 ENV TRANSFER: Available envTransfers:', envTransfers);
-
-        // Check if this diff value contains an environment variable that will be transferred
-        for (const [serviceName, envMap] of envTransfers) {
-            for (const [envKey, transferredValue] of envMap) {
-                // Create more flexible regex patterns for line-based diffs
-                const envPatternArray = new RegExp(`-\\s*${this.escapeRegex(envKey)}\\s*=`, 'm');
-                const envPatternObject = new RegExp(`^\\s*${this.escapeRegex(envKey)}\\s*:`, 'm');
-
-                console.log(`🔍 ENV TRANSFER: Checking ${envKey} with patterns:`, envPatternArray, envPatternObject);
-
-                // Check if the diff value contains this environment variable key
-                if (envPatternArray.test(diffValue) || envPatternObject.test(diffValue)) {
-                    console.log(`✅ ENV TRANSFER: Found match for ${envKey}!`);
-                    return true;
+        // Check each line for environment variables
+        const lines = content.split('\n');
+        for (const line of lines) {
+            for (const [serviceName, envMap] of envTransfers) {
+                for (const [envKey] of envMap) {
+                    // Simple string matching: check if line contains "KEY:"
+                    if (line.includes(`${envKey}:`)) {
+                        return true;
+                    }
                 }
             }
         }
-
-        console.log('❌ ENV TRANSFER: No matches found');
         return false;
     }
+
 
     // Helper function to escape HTML characters
     escapeHtml(text) {
@@ -2054,7 +2107,27 @@ class RepoManager {
         }
 
         if (typeof env === 'object' && env !== null) {
-            return { ...env }; // Return a copy to avoid mutations
+            // Ensure all values are strings to prevent scientific notation issues
+            const result = {};
+            for (const key in env) {
+                const value = env[key];
+
+                // DEBUG: Track number precision corruption
+                if (typeof value === 'number' && value > Number.MAX_SAFE_INTEGER) {
+                    console.warn(`⚠️ PRECISION LOSS DETECTED: ${key} = ${value} (exceeds safe integer limit)`);
+                }
+
+                // Convert all values to strings, preserving the original format
+                const stringValue = typeof value === 'string' ? value : String(value);
+
+                // DEBUG: Track if conversion changed the value
+                if (typeof value === 'number' && stringValue !== String(value)) {
+                    console.warn(`⚠️ VALUE CHANGED during string conversion: ${key} = ${value} → ${stringValue}`);
+                }
+
+                result[key] = stringValue;
+            }
+            return result;
         }
 
         return {};
@@ -2069,21 +2142,20 @@ class RepoManager {
                 document.getElementById('current-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
                 document.getElementById('new-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
             } else if (showEnvTransfer) {
-                // Show environment variable preview without reformatting YAML
-                const newHighlighted = this.showEnvironmentPreview(currentCompose, newCompose);
+                // WITH transfer enabled: both panels show transferred values with yellow highlights
+                const newHighlighted = this.generateDiffWithTransfer(currentCompose, newCompose, 'new');
                 document.getElementById('new-compose').innerHTML = `<pre>${newHighlighted}</pre>`;
 
-                // Show current compose with basic diff highlighting
-                const currentHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'old');
+                // Current side also shows transferred values with yellow highlights
+                const currentHighlighted = this.generateDiffWithTransfer(currentCompose, newCompose, 'old');
                 document.getElementById('current-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
             } else {
-                // Show original files with regular diff highlighting (NO transfer applied)
-                // IMPORTANT: Use original newCompose text to preserve formatting
-                const newHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'new');
+                // WITHOUT transfer: show diffs but no highlighting on environment values
+                const newHighlighted = this.generateDiffWithoutTransfer(currentCompose, newCompose, 'new');
                 document.getElementById('new-compose').innerHTML = `<pre>${newHighlighted}</pre>`;
 
-                // Update current compose highlighting (comparing original versions)
-                const currentHighlighted = this.generateDiffHighlight(currentCompose, newCompose, 'old');
+                // Current side also without env highlighting
+                const currentHighlighted = this.generateDiffWithoutTransfer(currentCompose, newCompose, 'old');
                 document.getElementById('current-compose').innerHTML = `<pre>${currentHighlighted}</pre>`;
             }
         } catch (error) {
@@ -2094,20 +2166,107 @@ class RepoManager {
         }
     }
 
-    // Helper function to show environment variable preview using multi-layer highlighting
-    showEnvironmentPreview(currentCompose, newCompose) {
+    // Helper function to show environment preview for current side (left panel)
+    showEnvironmentPreviewForCurrentSide(currentCompose, newCompose) {
         try {
-            // Step 1: Generate base diff (shows all changes with placeholder values)
-            const baseDiffHTML = this.generateDiffHighlight(currentCompose, newCompose, 'new');
-
-            // Step 2: Parse YAML to build environment transfer map
+            // Step 1: Build environment transfer map
             const envTransfers = this.buildEnvironmentTransferMap(currentCompose, newCompose);
+
             if (envTransfers.size === 0) {
-                return baseDiffHTML;
+                // No environment transfers - use structural diff only
+                return this.generateStructuralDiff(currentCompose, newCompose, 'old');
             }
 
-            // Step 3: Process HTML to replace placeholder values with transferred values
-            const finalHTML = this.processEnvironmentValuesInHTML(baseDiffHTML, envTransfers);
+            // Step 2: Generate structural diff for old side (red/green highlighting for non-env changes)
+            const structuralDiffHTML = this.generateStructuralDiff(currentCompose, newCompose, 'old');
+
+            // Step 3: Add yellow highlighting to current environment values that will be transferred
+            const finalHTML = this.addCurrentSideEnvironmentHighlighting(structuralDiffHTML, envTransfers, currentCompose);
+
+            return finalHTML;
+
+        } catch (error) {
+            console.warn('Error in showEnvironmentPreviewForCurrentSide:', error);
+            return this.generateDiffHighlight(currentCompose, newCompose, 'old');
+        }
+    }
+
+    // Helper function to add yellow highlighting to current side environment values
+    addCurrentSideEnvironmentHighlighting(htmlContent, envTransfers, currentCompose) {
+        try {
+            if (envTransfers.size === 0) {
+                return htmlContent;
+            }
+
+            let result = htmlContent;
+
+            // Get current environment value formatting
+            const currentEnvValues = this.extractEnvironmentValues(currentCompose);
+
+            // Process each environment variable that will be transferred
+            envTransfers.forEach((envMap, serviceName) => {
+                envMap.forEach((transferredValue, envKey) => {
+                    // Get the original formatting from the current compose file
+                    const currentEnvData = currentEnvValues.get(envKey);
+                    if (!currentEnvData) return;
+
+                    // HTML-escape the current value
+                    const currentValueStr = String(transferredValue); // This is the current value
+                    const escapedCurrentValue = this.escapeHtml(currentValueStr);
+
+                    // Build highlighted version based on original quote format
+                    let highlightedValue;
+                    if (currentEnvData.quoteType === 'single') {
+                        highlightedValue = `<span class="diff-env-transfer">'${escapedCurrentValue}'</span>`;
+                    } else if (currentEnvData.quoteType === 'double') {
+                        highlightedValue = `<span class="diff-env-transfer">"${escapedCurrentValue}"</span>`;
+                    } else {
+                        highlightedValue = `<span class="diff-env-transfer">${currentValueStr}</span>`;
+                    }
+
+                    // Replace the restored original value with highlighted current value
+                    // The structural diff has already restored placeholders to original values
+                    const envKeyEscaped = envKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const originalValueEscaped = this.escapeHtml(currentEnvData.value);
+                    const valuePattern = new RegExp(`(${envKeyEscaped}\\s*:\\s*)${originalValueEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+
+                    const beforeReplace = result;
+                    result = result.replace(valuePattern, `$1${highlightedValue}`);
+
+                    if (beforeReplace !== result) {
+                        console.log(`✅ Added yellow highlighting to current ${envKey}`);
+                    } else {
+                        console.log(`⚠️ No match found for current ${envKey} placeholder pattern`);
+                    }
+                });
+            });
+
+            return result;
+
+        } catch (error) {
+            console.warn('Error adding current side environment highlighting:', error);
+            return htmlContent;
+        }
+    }
+
+    // Helper function to show environment preview using two-phase smart diff system
+    showEnvironmentPreview(currentCompose, newCompose) {
+        try {
+            // Step 1: Build environment transfer map
+            const envTransfers = this.buildEnvironmentTransferMap(currentCompose, newCompose);
+
+            if (envTransfers.size === 0) {
+                // No environment transfers - use structural diff only
+                return this.generateStructuralDiff(currentCompose, newCompose, 'new');
+            }
+
+            // Step 2: Generate structural diff (red/green highlighting for non-env changes)
+            // This compares placeholder versions and restores original env values
+            const structuralDiffHTML = this.generateStructuralDiff(currentCompose, newCompose, 'new');
+
+            // Step 3: Add yellow highlighting for transferred environment values
+            // This adds highlighting to specific env values that are being transferred
+            const finalHTML = this.addEnvironmentHighlighting(structuralDiffHTML, envTransfers, currentCompose, newCompose);
 
             return finalHTML;
 
@@ -2115,6 +2274,193 @@ class RepoManager {
             console.warn('Error in showEnvironmentPreview:', error);
             // Fallback: show regular diff highlighting
             return this.generateDiffHighlight(currentCompose, newCompose, 'new');
+        }
+    }
+
+    // Helper function to add yellow highlighting to transferred environment values
+    addEnvironmentHighlighting(htmlContent, envTransfers, currentCompose, newCompose) {
+        try {
+            if (envTransfers.size === 0) {
+                return htmlContent;
+            }
+
+            let result = htmlContent;
+
+            // Get environment value formatting from CURRENT compose (preserve original formatting)
+            const currentEnvValues = this.extractEnvironmentValues(currentCompose);
+            const newEnvValues = this.extractEnvironmentValues(newCompose);
+
+            // Process each environment variable transfer
+            envTransfers.forEach((envMap, serviceName) => {
+                envMap.forEach((transferredValue, envKey) => {
+                    // Get the original formatting from the CURRENT compose file (not new)
+                    const currentEnvData = currentEnvValues.get(envKey);
+                    const newEnvData = newEnvValues.get(envKey);
+                    if (!currentEnvData || !newEnvData) return;
+
+                    // HTML-escape the transferred value for safe insertion
+                    const transferredStr = String(transferredValue);
+                    const escapedTransferredValue = this.escapeHtml(transferredStr);
+
+                    // Build the replacement based on CURRENT compose quote format (preserve original)
+                    let highlightedValue;
+                    if (currentEnvData.quoteType === 'single') {
+                        // Current has single quotes -> use single quotes for transferred value
+                        highlightedValue = `<span class="diff-env-transfer">'${escapedTransferredValue}'</span>`;
+                    } else if (currentEnvData.quoteType === 'double') {
+                        // Current has double quotes -> use double quotes for transferred value
+                        highlightedValue = `<span class="diff-env-transfer">"${escapedTransferredValue}"</span>`;
+                    } else {
+                        // Current has no quotes -> use no quotes for transferred value
+                        highlightedValue = `<span class="diff-env-transfer">${transferredStr}</span>`;
+                    }
+
+                    // Replace the restored original value with highlighted transferred value
+                    // The structural diff has already restored placeholders to original values
+                    const envKeyEscaped = envKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const originalValueEscaped = this.escapeHtml(newEnvData.value);
+                    const valuePattern = new RegExp(`(${envKeyEscaped}\\s*:\\s*)${originalValueEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+
+                    const beforeReplace = result;
+                    result = result.replace(valuePattern, `$1${highlightedValue}`);
+
+                    if (beforeReplace !== result) {
+                        console.log(`✅ Added yellow highlighting to ${envKey} (format: ${newEnvData.quoteType})`);
+                    } else {
+                        console.log(`⚠️ No match found for ${envKey} placeholder pattern`);
+                    }
+                });
+            });
+
+            return result;
+
+        } catch (error) {
+            console.warn('Error adding environment highlighting:', error);
+            return htmlContent;
+        }
+    }
+
+    // Helper function to create placeholder version of docker-compose for structural diff
+    createPlaceholderVersion(composeText) {
+        try {
+            // Replace all environment variable values with <PLACEHOLDER> to isolate structural changes
+            let result = composeText;
+
+            // Pattern to match environment variable assignments with different quote formats
+            const envPatterns = [
+                // Match: KEY: 'any value with single quotes' -> KEY: <PLACEHOLDER>
+                /^(\s*[A-Z_][A-Z0-9_]*\s*:\s*)'[^']*'/gm,
+                // Match: KEY: "any value with double quotes" -> KEY: <PLACEHOLDER>
+                /^(\s*[A-Z_][A-Z0-9_]*\s*:\s*)"[^"]*"/gm,
+                // Match: KEY: unquoted_value -> KEY: <PLACEHOLDER>
+                /^(\s*[A-Z_][A-Z0-9_]*\s*:\s*)([^#\n\s][^#\n]*?)(\s*(?:#.*)?$)/gm
+            ];
+
+            envPatterns.forEach(pattern => {
+                result = result.replace(pattern, '$1<PLACEHOLDER>');
+            });
+
+            return result;
+
+        } catch (error) {
+            console.warn('Error creating placeholder version:', error);
+            return composeText;
+        }
+    }
+
+    // Helper function to extract environment values with their original formatting
+    extractEnvironmentValues(composeText) {
+        try {
+            const envValues = new Map();
+            const lines = composeText.split('\n');
+
+            lines.forEach((line, lineIndex) => {
+                // Check if line contains environment variable assignment
+                const envMatch = line.match(/^(\s*)([A-Z_][A-Z0-9_]*)\s*:\s*(.+?)(\s*(?:#.*)?)$/);
+
+                if (envMatch) {
+                    const [, indent, envKey, value, comment] = envMatch;
+
+                    // Store the complete original formatting
+                    envValues.set(envKey, {
+                        fullLine: line,
+                        indent,
+                        key: envKey,
+                        value: value.trim(),
+                        comment: comment || '',
+                        lineIndex,
+                        // Detect quote format
+                        hasQuotes: value.startsWith('"') || value.startsWith("'"),
+                        quoteType: value.startsWith('"') ? 'double' : (value.startsWith("'") ? 'single' : 'none')
+                    });
+                }
+            });
+
+            return envValues;
+
+        } catch (error) {
+            console.warn('Error extracting environment values:', error);
+            return new Map();
+        }
+    }
+
+    // Helper function to check if a line contains an environment variable assignment
+    isEnvironmentValueLine(line) {
+        // Match lines that look like environment variable assignments
+        // Examples: "      DISCORD_TOKEN: 'value'", "      CLIENT_ID: 123", "GUILD_ID: \"value\""
+        return /^\s*[A-Z_][A-Z0-9_]*\s*:\s*.+/.test(line.trim());
+    }
+
+    // Helper function to generate structural diff (red/green) using placeholder versions
+    generateStructuralDiff(currentCompose, newCompose, side) {
+        try {
+            if (!window.Diff) {
+                return this.escapeHtml(side === 'old' ? currentCompose : newCompose);
+            }
+
+            // Step 1: Create placeholder versions that hide environment values
+            const currentPlaceholder = this.createPlaceholderVersion(currentCompose);
+            const newPlaceholder = this.createPlaceholderVersion(newCompose);
+
+            // Step 2: Generate diff on placeholder versions (shows only structural changes)
+            const diff = window.Diff.diffChars(currentPlaceholder, newPlaceholder);
+            let html = '';
+
+            // Step 3: Apply red/green highlighting only to structural differences
+            for (const part of diff) {
+                const escaped = this.escapeHtml(part.value);
+
+                if (side === 'old') {
+                    if (part.removed) {
+                        html += `<span class="diff-removed">${escaped}</span>`;
+                    } else if (!part.added) {
+                        html += escaped;
+                    }
+                } else {
+                    if (part.added) {
+                        html += `<span class="diff-added">${escaped}</span>`;
+                    } else if (!part.removed) {
+                        html += escaped;
+                    }
+                }
+            }
+
+            // Step 4: Restore ALL environment values from placeholders (preserving exact formatting)
+            // This ensures no environment variable is left as <PLACEHOLDER>
+            const originalEnvValues = this.extractEnvironmentValues(side === 'old' ? currentCompose : newCompose);
+
+            originalEnvValues.forEach((envData, envKey) => {
+                // Replace <PLACEHOLDER> with the original value (preserving exact formatting)
+                const envKeyEscaped = envKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const placeholderPattern = new RegExp(`(${envKeyEscaped}\\s*:\\s*)&lt;PLACEHOLDER&gt;`, 'g');
+                html = html.replace(placeholderPattern, `$1${this.escapeHtml(envData.value)}`);
+            });
+
+            return html;
+
+        } catch (error) {
+            console.warn('Error generating structural diff:', error);
+            return this.escapeHtml(side === 'old' ? currentCompose : newCompose);
         }
     }
 
@@ -2126,8 +2472,10 @@ class RepoManager {
             const yaml = window.jsyaml;
             if (!yaml) return envTransfers;
 
-            const currentConfig = yaml.load(currentCompose);
-            const newConfig = yaml.load(newCompose);
+            // Load YAML with string schema to prevent number precision loss
+            const loadOptions = { schema: yaml.FAILSAFE_SCHEMA };
+            const currentConfig = yaml.load(currentCompose, loadOptions);
+            const newConfig = yaml.load(newCompose, loadOptions);
 
             if (currentConfig?.services && newConfig?.services) {
                 Object.keys(newConfig.services).forEach(serviceName => {
@@ -2139,11 +2487,18 @@ class RepoManager {
                         const newEnv = this.normalizeEnvironment(newService.environment);
 
                         Object.keys(newEnv).forEach(envKey => {
-                            if (currentEnv.hasOwnProperty(envKey) && currentEnv[envKey] !== newEnv[envKey]) {
-                                if (!envTransfers.has(serviceName)) {
-                                    envTransfers.set(serviceName, new Map());
+                            if (currentEnv.hasOwnProperty(envKey)) {
+                                // Convert both to strings for reliable comparison
+                                const currentValue = String(currentEnv[envKey]);
+                                const newValue = String(newEnv[envKey]);
+
+                                if (currentValue !== newValue) {
+                                    if (!envTransfers.has(serviceName)) {
+                                        envTransfers.set(serviceName, new Map());
+                                    }
+                                    // Store original value (preserve type)
+                                    envTransfers.get(serviceName).set(envKey, currentEnv[envKey]);
                                 }
-                                envTransfers.get(serviceName).set(envKey, currentEnv[envKey]);
                             }
                         });
                     }
@@ -2156,56 +2511,6 @@ class RepoManager {
         return envTransfers;
     }
 
-    // Helper function to process environment values in HTML
-    processEnvironmentValuesInHTML(htmlContent, envTransfers) {
-        let processedHTML = htmlContent;
-
-        try {
-            // For each environment variable that needs transfer
-            envTransfers.forEach((envMap, serviceName) => {
-                envMap.forEach((transferredValue, envKey) => {
-
-                    // Fixed patterns that properly handle JSDiff HTML structure
-                    const patterns = [
-                        // Match KEY: '<span class="diff-added">VALUE</span>' format
-                        new RegExp(`(${this.escapeRegex(envKey)}:\\s*'<span[^>]*>)([^<]+?)(<\\/span>')`, 'g'),
-                        // Match KEY: "<span class="diff-added">VALUE</span>" format (double quotes)
-                        new RegExp(`(${this.escapeRegex(envKey)}:\\s*"<span[^>]*>)([^<]+?)(<\\/span>")`, 'g'),
-                        // Match KEY: <span class="diff-added">VALUE</span> format (no quotes around span)
-                        new RegExp(`(${this.escapeRegex(envKey)}:\\s*<span[^>]*>)([^<]+?)(<\\/span>)`, 'g'),
-                        // Array format: - KEY=VALUE with possible span wrapping
-                        new RegExp(`(-\\s*${this.escapeRegex(envKey)}=<span[^>]*>)([^<]+?)(<\\/span>)`, 'g')
-                    ];
-
-                    let replacementCount = 0;
-                    patterns.forEach((pattern, index) => {
-                        const beforeReplace = processedHTML;
-                        processedHTML = processedHTML.replace(pattern, (match, prefix, value, suffix) => {
-                            replacementCount++;
-
-                            // Replace the value and apply environment transfer highlighting
-                            const escapedTransferredValue = this.escapeHtml(transferredValue);
-
-                            // Replace the entire span content with our yellow highlighting
-                            // Transform from: KEY: '<span class="diff-added">OLD_VALUE</span>'
-                            // Transform to:   KEY: '<span class="diff-env-transfer">NEW_VALUE</span>'
-                            let newSuffix = suffix;
-                            if (suffix.includes('</span>')) {
-                                newSuffix = suffix.replace('diff-added', 'diff-env-transfer');
-                            }
-                            return `${prefix}${escapedTransferredValue}${newSuffix}`;
-                        });
-                    });
-
-                });
-            });
-
-        } catch (error) {
-            console.warn('Error processing environment values in HTML:', error);
-        }
-
-        return processedHTML;
-    }
 
     // Helper function to replace only environment sections while preserving YAML formatting
     replaceEnvironmentSectionsInYaml(originalYaml, modifiedConfig, envTransfers) {
@@ -2253,8 +2558,9 @@ class RepoManager {
             // Parse both YAML files to identify actual environment variable changes
             const yaml = window.jsyaml;
             if (yaml) {
-                const originalConfig = yaml.load(originalNew);
-                const processedConfig = yaml.load(processedNew);
+                const loadOptions = { schema: yaml.FAILSAFE_SCHEMA };
+                const originalConfig = yaml.load(originalNew, loadOptions);
+                const processedConfig = yaml.load(processedNew, loadOptions);
 
                 // Find environment variables that were actually added or removed (not just transferred)
                 const envChanges = this.detectEnvironmentVariableChanges(originalConfig, processedConfig);
@@ -2336,120 +2642,87 @@ class RepoManager {
     // Helper function to transfer environment variables between docker compose configurations
     transferEnvironmentVariables(oldCompose, newCompose) {
         try {
-            // Comprehensive input validation
+            // Input validation
             if (!oldCompose || !newCompose || typeof oldCompose !== 'string' || typeof newCompose !== 'string') {
                 console.warn('Invalid input to transferEnvironmentVariables');
                 return newCompose || '';
             }
 
-            const yaml = window.jsyaml || (typeof require !== 'undefined' ? require('js-yaml') : null);
-            if (!yaml) {
-                console.error('YAML parser not available');
+            console.log('🔄 Starting text-based environment transfer for installation...');
+
+            // Build environment transfer map
+            const envTransfers = this.buildEnvironmentTransferMap(oldCompose, newCompose);
+            if (envTransfers.size === 0) {
+                console.log('No environment variables to transfer, returning original newCompose');
                 return newCompose;
             }
 
-            let oldConfig, newConfig;
+            // Get current environment value formatting (preserve original formatting)
+            const currentEnvValues = this.extractEnvironmentValues(oldCompose);
+            let result = newCompose;
+            let transferCount = 0;
 
-            try {
-                oldConfig = yaml.load(oldCompose);
-                newConfig = yaml.load(newCompose);
-            } catch (yamlError) {
-                console.warn('Failed to parse YAML:', yamlError);
-                return newCompose;
-            }
+            // Apply text-based environment transfers (preserves all formatting)
+            envTransfers.forEach((envMap, serviceName) => {
+                envMap.forEach((transferredValue, envKey) => {
+                    // Get the original formatting from the CURRENT compose file
+                    const currentEnvData = currentEnvValues.get(envKey);
+                    if (!currentEnvData) {
+                        console.warn(`Environment variable ${envKey} not found in current compose`);
+                        return;
+                    }
 
-            // Validate parsed configurations
-            if (!oldConfig || !newConfig || typeof oldConfig !== 'object' || typeof newConfig !== 'object') {
-                console.warn('Invalid YAML structure for environment transfer');
-                return newCompose;
-            }
+                    const transferredStr = String(transferredValue);
+                    const envKeyEscaped = envKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-            if (!oldConfig.services || !newConfig.services ||
-                typeof oldConfig.services !== 'object' || typeof newConfig.services !== 'object') {
-                console.warn('No services found in docker-compose configurations');
-                return newCompose;
-            }
+                    // Build replacement value using CURRENT compose formatting (not new compose)
+                    let replacementValue;
+                    if (currentEnvData.quoteType === 'single') {
+                        replacementValue = `'${transferredStr.replace(/'/g, "\\'")}'`;
+                    } else if (currentEnvData.quoteType === 'double') {
+                        replacementValue = `"${transferredStr.replace(/"/g, '\\"')}"`;
+                    } else {
+                        replacementValue = transferredStr;
+                    }
 
-            // Transfer environment variables from old to new services
-            Object.keys(newConfig.services).forEach(serviceName => {
-                // Additional safety checks
-                if (!serviceName || typeof serviceName !== 'string') {
-                    return; // Skip invalid service names
-                }
-
-                const oldService = oldConfig.services[serviceName];
-                const newService = newConfig.services[serviceName];
-
-                // Validate service objects
-                if (!newService || typeof newService !== 'object') {
-                    return; // Skip if new service is invalid
-                }
-
-                // Only transfer if BOTH old and new services have environment variables
-                // This respects when the new version removes environment variables entirely
-                if (oldService && typeof oldService === 'object' &&
-                    oldService.environment && newService.environment) {
-                    // Helper function to normalize environment (local scope since we're not in class context here)
-                    const normalizeEnv = (env) => {
-                        if (!env) return {};
-                        if (Array.isArray(env)) {
-                            const result = {};
-                            env.forEach(item => {
-                                if (typeof item === 'string') {
-                                    const [key, ...valueParts] = item.split('=');
-                                    if (key) {
-                                        result[key] = valueParts.join('=') || '';
-                                    }
-                                }
-                            });
-                            return result;
+                    // Match different patterns in the new compose and replace with transferred value
+                    const patterns = [
+                        // Single quotes: KEY: 'VALUE' -> KEY: 'TRANSFERRED_VALUE'
+                        {
+                            search: new RegExp(`(${envKeyEscaped}:\\s*)'([^']*)'`, 'g'),
+                            replace: `$1${replacementValue}`
+                        },
+                        // Double quotes: KEY: "VALUE" -> KEY: "TRANSFERRED_VALUE"
+                        {
+                            search: new RegExp(`(${envKeyEscaped}:\\s*)"([^"]*)"`, 'g'),
+                            replace: `$1${replacementValue}`
+                        },
+                        // No quotes: KEY: VALUE -> KEY: TRANSFERRED_VALUE
+                        {
+                            search: new RegExp(`(${envKeyEscaped}:\\s*)([^\\s\\n#]+)`, 'g'),
+                            replace: `$1${replacementValue}`
                         }
-                        if (typeof env === 'object' && env !== null) {
-                            return { ...env };
-                        }
-                        return {};
-                    };
+                    ];
 
-                    // Use normalized environment objects for consistent handling
-                    const oldEnvMap = normalizeEnv(oldService.environment);
-                    const newEnvMap = normalizeEnv(newService.environment);
-
-                    // Transfer values from old to new for matching keys only
-                    const transferredEnvMap = { ...newEnvMap }; // Start with new structure
-                    Object.keys(newEnvMap).forEach(key => {
-                        if (oldEnvMap.hasOwnProperty(key)) {
-                            transferredEnvMap[key] = oldEnvMap[key]; // Transfer old value
+                    // Apply the replacement
+                    patterns.forEach(({search, replace}) => {
+                        const beforeReplace = result;
+                        result = result.replace(search, replace);
+                        if (beforeReplace !== result) {
+                            transferCount++;
+                            console.log(`✅ Transferred ${envKey} with format: ${currentEnvData.quoteType}`);
+                            return; // Stop after first successful replacement
                         }
                     });
-
-                    // Convert back to the same format as the new configuration
-                    if (Array.isArray(newService.environment)) {
-                        newService.environment = Object.keys(transferredEnvMap).map(key =>
-                            `${key}=${transferredEnvMap[key]}`
-                        );
-                    } else {
-                        newService.environment = transferredEnvMap;
-                    }
-                }
-                // If newService.environment is null/undefined, we leave it that way
-                // This ensures services without environment variables stay that way
+                });
             });
 
-            // Final safety check before dumping YAML
-            try {
-                const result = yaml.dump(newConfig, {
-                    indent: 2,
-                    lineWidth: 120,
-                    noRefs: true
-                });
-                return result || newCompose; // Fallback if dump returns empty string
-            } catch (dumpError) {
-                console.warn('Failed to dump YAML after environment transfer:', dumpError);
-                return newCompose;
-            }
+            console.log(`✅ Text-based environment transfer complete: ${transferCount} variables transferred`);
+            return result;
+
         } catch (error) {
             console.error('Error transferring environment variables:', error);
-            return newCompose || ''; // Ensure we always return a string
+            return newCompose || '';
         }
     }
 
@@ -2715,21 +2988,19 @@ class RepoManager {
         const currentTrimmed = currentDockerCompose.trim();
         const latestTrimmed = latestDockerCompose.trim();
 
-        console.log('🔍 ANALYSIS: Comparing docker-compose files...');
-        console.log('🔍 ANALYSIS: Current (user has) length:', currentTrimmed.length);
-        console.log('🔍 ANALYSIS: Latest (from GitHub) length:', latestTrimmed.length);
-        console.log('🔍 ANALYSIS: Content comparison (first 100 chars):');
-        console.log('🔍 ANALYSIS: Current: "' + currentTrimmed.substring(0, 100) + '"');
-        console.log('🔍 ANALYSIS: Latest:  "' + latestTrimmed.substring(0, 100) + '"');
-        console.log('🔍 ANALYSIS: Are they identical?', currentTrimmed === latestTrimmed);
+        console.log('🔍 ANALYSIS: Comparing docker-compose files using smart comparison...');
 
-        if (currentTrimmed === latestTrimmed) {
-            // No changes, proceed with normal installation
-            console.log('🔍 ANALYSIS: No changes detected, proceeding with normal installation');
+        // Smart comparison: ignore environment variable values, focus on structure
+        const structuralChanges = this.compareDockerComposeStructure(currentTrimmed, latestTrimmed);
+        console.log('🔍 ANALYSIS: Structural changes detected:', structuralChanges);
+
+        if (!structuralChanges) {
+            // No structural changes, proceed with normal installation
+            console.log('🔍 ANALYSIS: No structural changes detected, proceeding with normal installation');
             return { proceed: true, composeChanged: false };
         }
 
-        // Compose has changed, return change info for comparison popup
+        // Structural changes detected, return change info for comparison popup
         console.log('🔍 ANALYSIS: Changes detected! Showing comparison popup');
         return {
             proceed: true,

@@ -83,11 +83,73 @@ export function cloneOrUpdateRepo(repo: RepoConfig, baseDir: string): void {
         env: gitEnv
       });
 
+      // Check if we're in a detached HEAD state and fix it
+      try {
+        const currentBranch = execSync(`git -C "${repoDir}" branch --show-current`, { encoding: 'utf8', env: gitEnv }).toString().trim();
+        if (!currentBranch) {
+          console.log(`🔧 Detected detached HEAD, switching to main branch...`);
+          execSync(`git -C "${repoDir}" checkout main`, {
+            stdio: "inherit",
+            env: gitEnv
+          });
+        }
+      } catch (branchError) {
+        // If main doesn't exist, try master
+        try {
+          execSync(`git -C "${repoDir}" checkout master`, {
+            stdio: "inherit",
+            env: gitEnv
+          });
+        } catch (masterError) {
+          console.warn(`⚠️ Could not switch to main/master branch: ${branchError}`);
+        }
+      }
+
       // Try to pull - if this fails, we'll handle it in the repository processor
-      execSync(`git -C "${repoDir}" pull`, {
-        stdio: "inherit",
-        env: gitEnv
-      });
+      try {
+        execSync(`git -C "${repoDir}" pull`, {
+          stdio: "inherit",
+          env: gitEnv
+        });
+      } catch (pullError: any) {
+        // Get more detailed git status for debugging
+        let gitStatus = '';
+        let gitBranch = '';
+        try {
+          gitStatus = execSync(`git -C "${repoDir}" status --porcelain`, { encoding: 'utf8', env: gitEnv }).toString().trim();
+          gitBranch = execSync(`git -C "${repoDir}" branch --show-current`, { encoding: 'utf8', env: gitEnv }).toString().trim();
+        } catch (statusError) {
+          // Ignore status errors
+        }
+
+        console.error(`❌ Git pull failed for ${repo.url}`);
+        console.error(`📍 Current branch: ${gitBranch || 'unknown'}`);
+        console.error(`📊 Git status: ${gitStatus || 'clean'}`);
+        console.error(`💥 Pull error: ${pullError.message}`);
+
+        // Try to resolve common issues automatically
+        if (pullError.message.includes('divergent branches') ||
+            pullError.message.includes('merge conflict') ||
+            pullError.message.includes('Your branch and') ||
+            gitStatus.length > 0) {
+
+          console.log(`🔧 Attempting to resolve git state by resetting to remote...`);
+
+          try {
+            // Reset to remote state (this will discard local changes)
+            execSync(`git -C "${repoDir}" reset --hard origin/${gitBranch || 'main'}`, {
+              stdio: "inherit",
+              env: gitEnv
+            });
+            console.log(`✅ Successfully reset to remote state`);
+          } catch (resetError: any) {
+            console.error(`❌ Failed to reset: ${resetError.message}`);
+            throw pullError; // Re-throw original error
+          }
+        } else {
+          throw pullError; // Re-throw if we can't handle it
+        }
+      }
     }
   } catch (error: any) {
     console.error(`❌ Git operation failed for ${repo.url}:`, error.message);
