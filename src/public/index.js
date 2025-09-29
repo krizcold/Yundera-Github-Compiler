@@ -2233,11 +2233,7 @@ class RepoManager {
                     const beforeReplace = result;
                     result = result.replace(valuePattern, `$1${highlightedValue}`);
 
-                    if (beforeReplace !== result) {
-                        console.log(`✅ Added yellow highlighting to current ${envKey}`);
-                    } else {
-                        console.log(`⚠️ No match found for current ${envKey} placeholder pattern`);
-                    }
+                    // Silently apply highlighting
                 });
             });
 
@@ -2324,11 +2320,7 @@ class RepoManager {
                     const beforeReplace = result;
                     result = result.replace(valuePattern, `$1${highlightedValue}`);
 
-                    if (beforeReplace !== result) {
-                        console.log(`✅ Added yellow highlighting to ${envKey} (format: ${newEnvData.quoteType})`);
-                    } else {
-                        console.log(`⚠️ No match found for ${envKey} placeholder pattern`);
-                    }
+                    // Silently apply highlighting
                 });
             });
 
@@ -2648,7 +2640,7 @@ class RepoManager {
                 return newCompose || '';
             }
 
-            console.log('🔄 Starting text-based environment transfer for installation...');
+            // Starting environment transfer for installation
 
             // Build environment transfer map
             const envTransfers = this.buildEnvironmentTransferMap(oldCompose, newCompose);
@@ -2710,14 +2702,13 @@ class RepoManager {
                         result = result.replace(search, replace);
                         if (beforeReplace !== result) {
                             transferCount++;
-                            console.log(`✅ Transferred ${envKey} with format: ${currentEnvData.quoteType}`);
                             return; // Stop after first successful replacement
                         }
                     });
                 });
             });
 
-            console.log(`✅ Text-based environment transfer complete: ${transferCount} variables transferred`);
+            // Environment transfer complete
             return result;
 
         } catch (error) {
