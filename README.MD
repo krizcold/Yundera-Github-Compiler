@@ -576,6 +576,54 @@ async function manualUpdate() {
 - **No Admin Access**: Apps cannot access AUTH_HASH or perform admin functions
 - **Automatic Management**: Tokens created during installation, removed during uninstallation
 
+#### Docker-Compose Change Detection
+
+**IMPORTANT**: App API updates are automatically blocked when docker-compose.yml changes are detected.
+
+**Behavior:**
+- **Dashboard Updates**: Show manual review popup with diff comparison and environment transfer options
+- **App API Updates**: Automatically rejected with HTTP 409 Conflict response
+
+**When `POST /api/app/update` Detects Changes:**
+```json
+{
+  "success": false,
+  "code": "COMPOSE_CHANGED",
+  "message": "The docker-compose.yml file has changed and requires manual review on the server",
+  "requiresManualReview": true,
+  "appName": "your-app-name",
+  "repositoryId": "repo-id"
+}
+```
+
+**Handling COMPOSE_CHANGED in Your App:**
+```javascript
+async function triggerUpdate() {
+  try {
+    const response = await axios.post(`${API_BASE}/update`, {}, {
+      headers: { 'X-App-Token': APP_TOKEN }
+    });
+
+    if (response.data.success) {
+      console.log('Update started successfully');
+    }
+  } catch (error) {
+    if (error.response?.status === 409 && error.response?.data?.code === 'COMPOSE_CHANGED') {
+      console.log('Update blocked: Docker-compose changes require manual server review');
+      console.log('Please update via the GitHub Compiler dashboard');
+      // Notify user to manually review changes on server
+    } else {
+      console.error('Update failed:', error.message);
+    }
+  }
+}
+```
+
+**Security Rationale:**
+- Prevents automatic deployment of potentially unsafe configuration changes
+- Ensures docker-compose modifications are manually reviewed by server administrators
+- Maintains environment variable consistency and prevents token mismatches
+
 #### Troubleshooting Network Issues
 
 **Common Error: Connection Refused**
