@@ -5,3 +5,4 @@ app/repos/*
 package-lock.json
 CLAUDE.md
 .claude/settings.local.json
+/nginxhashlock
