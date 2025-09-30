@@ -324,6 +324,78 @@
             padding: 7px 11px;
         }
 
+        .url-lock-btn {
+            background: none;
+            border: 1px solid var(--gray-300);
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: var(--gray-600);
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 34px;
+            height: 34px;
+        }
+
+        .url-lock-btn:hover {
+            background-color: var(--gray-100);
+            color: var(--gray-800);
+            border-color: var(--gray-400);
+        }
+
+        .url-lock-btn.editing {
+            color: var(--warning-color);
+            border-color: var(--warning-color);
+            background-color: #fef3c7;
+        }
+
+        .url-lock-btn.editing:hover {
+            background-color: #fde68a;
+        }
+
+        .url-save-btn {
+            background-color: var(--success-color);
+            border: none;
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 34px;
+            height: 34px;
+        }
+
+        .url-save-btn:hover {
+            background-color: #047857;
+        }
+
+        .url-cancel-btn {
+            background: none;
+            border: 1px solid var(--danger-color);
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: var(--danger-color);
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 34px;
+            height: 34px;
+        }
+
+        .url-cancel-btn:hover {
+            background-color: #fee2e2;
+        }
+
 
         .version-info {
             display: flex;
@@ -747,6 +819,47 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('settings-modal')">Cancel</button>
                 <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- URL Change Warning Modal -->
+    <div class="modal" id="url-warning-modal">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle" style="color: var(--warning-color);"></i> URL Change Warning</h3>
+                <button class="close-btn" onclick="repoManager.cancelUrlChange()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="url-warning-content" style="display: flex; flex-direction: column; gap: 15px;">
+                    <div style="padding: 12px; background-color: #fef3c7; border-left: 4px solid var(--warning-color); border-radius: 4px;">
+                        <strong>⚠️ Warning:</strong>
+                        <p id="url-warning-message" style="margin: 8px 0 0 0; color: var(--gray-700);"></p>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div>
+                            <strong>Current URL:</strong>
+                            <p id="url-current" style="margin: 4px 0; color: var(--gray-600); word-break: break-all; font-size: 13px; font-family: monospace;"></p>
+                        </div>
+                        <div>
+                            <strong>New URL:</strong>
+                            <p id="url-new" style="margin: 4px 0; color: var(--gray-600); word-break: break-all; font-size: 13px; font-family: monospace;"></p>
+                        </div>
+                    </div>
+                    <div style="padding: 12px; background-color: var(--gray-100); border-radius: 4px;">
+                        <p style="margin: 0; color: var(--gray-700); font-size: 14px;">
+                            Do you want to proceed with this URL change?
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="repoManager.cancelUrlChange()">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+                <button class="btn btn-warning" onclick="repoManager.confirmUrlChange()">
+                    <i class="fas fa-check"></i> Confirm Change
+                </button>
             </div>
         </div>
     </div>

@@ -21,6 +21,13 @@ class RepoManager {
             type: 'github',
             url: ''
         };
+        // State for URL editing
+        this.urlEditState = {
+            repoId: null,
+            originalUrl: null,
+            newUrl: null,
+            isEditing: false
+        };
         this.activeOperations = new Set();
         // Protection mechanism for button state restoration
         this.protectedRepos = new Map(); // repoId -> timestamp when protection expires
@@ -384,11 +391,29 @@ class RepoManager {
                         ${typeDropdownHTML}
                     </div>
                     <div class="repo-url" style="${repoType === 'compose' ? 'display: none;' : 'display: flex;'}">
-                        <input type="text" 
-                               placeholder="https://github.com/username/repository.git" 
+                        <input type="text"
+                               id="url-input-${repoId}"
+                               placeholder="https://github.com/username/repository.git"
                                value="${repoUrl}"
                                oninput="repoManager.handleUrlChange('${repoId}', this.value)"
-                               ${!isEmpty ? 'disabled' : ''}>
+                               ${!isEmpty && !(this.urlEditState.isEditing && this.urlEditState.repoId === repoId) ? 'disabled' : ''}>
+                        ${!isEmpty && repoType === 'github' ? `
+                            ${!(this.urlEditState.isEditing && this.urlEditState.repoId === repoId) ? `
+                                <button id="url-lock-btn-${repoId}"
+                                        class="url-lock-btn"
+                                        onclick="repoManager.toggleUrlEdit('${repoId}')"
+                                        title="Edit URL">
+                                    <i class="fas fa-lock"></i>
+                                </button>
+                            ` : `
+                                <button class="url-save-btn" onclick="repoManager.saveUrlChange('${repoId}')" title="Save URL">
+                                    <i class="fas fa-check"></i>
+                                </button>
+                                <button class="url-cancel-btn" onclick="repoManager.cancelUrlEdit('${repoId}')" title="Cancel">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            `}
+                        ` : ''}
                     </div>
                 </div>
                 <div class="repo-settings">
@@ -964,6 +989,246 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo || repo.id === 'empty') return;
         await this.updateRepoSettings(repoId, { apiUpdatesEnabled: !repo.apiUpdatesEnabled });
+    }
+
+    // URL Editing Functions
+    toggleUrlEdit(repoId) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo || repo.id === 'empty') return;
+
+        if (this.urlEditState.isEditing && this.urlEditState.repoId === repoId) {
+            // Already editing, do nothing (user should use save or cancel)
+            return;
+        }
+
+        // Start editing mode
+        this.urlEditState = {
+            repoId: repoId,
+            originalUrl: repo.url,
+            newUrl: repo.url,
+            isEditing: true
+        };
+
+        // Re-render to show edit controls
+        this.renderReposWithStatePreservation();
+    }
+
+    cancelUrlEdit(repoId) {
+        // Reset edit state
+        this.urlEditState = {
+            repoId: null,
+            originalUrl: null,
+            newUrl: null,
+            isEditing: false
+        };
+
+        // Re-render to hide edit controls and restore original URL
+        this.renderReposWithStatePreservation();
+    }
+
+    async saveUrlChange(repoId) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo || repo.id === 'empty') return;
+
+        const urlInput = document.getElementById(`url-input-${repoId}`);
+        if (!urlInput) return;
+
+        const newUrl = urlInput.value.trim();
+        const oldUrl = this.urlEditState.originalUrl;
+
+        // Check if URL actually changed
+        if (newUrl === oldUrl) {
+            this.showNotification('URL unchanged', 'info');
+            this.cancelUrlEdit(repoId);
+            return;
+        }
+
+        // Validate URL format
+        if (!newUrl || newUrl === '') {
+            this.showNotification('URL cannot be empty', 'error');
+            return;
+        }
+
+        // Store the new URL for validation
+        this.urlEditState.newUrl = newUrl;
+
+        // Validate the new URL
+        try {
+            const validationResult = await this.validateGithubUrl(newUrl, oldUrl);
+
+            if (validationResult.needsWarning) {
+                // Show warning modal
+                this.showUrlWarningModal(repoId, oldUrl, newUrl, validationResult.message);
+            } else {
+                // URL is safe, proceed with update
+                await this.performUrlUpdate(repoId, newUrl);
+            }
+        } catch (error) {
+            this.showNotification(`Failed to validate URL: ${error.message}`, 'error');
+        }
+    }
+
+    async validateGithubUrl(newUrl, oldUrl) {
+        try {
+            // Basic URL format validation
+            let urlObj;
+            try {
+                urlObj = new URL(newUrl);
+            } catch (e) {
+                return {
+                    needsWarning: true,
+                    message: 'Invalid URL format. The URL does not appear to be valid.'
+                };
+            }
+
+            // Check if it's a GitHub URL
+            if (!newUrl.includes('github.com')) {
+                return {
+                    needsWarning: true,
+                    message: 'This does not appear to be a GitHub URL. Please verify this is the correct repository.'
+                };
+            }
+
+            // Extract repository info from URLs
+            const extractRepoInfo = (url) => {
+                try {
+                    const urlObj = new URL(url);
+                    const pathParts = urlObj.pathname.split('/').filter(p => p);
+                    if (pathParts.length >= 2) {
+                        return {
+                            owner: pathParts[0],
+                            repo: pathParts[1].replace('.git', '')
+                        };
+                    }
+                } catch (e) {
+                    return null;
+                }
+                return null;
+            };
+
+            const oldRepo = extractRepoInfo(oldUrl);
+            const newRepo = extractRepoInfo(newUrl);
+
+            // Check if it's a different project
+            if (oldRepo && newRepo) {
+                const isDifferentOwner = oldRepo.owner !== newRepo.owner;
+                const isDifferentRepo = oldRepo.repo !== newRepo.repo;
+
+                if (isDifferentOwner || isDifferentRepo) {
+                    let message = 'The new URL points to a DIFFERENT project. ';
+                    if (isDifferentOwner && isDifferentRepo) {
+                        message += `You are changing from "${oldRepo.owner}/${oldRepo.repo}" to "${newRepo.owner}/${newRepo.repo}".`;
+                    } else if (isDifferentOwner) {
+                        message += `The repository owner is changing from "${oldRepo.owner}" to "${newRepo.owner}".`;
+                    } else {
+                        message += `The repository name is changing from "${oldRepo.repo}" to "${newRepo.repo}".`;
+                    }
+                    return {
+                        needsWarning: true,
+                        message: message
+                    };
+                }
+            }
+
+            // Try to check if URL is accessible (basic check)
+            try {
+                const response = await axios.get(this.addHashToUrl('/api/admin/validate-github-url'), {
+                    params: { url: newUrl }
+                });
+
+                if (!response.data.success) {
+                    return {
+                        needsWarning: true,
+                        message: response.data.message || 'Unable to access the GitHub repository. It may not exist, be private, or your GitHub PAT may be invalid/expired.'
+                    };
+                }
+            } catch (error) {
+                // If validation endpoint doesn't exist, skip this check
+                console.warn('URL validation endpoint not available:', error);
+            }
+
+            // URL looks good
+            return {
+                needsWarning: false,
+                message: 'URL is valid'
+            };
+
+        } catch (error) {
+            return {
+                needsWarning: true,
+                message: `Validation error: ${error.message}`
+            };
+        }
+    }
+
+    showUrlWarningModal(repoId, oldUrl, newUrl, warningMessage) {
+        const modal = document.getElementById('url-warning-modal');
+        const messageEl = document.getElementById('url-warning-message');
+        const currentUrlEl = document.getElementById('url-current');
+        const newUrlEl = document.getElementById('url-new');
+
+        messageEl.textContent = warningMessage;
+        currentUrlEl.textContent = oldUrl;
+        newUrlEl.textContent = newUrl;
+
+        modal.style.display = 'block';
+    }
+
+    async confirmUrlChange() {
+        const repoId = this.urlEditState.repoId;
+        const newUrl = this.urlEditState.newUrl;
+
+        // Close modal
+        document.getElementById('url-warning-modal').style.display = 'none';
+
+        // Perform the update
+        await this.performUrlUpdate(repoId, newUrl);
+    }
+
+    cancelUrlChange() {
+        // Close modal
+        document.getElementById('url-warning-modal').style.display = 'none';
+
+        // Reset URL input to original value
+        if (this.urlEditState.repoId) {
+            const urlInput = document.getElementById(`url-input-${this.urlEditState.repoId}`);
+            if (urlInput && this.urlEditState.originalUrl) {
+                urlInput.value = this.urlEditState.originalUrl;
+            }
+        }
+
+        // Cancel edit mode
+        this.cancelUrlEdit(this.urlEditState.repoId);
+    }
+
+    async performUrlUpdate(repoId, newUrl) {
+        try {
+            this.showNotification('Updating repository URL...', 'info');
+
+            const response = await axios.put(this.addHashToUrl(`/api/admin/repos/${repoId}`), {
+                url: newUrl
+            });
+
+            if (response.data.success) {
+                this.showNotification('Repository URL updated successfully', 'success');
+
+                // Reset edit state
+                this.urlEditState = {
+                    repoId: null,
+                    originalUrl: null,
+                    newUrl: null,
+                    isEditing: false
+                };
+
+                // Reload repositories
+                await this.loadRepos();
+            } else {
+                throw new Error(response.data.message || 'Failed to update URL');
+            }
+        } catch (error) {
+            const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
+            this.showNotification(`Failed to update URL: ${errorMessage}`, 'error');
+        }
     }
 
     openSettingsModal() {

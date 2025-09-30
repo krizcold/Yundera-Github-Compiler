@@ -898,15 +898,81 @@ app.post("/api/admin/repos/:id/compile", async (req, res) => {
   }
 });
 
+// GET /api/admin/validate-github-url - Validate GitHub repository URL
+app.get("/api/admin/validate-github-url", async (req, res) => {
+  const { url } = req.query;
+
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ success: false, message: "URL parameter is required" });
+  }
+
+  try {
+    // Basic validation: check if it's a valid URL
+    let urlObj;
+    try {
+      urlObj = new URL(url);
+    } catch (e) {
+      return res.json({ success: false, message: "Invalid URL format" });
+    }
+
+    // Check if it's a GitHub URL
+    if (!url.includes('github.com')) {
+      return res.json({ success: false, message: "Not a GitHub URL" });
+    }
+
+    // Try to test the URL by attempting a simple git ls-remote
+    // This will check if the repository is accessible with current credentials
+    try {
+      const gitEnv = {
+        ...process.env,
+        GIT_SSL_NO_VERIFY: '1',
+        GIT_TERMINAL_PROMPT: '0'
+      };
+
+      execSync(`git ls-remote "${url}" HEAD`, {
+        stdio: 'pipe',
+        env: gitEnv,
+        timeout: 10000 // 10 second timeout
+      });
+
+      // If we get here, the repository is accessible
+      return res.json({ success: true, message: "Repository is accessible" });
+    } catch (gitError: any) {
+      // Check the error message to provide better feedback
+      const errorMsg = gitError.message || '';
+
+      if (errorMsg.includes('Authentication failed') || errorMsg.includes('could not read Username')) {
+        return res.json({
+          success: false,
+          message: "Repository requires authentication. Please check your GitHub PAT token."
+        });
+      } else if (errorMsg.includes('not found') || errorMsg.includes('Repository not found')) {
+        return res.json({
+          success: false,
+          message: "Repository not found. It may not exist or you may not have access."
+        });
+      } else {
+        return res.json({
+          success: false,
+          message: "Unable to access repository. Please verify the URL and your credentials."
+        });
+      }
+    }
+  } catch (error: any) {
+    console.error('Error validating GitHub URL:', error);
+    res.status(500).json({ success: false, message: error.message || "Validation failed" });
+  }
+});
+
 // GET /api/repos/:id/compose - Get docker-compose.yml content
 app.get("/api/admin/repos/:id/compose", async (req, res) => {
   const { id } = req.params;
   const repo = getRepository(id);
-  
+
   if (!repo) {
     return res.status(400).json({ success: false, message: "Repository not found" });
   }
-  
+
   try {
     // First try to get from modified docker-compose in memory
     if (repo.modifiedDockerCompose) {
@@ -922,19 +988,19 @@ app.get("/api/admin/repos/:id/compose", async (req, res) => {
       res.json({ success: true, yaml: yamlContent });
       return;
     }
-    
+
     // Fallback: try to read from cloned repo (if repo has URL)
     if (repo.url) {
       const repoPath = repo.url.replace(/\.git$/, '').split('/').pop() || 'repo';
       const clonedComposePath = path.join(baseDir, repoPath, "docker-compose.yml");
-      
+
       if (fs.existsSync(clonedComposePath)) {
         const yamlContent = fs.readFileSync(clonedComposePath, 'utf8');
         res.json({ success: true, yaml: yamlContent });
         return;
       }
     }
-    
+
     // No compose file found
     res.json({ success: true, yaml: "# No docker-compose.yml found\n# Add your Docker Compose configuration here" });
   } catch (error: any) {
