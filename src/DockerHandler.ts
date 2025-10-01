@@ -38,8 +38,7 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
   let serviceToBuild;
   
   if (isGitHubRepo) {
-    // For GitHub repos, use the main service from x-casaos
-    serviceToBuildKey = origDoc['x-casaos']?.main;
+    serviceToBuildKey = origDoc['x-casaos']?.build || origDoc['x-casaos']?.main;
     if (serviceToBuildKey && origDoc.services[serviceToBuildKey]) {
       serviceToBuild = origDoc.services[serviceToBuildKey];
       
@@ -52,7 +51,7 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
         return null;
       }
     } else {
-      console.log(`⚠️ No main service defined in x-casaos for ${repo.path}. Skipping image build.`);
+      console.log(`⚠️ No build or main service defined in x-casaos for ${repo.path}. Skipping image build.`);
       return null;
     }
   } else {
