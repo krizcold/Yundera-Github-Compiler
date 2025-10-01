@@ -19,7 +19,7 @@ interface RepoConfig {
   autoUpdate: boolean;
 }
 
-export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGitHubRepo: boolean = false, logCollector?: any): Promise<string | null> {
+export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGitHubRepo: boolean = false, logCollector?: any): Promise<{ imageName: string; serviceName: string } | null> {
   const repoDir = path.join(baseDir, repo.path);
   const composeSrc = path.join(repoDir, "docker-compose.yml");
   if (!fs.existsSync(composeSrc)) {
@@ -118,7 +118,7 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
     console.log(`🔄 Executing build: docker ${buildArgs.join(' ')}`);
     
     // Use spawn to stream progress like CasaOSInstaller does
-    return new Promise<string | null>((resolve, reject) => {
+    return new Promise<{ imageName: string; serviceName: string } | null>((resolve, reject) => {
       // Only enable BuildKit if buildx is available
       const env = { ...process.env };
       if (isBuildxAvailable()) {
@@ -151,8 +151,7 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
       child.on('close', (code) => {
         if (code === 0) {
           console.log(`✅ [${repo.path}] Docker build for image '${localTag}' completed successfully`);
-          // Return the local image name for GitHub repos so it can be used in compose file
-          resolve(isGitHubRepo ? localTag : null);
+          resolve(isGitHubRepo ? { imageName: localTag, serviceName: serviceToBuildKey! } : null);
         } else {
           console.error(`❌ [${repo.path}] Docker build exited with code ${code}`);
           reject(new Error(`Docker build failed for ${repo.path}: exit code ${code}`));

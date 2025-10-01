@@ -327,13 +327,8 @@ export async function syncWithCasaOS() {
       
       if (fs.existsSync(composePath)) {
         try {
-          const yaml = require('yaml');
           const composeContent = fs.readFileSync(composePath, 'utf8');
-          const composeData = yaml.parse(composeContent);
-          
-          if (composeData.services && Object.keys(composeData.services).length > 0) {
-            appNameToCheck = Object.keys(composeData.services)[0];
-          }
+          appNameToCheck = getAppNameFromCompose(composeContent);
         } catch (error) {
           // If we can't parse, fall back to repo name
         }
@@ -363,16 +358,18 @@ export async function syncWithCasaOS() {
       const needsUpdate = !isInIntermediateState && (
         repo.isInstalled !== isInstalledInCasaOS ||
         repo.isRunning !== isRunning ||
-        repo.installMismatch
+        repo.installMismatch ||
+        repo.appName !== appNameToCheck
       );
-      
+
       if (needsUpdate) {
         const updates: any = {
           isInstalled: isInstalledInCasaOS,
           isRunning: isRunning,
-          installMismatch: false
+          installMismatch: false,
+          appName: appNameToCheck
         };
-        
+
         updateRepository(repo.id, updates);
         
         if (repo.isInstalled !== isInstalledInCasaOS) {
@@ -472,18 +469,19 @@ function getAppNameFromCompose(yamlContent: string): string {
   try {
     const yaml = require('yaml');
     const composeData = yaml.parse(yamlContent);
-    
-    // Priority: x-casaos.store_app_id
+
     if (composeData['x-casaos'] && composeData['x-casaos'].store_app_id) {
         return composeData['x-casaos'].store_app_id;
     }
-    
-    // Fallback: x-casaos.main service name
+
+    if (composeData.name) {
+        return composeData.name;
+    }
+
     if (composeData['x-casaos'] && composeData['x-casaos'].main && composeData.services && composeData.services[composeData['x-casaos'].main]) {
         return composeData['x-casaos'].main;
     }
 
-    // Fallback: first service name
     if (composeData.services && Object.keys(composeData.services).length > 0) {
         return Object.keys(composeData.services)[0];
     }
@@ -1072,19 +1070,13 @@ app.delete("/api/admin/repos/:id", async (req, res) => {
   try {
     // First, uninstall the app from CasaOS if it's installed
     if (repo.isInstalled) {
-      // Get app name from docker-compose.yml
       let appNameToUninstall = repo.name;
       const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-      
+
       if (fs.existsSync(composePath)) {
         try {
-          const yaml = require('yaml');
           const composeContent = fs.readFileSync(composePath, 'utf8');
-          const composeData = yaml.parse(composeContent);
-          
-          if (composeData.services && Object.keys(composeData.services).length > 0) {
-            appNameToUninstall = Object.keys(composeData.services)[0];
-          }
+          appNameToUninstall = getAppNameFromCompose(composeContent);
         } catch (error) {
           console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
         }
@@ -1141,24 +1133,14 @@ app.delete("/api/admin/repos/:id", async (req, res) => {
         console.error(`⚠️ Failed to clean up persistent storage for ${repo.name}:`, error.message);
       }
       
-      // Handle app data directory based on preserveData setting
-      // Use the same app name logic as the uninstall process
       let appDataDirName = repo.name;
       const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-      
+
       if (fs.existsSync(composePath)) {
         try {
-          const yaml = require('yaml');
           const composeContent = fs.readFileSync(composePath, 'utf8');
-          const composeData = yaml.parse(composeContent);
-          
-          if (composeData.name) {
-            appDataDirName = composeData.name;
-          } else if (composeData.services && Object.keys(composeData.services).length > 0) {
-            appDataDirName = Object.keys(composeData.services)[0];
-          }
+          appDataDirName = getAppNameFromCompose(composeContent);
         } catch (error) {
-          // Use repo.name as fallback
         }
       }
       
@@ -1484,19 +1466,13 @@ app.post("/api/admin/repos/:id/uninstall", async (req, res) => {
   }
   
   try {
-    // Get app name from docker-compose.yml
     let appNameToUninstall = repo.name;
     const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-    
+
     if (fs.existsSync(composePath)) {
       try {
-        const yaml = require('yaml');
         const composeContent = fs.readFileSync(composePath, 'utf8');
-        const composeData = yaml.parse(composeContent);
-        
-        if (composeData.services && Object.keys(composeData.services).length > 0) {
-          appNameToUninstall = Object.keys(composeData.services)[0];
-        }
+        appNameToUninstall = getAppNameFromCompose(composeContent);
       } catch (error) {
         console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
       }
@@ -1556,13 +1532,8 @@ app.post("/api/admin/repos/:id/toggle", async (req, res) => {
     
     if (fs.existsSync(composePath)) {
       try {
-        const yaml = require('yaml');
         const composeContent = fs.readFileSync(composePath, 'utf8');
-        const composeData = yaml.parse(composeContent);
-        
-        if (composeData.services && Object.keys(composeData.services).length > 0) {
-          appNameToToggle = Object.keys(composeData.services)[0];
-        }
+        appNameToToggle = getAppNameFromCompose(composeContent);
       } catch (error) {
         console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
       }
@@ -1610,19 +1581,13 @@ app.get("/api/admin/repos/:id/debug", async (req, res) => {
   try {
     const { getCasaOSAppStatus } = await import('./casaos-status');
     
-    // Get app name from docker-compose.yml
     let appNameToCheck = repo.name;
     const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-    
+
     if (fs.existsSync(composePath)) {
       try {
-        const yaml = require('yaml');
         const composeContent = fs.readFileSync(composePath, 'utf8');
-        const composeData = yaml.parse(composeContent);
-        
-        if (composeData.services && Object.keys(composeData.services).length > 0) {
-          appNameToCheck = Object.keys(composeData.services)[0];
-        }
+        appNameToCheck = getAppNameFromCompose(composeContent);
       } catch (error) {
         console.log(`⚠️ Could not parse docker-compose.yml for debug`);
       }

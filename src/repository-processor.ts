@@ -34,9 +34,10 @@ export async function processRepo(
   
   try {
     // We'll determine the actual app name from the compose file later
-    let appName = repository.name; // Default fallback
+    let appName = repository.name;
     let hostMetadataDir = path.join('/DATA/AppData/casaos/apps', appName);
-    let localImageName: string | null = null; // Track built image name for GitHub repos
+    let localImageName: string | null = null;
+    let builtServiceName: string | null = null;
     
     // Phase 1: Build image if it's a GitHub repo
     if (repository.type === 'github') {
@@ -66,11 +67,13 @@ export async function processRepo(
 
       log(`🏗️ Building Docker image from repository...`, 'info');
       updateRepository(repository.id, { status: 'building' });
-      localImageName = await buildImageFromRepo(repoConfig, baseDir, true, logCollector); // true = isGitHubRepo
+      const buildResult = await buildImageFromRepo(repoConfig, baseDir, true, logCollector);
       log(`✅ Docker image build completed`, 'success');
-      
-      if (localImageName) {
-        log(`🐳 Built local image: ${localImageName}`, 'info');
+
+      if (buildResult) {
+        localImageName = buildResult.imageName;
+        builtServiceName = buildResult.serviceName;
+        log(`🐳 Built local image: ${localImageName} for service: ${builtServiceName}`, 'info');
       }
     }
 
@@ -136,7 +139,7 @@ export async function processRepo(
       throw new Error(`Token synchronization issue: App uses API_HASH but no matching token exists for "${appName}". This may indicate an appName/repositoryId mismatch.`);
     }
 
-    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName, appToken);
+    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName, appToken, builtServiceName);
     log(`✅ Compose file preprocessing completed`, 'success');
 
     // Step 3: Create all host volume paths

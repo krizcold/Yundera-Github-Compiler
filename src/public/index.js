@@ -763,11 +763,10 @@ class RepoManager {
             return; // User cancelled
         }
 
-        // Proceed with the regular build process (no pre-install warning for re-installs)
-        await this.buildRepo(repoId, true); // true = isReinstall
+        await this.buildRepo(repoId);
     }
 
-    async buildRepo(repoId, isReinstall = false) {
+    async buildRepo(repoId) {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
@@ -778,10 +777,8 @@ class RepoManager {
         let selectedUser = 'ubuntu'; // Default user - declare outside try block
 
         try {
-            // For GitHub repos that are already installed, show update analysis popup
-            // BUT ONLY for actual updates, NOT for re-installs
             let updateResult = null;
-            if (repo.type === 'github' && repo.isInstalled && !isReinstall) {
+            if (repo.type === 'github' && repo.isInstalled && repo.rawDockerCompose) {
                 updateResult = await this.showUpdateAvailablePopup(repo);
                 if (!updateResult || !updateResult.proceed) {
                     // User cancelled - restore button state
@@ -3865,7 +3862,7 @@ class RepoManager {
                         <h2>Remove Repository</h2>
                     </div>
                     <div class="uninstall-content">
-                        <p><strong>Are you sure you want to remove "${repo.name}"?</strong></p>
+                        <p><strong>Are you sure you want to remove "${repo.displayName || repo.name}"?</strong></p>
                         
                         ${repo.isInstalled ? 
                             `<div class="uninstall-notice">
@@ -3885,8 +3882,8 @@ class RepoManager {
                                     <div class="data-content">
                                         <strong>Also delete application data</strong>
                                         <div class="data-description">
-                                            ${repo.isInstalled ? 
-                                                'By default, data in /DATA/AppData/' + repo.name + '/ will be preserved. Check this to delete it permanently.' : 
+                                            ${repo.isInstalled ?
+                                                'By default, data in /DATA/AppData/' + (repo.appName || repo.name) + '/ will be preserved. Check this to delete it permanently.' :
                                                 'No application data to delete (app is not installed).'
                                             }
                                         </div>

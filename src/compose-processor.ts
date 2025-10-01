@@ -492,7 +492,7 @@ export interface ProcessedCompose {
  * Pre-processes an App Store-style docker-compose object.
  * Returns two versions: one for saving (rich) and one for installation (clean).
  */
-export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null, appToken?: string | null): ProcessedCompose {
+export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null, appToken?: string | null, builtServiceName?: string | null): ProcessedCompose {
     console.log('🔧 Pre-processing App Store-style compose file...');
 
     // Create a deep copy to avoid modifying the original object in memory
@@ -560,8 +560,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
         for (const serviceName in richCompose.services) {
             const service = richCompose.services[serviceName];
 
-            // Replace image with local image name for GitHub repos
-            if (localImageName && serviceName === mainServiceKey) {
+            if (localImageName && builtServiceName && serviceName === builtServiceName) {
                 service.image = localImageName;
             }
 

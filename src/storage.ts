@@ -12,6 +12,7 @@ export interface Repository {
   id: string;
   name: string;
   displayName?: string; // Name to display in UI (from compose file if different)
+  appName?: string; // Actual app name used in CasaOS (from getAppNameFromCompose)
   type: 'github' | 'compose';
   url?: string;
   autoUpdate: boolean;
