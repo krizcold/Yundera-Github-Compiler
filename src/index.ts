@@ -864,10 +864,45 @@ app.post("/api/admin/repos/:id/import", async (req, res) => {
   }
 });
 
+// POST /api/repos/:id/reinstall/delete-data - Delete app data before reinstall
+app.post("/api/admin/repos/:id/reinstall/delete-data", async (req, res) => {
+  const { id } = req.params;
+  const repo = getRepository(id);
+
+  if (!repo) {
+    return res.status(404).json({ success: false, message: "Repository not found" });
+  }
+
+  try {
+    let appDataDirName = repo.name;
+    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+
+    if (fs.existsSync(composePath)) {
+      try {
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        appDataDirName = getAppNameFromCompose(composeContent);
+      } catch (error) {
+      }
+    }
+
+    const appDataDir = path.join('/DATA/AppData', appDataDirName);
+    if (fs.existsSync(appDataDir)) {
+      fs.rmSync(appDataDir, { recursive: true, force: true });
+      console.log(`🗑️ Deleted application data: ${appDataDir}`);
+      res.json({ success: true, message: `Application data deleted: ${appDataDirName}` });
+    } else {
+      res.json({ success: true, message: 'No application data found to delete' });
+    }
+  } catch (error: any) {
+    console.error(`❌ Failed to delete app data for ${repo.name}:`, error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // POST /api/repos/:id/compile - Compile/build a repository
 app.post("/api/admin/repos/:id/compile", async (req, res) => {
   const { id } = req.params;
-  const { runAsUser } = req.body;
+  const { runAsUser, runPreInstall } = req.body;
   const repo = getRepository(id);
   
   if (!repo) {
@@ -879,7 +914,7 @@ app.post("/api/admin/repos/:id/compile", async (req, res) => {
   }
   
   try {
-    const result = await buildQueue.addJob(repo, true, runAsUser);
+    const result = await buildQueue.addJob(repo, true, runAsUser, runPreInstall);
     
     if (result.success) {
       res.json({ success: true, message: result.message });

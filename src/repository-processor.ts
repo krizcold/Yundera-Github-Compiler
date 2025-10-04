@@ -17,7 +17,8 @@ export async function processRepo(
   repository: Repository,
   force: boolean = false,
   logCollector?: any,
-  runAsUser?: string
+  runAsUser?: string,
+  runPreInstall?: boolean
 ): Promise<{ success: boolean; message:string }> {
 
   // Debug: Log that build process is starting
@@ -103,8 +104,11 @@ export async function processRepo(
         log(`📝 Updated repository display name to: ${appName}`, 'info');
     }
 
-    // Only run pre-install command on FIRST installation, never on updates
-    if (repository.isInstalled) {
+    if (runPreInstall) {
+        log(`🚀 Executing pre-install command (requested by user)...`, 'info');
+        await executePreInstallCommand(composeObject, logCollector, runAsUser);
+        log(`✅ Pre-install command completed successfully`, 'success');
+    } else if (repository.isInstalled) {
         log(`⏭️ Skipping pre-install command - app is already installed (update mode)`, 'info');
     } else {
         log(`🚀 Executing pre-install command (first installation)...`, 'info');

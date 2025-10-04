@@ -757,24 +757,32 @@ class RepoManager {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
-        // Show re-install confirmation popup
-        const confirmed = await this.showReinstallConfirmation(repo);
-        if (!confirmed) {
-            return; // User cancelled
+        const result = await this.showReinstallConfirmation(repo);
+        if (!result || !result.proceed) {
+            return;
         }
 
-        await this.buildRepo(repoId);
+        if (result.deleteData) {
+            try {
+                await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/reinstall/delete-data`));
+                this.showNotification('Application data deleted successfully', 'success');
+            } catch (error) {
+                this.showNotification('Failed to delete application data: ' + (error.response?.data?.message || error.message), 'error');
+                return;
+            }
+        }
+
+        await this.buildRepo(repoId, result.runPreInstall);
     }
 
-    async buildRepo(repoId) {
+    async buildRepo(repoId, runPreInstall = false) {
         const repo = this.repos.find(r => r.id === repoId);
         if (!repo) return;
 
-        // IMMEDIATELY disable the button to prevent double-clicks
         const action = repo.type === 'github' ? 'building' : 'installing';
-        this.updateRepoStatus(repoId, action); // This will re-render and disable the button
+        this.updateRepoStatus(repoId, action);
 
-        let selectedUser = 'ubuntu'; // Default user - declare outside try block
+        let selectedUser = 'ubuntu';
 
         try {
             let updateResult = null;
@@ -829,7 +837,7 @@ class RepoManager {
         this.openTerminalPopup(repo.name, repoId, action);
 
         try {
-            await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compile`), { runAsUser: selectedUser });
+            await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/compile`), { runAsUser: selectedUser, runPreInstall });
             console.log(`[${repo.name}] ${action} process initiated via Dashboard.`);
 
             // Refresh the UI immediately after successful initiation, then again after a delay
@@ -3285,12 +3293,28 @@ class RepoManager {
                             <p><i class="fas fa-info-circle"></i> This will rebuild and redeploy the application with the latest configuration.</p>
                         </div>
 
+                        <div class="data-preservation">
+                            <div class="data-option">
+                                <label class="data-checkbox">
+                                    <input type="checkbox" id="reinstall-delete-data">
+                                    <span class="data-checkmark"></span>
+                                    <span class="data-label">Delete application data before re-install</span>
+                                </label>
+                            </div>
+                            <div class="data-option">
+                                <label class="data-checkbox">
+                                    <input type="checkbox" id="reinstall-run-preinstall">
+                                    <span class="data-checkmark"></span>
+                                    <span class="data-label">Run pre-install command (if exists)</span>
+                                </label>
+                            </div>
+                        </div>
+
                         <div class="uninstall-warning">
                             <p><strong>⚠️ Important Information</strong></p>
                             <ul>
                                 <li>The application will be temporarily stopped during re-installation</li>
                                 <li>Any unsaved data in the containers will be lost</li>
-                                <li>Persistent data in mounted volumes will be preserved</li>
                                 <li>The process may take several minutes to complete</li>
                             </ul>
                         </div>
@@ -3425,8 +3449,10 @@ class RepoManager {
 
             // Handle confirmation
             confirmBtn.onclick = () => {
+                const deleteData = document.getElementById('reinstall-delete-data').checked;
+                const runPreInstall = document.getElementById('reinstall-run-preinstall').checked;
                 document.body.removeChild(popup);
-                resolve(true);
+                resolve({ proceed: true, deleteData, runPreInstall });
             };
 
             // Handle click on backdrop
