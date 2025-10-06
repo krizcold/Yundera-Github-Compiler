@@ -146,6 +146,33 @@
             font-size: 12px;
         }
 
+        /* Split button styles for Update button */
+        .split-button-group {
+            display: inline-flex;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .split-button-left {
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            border-right: 1px solid rgba(255, 255, 255, 0.3);
+            flex: 1;
+        }
+
+        .split-button-right {
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
+            padding: 6px 10px;
+            min-width: 36px;
+        }
+
+        .split-button-left:hover,
+        .split-button-right:hover {
+            filter: brightness(0.95);
+        }
+
         .toggle-switch {
             display: flex;
             align-items: center;

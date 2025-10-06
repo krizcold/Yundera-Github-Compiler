@@ -612,7 +612,17 @@ class RepoManager {
                 if (repo.type === 'github') {
                     const hasUpdates = this.hasUpdatesAvailable(repo);
                     if (hasUpdates) {
-                        return `<button class="btn btn-small btn-primary" title="Update Application" onclick="repoManager.buildRepo('${repoId}')"><i class="fas fa-download"></i></button>`;
+                        // Split button for Update (left) and Clean Update (right)
+                        return `
+                            <div class="split-button-group">
+                                <button class="btn btn-small btn-primary split-button-left" title="Update Application" onclick="repoManager.buildRepo('${repoId}')">
+                                    <i class="fas fa-arrow-up"></i>
+                                </button>
+                                <button class="btn btn-small btn-primary split-button-right" title="Clean Update (with options)" onclick="repoManager.cleanUpdateRepo('${repoId}')">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
+                        `;
                     } else {
                         return `<button class="btn btn-small btn-warning" title="Re-install" onclick="repoManager.reinstallRepo('${repoId}')"><i class="fas fa-sync-alt"></i></button>`;
                     }
@@ -758,6 +768,28 @@ class RepoManager {
         if (!repo) return;
 
         const result = await this.showReinstallConfirmation(repo);
+        if (!result || !result.proceed) {
+            return;
+        }
+
+        if (result.deleteData) {
+            try {
+                await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/reinstall/delete-data`));
+                this.showNotification('Application data deleted successfully', 'success');
+            } catch (error) {
+                this.showNotification('Failed to delete application data: ' + (error.response?.data?.message || error.message), 'error');
+                return;
+            }
+        }
+
+        await this.buildRepo(repoId, result.runPreInstall);
+    }
+
+    async cleanUpdateRepo(repoId) {
+        const repo = this.repos.find(r => r.id === repoId);
+        if (!repo) return;
+
+        const result = await this.showReinstallConfirmation(repo, true); // true = isUpdate
         if (!result || !result.proceed) {
             return;
         }
@@ -2123,12 +2155,17 @@ class RepoManager {
                     const updateButtons = document.querySelectorAll(`[onclick*="repoManager.buildRepo('${repo.id}')"]`);
                     updateButtons.forEach(button => {
                         button.disabled = false;
-                        // Set correct icon based on whether updates are available
-                        const hasUpdates = repo.hasUpdates || button.getAttribute('title')?.includes('Update');
-                        button.innerHTML = hasUpdates ? '<i class="fas fa-download"></i>' : '<i class="fas fa-sync-alt"></i>';
+                        // Check if this is part of a split button group
+                        const isSplitButton = button.classList.contains('split-button-left') || button.classList.contains('split-button-right');
+                        if (!isSplitButton) {
+                            // Single button - restore icon directly
+                            const hasUpdates = repo.hasUpdates || button.getAttribute('title')?.includes('Update');
+                            button.innerHTML = hasUpdates ? '<i class="fas fa-arrow-up"></i>' : '<i class="fas fa-sync-alt"></i>';
+                        }
+                        // For split buttons, let the repo manager re-render handle it via Method 2
                     });
 
-                    // Method 2: Try the repo manager approach as fallback
+                    // Method 2: Try the repo manager approach as fallback (this properly handles split buttons)
                     if (repo && repo.id) {
                         const repoManager = window.repoManager || this;
                         if (repoManager && repoManager.updateRepoStatus) {
@@ -2179,12 +2216,17 @@ class RepoManager {
                     const updateButtons = document.querySelectorAll(`[onclick*="repoManager.buildRepo('${repo.id}')"]`);
                     updateButtons.forEach(button => {
                         button.disabled = false;
-                        // Set correct icon based on whether updates are available
-                        const hasUpdates = repo.hasUpdates || button.getAttribute('title')?.includes('Update');
-                        button.innerHTML = hasUpdates ? '<i class="fas fa-download"></i>' : '<i class="fas fa-sync-alt"></i>';
+                        // Check if this is part of a split button group
+                        const isSplitButton = button.classList.contains('split-button-left') || button.classList.contains('split-button-right');
+                        if (!isSplitButton) {
+                            // Single button - restore icon directly
+                            const hasUpdates = repo.hasUpdates || button.getAttribute('title')?.includes('Update');
+                            button.innerHTML = hasUpdates ? '<i class="fas fa-arrow-up"></i>' : '<i class="fas fa-sync-alt"></i>';
+                        }
+                        // For split buttons, let the repo manager re-render handle it via Method 2
                     });
 
-                    // Method 2: Try the repo manager approach as fallback
+                    // Method 2: Try the repo manager approach as fallback (this properly handles split buttons)
                     if (repo && repo.id) {
                         const repoManager = window.repoManager || this;
                         if (repoManager && repoManager.updateRepoStatus) {
@@ -3274,23 +3316,26 @@ class RepoManager {
         };
     }
 
-    async showReinstallConfirmation(repo) {
+    async showReinstallConfirmation(repo, isUpdate = false) {
         return new Promise((resolve) => {
-            // Create reinstall confirmation popup
+            // Create reinstall/update confirmation popup
             const popup = document.createElement('div');
             popup.id = 'reinstall-confirmation';
+            const actionType = isUpdate ? 'Update' : 'Re-install';
+            const actionVerb = isUpdate ? 'update' : 're-install';
+            const processType = isUpdate ? 'update' : 're-installation';
             popup.innerHTML = `
                 <div class="uninstall-backdrop"></div>
                 <div class="uninstall-container">
                     <div class="uninstall-header">
                         <div class="uninstall-icon">🔄</div>
-                        <h2>Re-install Application</h2>
+                        <h2>${isUpdate ? 'Clean Update Application' : 'Re-install Application'}</h2>
                     </div>
                     <div class="uninstall-content">
-                        <p><strong>Are you sure you want to re-install "${repo.displayName || repo.name}"?</strong></p>
+                        <p><strong>Are you sure you want to ${actionVerb} "${repo.displayName || repo.name}"?</strong></p>
 
                         <div class="uninstall-notice">
-                            <p><i class="fas fa-info-circle"></i> This will rebuild and redeploy the application with the latest configuration.</p>
+                            <p><i class="fas fa-info-circle"></i> ${isUpdate ? 'This will update to the latest version and redeploy the application with the selected options.' : 'This will rebuild and redeploy the application with the latest configuration.'}</p>
                         </div>
 
                         <div class="data-preservation">
@@ -3298,7 +3343,7 @@ class RepoManager {
                                 <label class="data-checkbox">
                                     <input type="checkbox" id="reinstall-delete-data">
                                     <span class="data-checkmark"></span>
-                                    <span class="data-label">Delete application data before re-install</span>
+                                    <span class="data-label">Delete application data before ${actionVerb}</span>
                                 </label>
                             </div>
                             <div class="data-option">
@@ -3313,7 +3358,7 @@ class RepoManager {
                         <div class="uninstall-warning">
                             <p><strong>⚠️ Important Information</strong></p>
                             <ul>
-                                <li>The application will be temporarily stopped during re-installation</li>
+                                <li>The application will be temporarily stopped during ${processType}</li>
                                 <li>Any unsaved data in the containers will be lost</li>
                                 <li>The process may take several minutes to complete</li>
                             </ul>
@@ -3321,7 +3366,7 @@ class RepoManager {
                     </div>
                     <div class="uninstall-actions">
                         <button class="btn btn-secondary" id="cancel-reinstall">Cancel</button>
-                        <button class="btn btn-warning" id="confirm-reinstall">Re-install Application</button>
+                        <button class="btn btn-warning" id="confirm-reinstall">${actionType} Application</button>
                     </div>
                 </div>
 
