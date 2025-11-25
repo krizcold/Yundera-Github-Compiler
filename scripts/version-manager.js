@@ -77,9 +77,31 @@ class VersionManager {
         console.log(`  Dev: ${tags.dev}`);
     }
 
+    generateBuildInfo(buildType = 'prod') {
+        const buildInfo = {
+            version: this.getCurrentVersion(),
+            buildDate: new Date().toISOString(),
+            buildCount: this.dockflowData.buildCount,
+            buildType: buildType,
+            repository: this.dockflowData.repository
+        };
+
+        const buildInfoPath = path.join(__dirname, '..', 'src', 'build-info.json');
+
+        try {
+            fs.writeFileSync(buildInfoPath, JSON.stringify(buildInfo, null, 2));
+            console.log(`✅ Generated build-info.json (${buildType}, v${buildInfo.version}, build #${buildInfo.buildCount})`);
+        } catch (error) {
+            console.error('Error generating build-info.json:', error.message);
+            process.exit(1);
+        }
+
+        return buildInfo;
+    }
+
     cleanupDockerImages(tags = []) {
         const { execSync } = require('child_process');
-        
+
         if (tags.length === 0) {
             // Default cleanup - remove all images for this repository
             const allTags = this.getDockerTags();
@@ -87,7 +109,7 @@ class VersionManager {
         }
 
         console.log('🧹 Cleaning up local Docker images...');
-        
+
         for (const tag of tags) {
             try {
                 // Check if image exists before trying to remove
@@ -143,18 +165,24 @@ switch (command) {
     case 'cleanup':
         versionManager.cleanupDockerImages();
         break;
-    
+
+    case 'generate-build-info':
+        const buildType = process.argv[3] || 'prod';
+        versionManager.generateBuildInfo(buildType);
+        break;
+
     default:
         console.log('Dockflow Version Manager');
         console.log('');
         console.log('Usage: node version-manager.js [command]');
         console.log('');
         console.log('Commands:');
-        console.log('  current       Show current version');
-        console.log('  increment     Increment patch version');
-        console.log('  dev-publish   Update dev publish timestamp');
-        console.log('  tags          Show Docker tags JSON');
-        console.log('  status        Show detailed status');
-        console.log('  cleanup       Remove local Docker images');
+        console.log('  current                    Show current version');
+        console.log('  increment                  Increment patch version');
+        console.log('  dev-publish                Update dev publish timestamp');
+        console.log('  tags                       Show Docker tags JSON');
+        console.log('  status                     Show detailed status');
+        console.log('  cleanup                    Remove local Docker images');
+        console.log('  generate-build-info [type] Generate build-info.json (prod/dev)');
         break;
 }

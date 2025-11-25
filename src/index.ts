@@ -139,7 +139,7 @@ function startRepoTimer(repository: Repository) {
         
         if (updateInfo.hasUpdates) {
           console.log(`📋 Updates available for ${updatedRepo.name} (${updateInfo.commitsBehind} commits behind)`);
-          await buildQueue.addJob(updatedRepo, false);
+          await buildQueue.addJob(updatedRepo, true, undefined, undefined, 'auto');
           console.log(`✅ Auto-update build queued for ${updatedRepo.name}`);
         } else {
           console.log(`✅ ${updatedRepo.name} is up to date`);
@@ -715,10 +715,15 @@ app.post("/api/admin/repos/:id/update-compose", async (req, res) => {
     }
 
     // Now proceed with the build process
-    const result = await buildQueue.addJob(repo, true);
+    const result = await buildQueue.addJob(repo, true, undefined, undefined, 'dashboard');
 
     if (result.success) {
-      res.json({ success: true, message: result.message });
+      res.json({
+        success: true,
+        message: result.message,
+        updateSource: 'dashboard',
+        requiresUninstall: true
+      });
     } else {
       res.status(500).json({ success: false, message: result.message });
     }
@@ -914,10 +919,15 @@ app.post("/api/admin/repos/:id/compile", async (req, res) => {
   }
   
   try {
-    const result = await buildQueue.addJob(repo, true, runAsUser, runPreInstall);
-    
+    const result = await buildQueue.addJob(repo, true, runAsUser, runPreInstall, 'dashboard');
+
     if (result.success) {
-      res.json({ success: true, message: result.message });
+      res.json({
+        success: true,
+        message: result.message,
+        updateSource: 'dashboard',
+        requiresUninstall: true
+      });
       // Trigger immediate sync after successful build
       setTimeout(async () => {
         await syncWithCasaOS();
@@ -1488,6 +1498,29 @@ app.get("/api/admin/system/status", async (req, res) => {
     status,
     message: status.errors.length > 0 ? status.errors.join(', ') : 'All systems operational'
   });
+});
+
+// GET /build-info - Get build information (public endpoint)
+app.get("/build-info", (req, res) => {
+  try {
+    const buildInfoPath = path.join(__dirname, 'build-info.json');
+
+    if (fs.existsSync(buildInfoPath)) {
+      const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8'));
+      res.json(buildInfo);
+    } else {
+      res.json({
+        version: 'unknown',
+        buildDate: 'unknown',
+        buildCount: 0,
+        buildType: 'unknown',
+        repository: 'krizcold/yundera-github-compiler'
+      });
+    }
+  } catch (error) {
+    console.error('Error reading build-info.json:', error);
+    res.status(500).json({ error: 'Failed to read build information' });
+  }
 });
 
 
@@ -2971,8 +3004,8 @@ app.post("/api/app/update", validateAppTokenMiddleware, async (req, res) => {
     });
   }
 
-  // Add to build queue
-  const jobResult = await buildQueue.addJob(repo, false);
+  // Add to build queue with full uninstall+reinstall flow
+  const jobResult = await buildQueue.addJob(repo, true, undefined, undefined, 'api');
   if (!jobResult.success) {
     return res.status(500).json({
       success: false,
@@ -2984,10 +3017,12 @@ app.post("/api/app/update", validateAppTokenMiddleware, async (req, res) => {
     success: true,
     appName: appToken.appName,
     repositoryId: repo.id,
-    message: 'Update build queued successfully'
+    updateSource: 'api',
+    requiresUninstall: true,
+    message: 'Update build queued successfully. App will be uninstalled and reinstalled with data preservation.'
   });
 
-  console.log(`✅ Self-update queued for app ${appToken.appName}`);
+  console.log(`✅ Self-update queued for app ${appToken.appName} (full uninstall+reinstall with data preservation)`);
 });
 
 // GET /api/app/status - Get build and installation status for the authenticated app

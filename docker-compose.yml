@@ -14,7 +14,7 @@ services:
       BACKEND_PORT: "3000"
       LISTEN_PORT: "3000"
       ALLOWED_EXTENSIONS: "js,css,png,ico,svg,jpg,jpeg,gif,woff,woff2,ttf,eot"
-      ALLOWED_PATHS: "api/app"
+      ALLOWED_PATHS: "api/app,build-info"
     depends_on:
       - yunderagithubcompilerapp
     networks:
@@ -72,10 +72,9 @@ services:
       # Debug/logging settings (unused - set to blank)
       LOG_APPS_BEACON: ""      
       
-      # Legacy variables (unused - set to blank)
-      user: ""
-      default_pwd: ""
-      public_ip: ""
+      user: $user
+      default_pwd: $default_pwd
+      public_ip: $public_ip
 
     volumes:        
       # cloned repos

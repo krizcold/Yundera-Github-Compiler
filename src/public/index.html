@@ -709,24 +709,78 @@
 
 
 
+        .build-info {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.95);
+            border: 1px solid var(--gray-300);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 11px;
+            color: var(--gray-600);
+            font-family: 'Courier New', monospace;
+            box-shadow: var(--shadow);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            line-height: 1.4;
+        }
+
+        .build-info-version {
+            font-weight: 600;
+            color: var(--gray-800);
+        }
+
+        .build-info-type {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .build-type-prod {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+
+        .build-type-dev {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .build-type-unknown {
+            background-color: var(--gray-200);
+            color: var(--gray-600);
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
             }
-            
+
             .repo-info {
                 grid-template-columns: 1fr;
                 gap: 10px;
             }
-            
+
             .repo-item {
                 grid-template-columns: 1fr;
                 gap: 10px;
             }
-            
+
             .controls {
                 flex-direction: column;
                 align-items: stretch;
+            }
+
+            .build-info {
+                font-size: 10px;
+                padding: 6px 10px;
             }
         }
     </style>
@@ -891,7 +945,13 @@
         </div>
     </div>
 
-    
+
+
+    <!-- Build Info Display -->
+    <div class="build-info" id="build-info">
+        <div><span class="build-info-version">v<span id="build-version">...</span></span> <span class="build-info-type" id="build-type">...</span></div>
+        <div>Build #<span id="build-count">...</span> • <span id="build-date">...</span></div>
+    </div>
 
     <script src="/index.js"></script>
 </body>

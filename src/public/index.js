@@ -3945,7 +3945,6 @@ class RepoManager {
                         }
 
                         <div class="data-preservation">
-                            <h3>Data Handling</h3>
                             <div class="data-option">
                                 <label class="data-checkbox">
                                     <input type="checkbox" id="preserve-app-data" ${!repo.isInstalled ? 'disabled' : ''}>
@@ -8033,6 +8032,28 @@ function saveYaml() {
     repoManager.saveYaml();
 }
 
+// Load and display build information
+async function loadBuildInfo() {
+    try {
+        const response = await axios.get('/build-info');
+        const buildInfo = response.data;
+
+        document.getElementById('build-version').textContent = buildInfo.version;
+        document.getElementById('build-count').textContent = buildInfo.buildCount;
+
+        const buildDate = new Date(buildInfo.buildDate);
+        const formattedDate = buildDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        document.getElementById('build-date').textContent = formattedDate;
+
+        const buildTypeEl = document.getElementById('build-type');
+        buildTypeEl.textContent = buildInfo.buildType.toUpperCase();
+        buildTypeEl.className = 'build-info-type build-type-' + buildInfo.buildType;
+    } catch (error) {
+        console.warn('Failed to load build info:', error);
+        document.getElementById('build-info').style.display = 'none';
+    }
+}
+
 // Initialize the repository manager when the page loads
 let repoManager;
 
@@ -8041,9 +8062,12 @@ function initializeApp() {
     try {
         repoManager = new RepoManager();
         console.log('✅ RepoManager initialized successfully');
-        
+
         // Make repoManager globally accessible for debugging
         window.repoManager = repoManager;
+
+        // Load build information
+        loadBuildInfo();
     } catch (error) {
         console.error('❌ Failed to initialize RepoManager:', error);
     }

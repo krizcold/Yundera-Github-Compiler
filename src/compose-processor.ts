@@ -729,7 +729,9 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             const mainService = richCompose.services[mainServiceKey];
             if (mainService && mainService.expose && mainService.expose.length > 0) {
                 const port = mainService.expose[0];
-                richCompose['x-casaos'].hostname = `${port}-${appId}-${settings.refDomain}`;
+                // Omit port prefix for standard port 80
+                const portPrefix = (port === 80 || port === '80') ? '' : `${port}${settings.refSeparator}`;
+                richCompose['x-casaos'].hostname = `${portPrefix}${appId}${settings.refSeparator}${settings.refDomain}`;
                 richCompose['x-casaos'].scheme = settings.refScheme || 'https';
                 richCompose['x-casaos'].port_map = settings.refScheme === 'https' ? "443" : "80";
             }

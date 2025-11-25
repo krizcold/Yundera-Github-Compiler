@@ -84,9 +84,11 @@ cleanup_docker() {
 case "${1:-latest}" in
     "latest")
         echo "🚢 Dockflow: Building and pushing to LATEST"
-        build_typescript
         echo "📈 Incrementing version..."
         node scripts/version-manager.js increment
+        echo "📝 Generating build info..."
+        node scripts/version-manager.js generate-build-info prod
+        build_typescript
         build_docker "latest"
         push_docker "latest"
         cleanup_docker
@@ -95,6 +97,8 @@ case "${1:-latest}" in
         ;;
     "dev")
         echo "🚢 Dockflow: Building and pushing to DEV"
+        echo "📝 Generating build info..."
+        node scripts/version-manager.js generate-build-info dev
         build_typescript
         build_docker "dev"
         push_docker "dev"
@@ -103,9 +107,11 @@ case "${1:-latest}" in
         ;;
     "both")
         echo "🚢 Dockflow: Building and pushing to BOTH latest and dev"
-        build_typescript
         echo "📈 Incrementing version..."
         node scripts/version-manager.js increment
+        echo "📝 Generating build info..."
+        node scripts/version-manager.js generate-build-info prod
+        build_typescript
         build_docker "latest"
         build_docker "dev"
         push_docker "latest"

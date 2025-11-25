@@ -369,12 +369,31 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
   message: string;
 }> {
   console.log(`🗑️ Starting uninstall for ${appName} (preserveData: ${preserveData})`);
-  
+
   try {
+    // When preserving data, skip the CasaOS API DELETE call and use manual cleanup only
+    // The CasaOS API DELETE endpoint removes data by default without a preservation option
+    if (preserveData) {
+      console.log(`🛡️ Preserving data - stopping containers only for ${appName} (skipping CasaOS API)`);
+
+      // Stop containers, remove networks, and clean CasaOS metadata without removing data directory
+      await performManualCleanup(appName, false);
+
+      console.log(`✅ App ${appName} stopped successfully (data preserved at /DATA/AppData/${appName})`);
+
+      return {
+        success: true,
+        message: `App ${appName} stopped (data preserved)`
+      };
+    }
+
+    // Proceed with full uninstall including CasaOS API call and data removal
+    console.log(`🗑️ Full uninstall requested for ${appName} - will remove data`);
+
     let apiSuccess = false;
     let lastApiResponse = '';
     const maxRetries = 3;
-    
+
     // Step 1: Try CasaOS API uninstall (with retries for transition states)
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       console.log(`🗑️ CasaOS API uninstall attempt ${attempt}/${maxRetries} for ${appName}...`);

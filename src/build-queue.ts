@@ -48,6 +48,7 @@ export interface BuildJob {
   force: boolean;
   runAsUser?: string;
   runPreInstall?: boolean;
+  updateSource: 'api' | 'dashboard' | 'auto';
   timestamp: number;
   status: 'queued' | 'building' | 'completed' | 'failed';
   startTime?: number;
@@ -76,7 +77,7 @@ export class BuildQueue {
     console.log(`🔧 Build queue max concurrent builds set to: ${this.maxConcurrent}`);
   }
 
-  async addJob(repository: Repository, force: boolean = false, runAsUser?: string, runPreInstall?: boolean): Promise<{ success: boolean; message: string }> {
+  async addJob(repository: Repository, force: boolean = false, runAsUser?: string, runPreInstall?: boolean, updateSource: 'api' | 'dashboard' | 'auto' = 'dashboard'): Promise<{ success: boolean; message: string }> {
     if (this.pendingRepositoryIds.has(repository.id)) {
       return { success: false, message: `Repository ${repository.name} is already queued or building` };
     }
@@ -89,6 +90,7 @@ export class BuildQueue {
       force,
       runAsUser,
       runPreInstall,
+      updateSource,
       timestamp: Date.now(),
       status: 'queued',
       resolve: undefined,
@@ -96,11 +98,11 @@ export class BuildQueue {
     };
 
     this.queue.push(job);
-    console.log(`📋 Added build job for ${repository.name} to queue (${this.queue.length} queued)`);
-    
+    console.log(`📋 Added build job for ${repository.name} to queue (source: ${updateSource}, ${this.queue.length} queued)`);
+
     // Try to start the job immediately if we have capacity
     this.processQueue();
-    
+
     // Return immediately after queueing (don't wait for completion)
     return { success: true, message: `Build job queued for ${repository.name}. Use /api/build-status to monitor progress.` };
   }
@@ -134,13 +136,13 @@ export class BuildQueue {
     try {
       // Import the processRepo function dynamically to avoid circular imports
       const { processRepo } = await import('./repository-processor');
-      
+
       // Pass the log collector to the processRepo function for real-time logging
-      const result = await processRepo(job.repository, job.force, logCollector, job.runAsUser, job.runPreInstall);
+      const result = await processRepo(job.repository, job.force, logCollector, job.runAsUser, job.runPreInstall, job.updateSource);
 
       job.status = 'completed';
       job.endTime = Date.now();
-      
+
       const duration = job.endTime - job.startTime!;
       console.log(`✅ Build job completed for ${job.repository.name} in ${duration}ms`);
       logCollector.addLog(`✅ Build completed successfully in ${duration}ms`, 'success');

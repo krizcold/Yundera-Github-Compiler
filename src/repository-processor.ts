@@ -1,7 +1,7 @@
 import { Repository, updateRepository, loadSettings } from './storage';
 import { cloneOrUpdateRepo } from './GitHandler';
 import { buildImageFromRepo } from './DockerHandler';
-import { isAppInstalledInCasaOS } from './casaos-status';
+import { isAppInstalledInCasaOS, uninstallCasaOSApp } from './casaos-status';
 import { executePreInstallCommand, executePostInstallCommand, preprocessAppstoreCompose } from './compose-processor';
 import { CasaOSInstaller } from './CasaOSInstaller';
 import * as fs from 'fs';
@@ -18,12 +18,13 @@ export async function processRepo(
   force: boolean = false,
   logCollector?: any,
   runAsUser?: string,
-  runPreInstall?: boolean
+  runPreInstall?: boolean,
+  updateSource: 'api' | 'dashboard' | 'auto' = 'dashboard'
 ): Promise<{ success: boolean; message:string }> {
 
   // Debug: Log that build process is starting
   console.log(`🚀 BUILD PROCESS STARTING for ${repository.name} (${repository.id})`);
-  console.log(`📋 Repository type: ${repository.type}, isInstalled: ${repository.isInstalled}, force: ${force}`);
+  console.log(`📋 Repository type: ${repository.type}, isInstalled: ${repository.isInstalled}, force: ${force}, updateSource: ${updateSource}`);
 
   // Helper function to log both to console and stream
   const log = (message: string, type: 'system' | 'info' | 'warning' | 'error' | 'success' = 'info') => {
@@ -104,12 +105,42 @@ export async function processRepo(
         log(`📝 Updated repository display name to: ${appName}`, 'info');
     }
 
+    // Phase 2.5: Uninstall previous version if this is an update
+    // This ensures clean reinstallation with pre-install commands
+    if (repository.isInstalled && force) {
+        log(`🗑️ Uninstalling previous version before update...`, 'info');
+        log(`📦 Update source: ${updateSource}`, 'info');
+
+        try {
+            const uninstallResult = await uninstallCasaOSApp(appName, true); // Always preserve data
+
+            if (uninstallResult.success) {
+                log(`✅ Previous version uninstalled successfully (data preserved)`, 'success');
+            } else {
+                log(`⚠️ Uninstall completed with warnings: ${uninstallResult.message}`, 'warning');
+            }
+
+            // Reset isInstalled flag so pre-install commands will run
+            repository.isInstalled = false;
+            updateRepository(repository.id, { isInstalled: false });
+            log(`🔄 Reset installation status - pre-install commands will now execute`, 'info');
+
+        } catch (uninstallError: any) {
+            log(`❌ Uninstall failed: ${uninstallError.message}`, 'error');
+            throw new Error(`Cannot proceed with update: Uninstall failed - ${uninstallError.message}`);
+        }
+    } else if (repository.isInstalled && !force) {
+        log(`⏭️ In-place update mode (force=false) - skipping uninstall step`, 'info');
+    }
+
+    // Phase 3: Execute pre-install command
+    // After uninstall, isInstalled will be false, so pre-install will run
     if (runPreInstall) {
         log(`🚀 Executing pre-install command (requested by user)...`, 'info');
         await executePreInstallCommand(composeObject, logCollector, runAsUser);
         log(`✅ Pre-install command completed successfully`, 'success');
     } else if (repository.isInstalled) {
-        log(`⏭️ Skipping pre-install command - app is already installed (update mode)`, 'info');
+        log(`⏭️ Skipping pre-install command - app is already installed (in-place update mode)`, 'info');
     } else {
         log(`🚀 Executing pre-install command (first installation)...`, 'info');
         await executePreInstallCommand(composeObject, logCollector, runAsUser);
