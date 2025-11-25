@@ -19,4 +19,7 @@ RUN npm run build
 # Copy the public directory AFTER the build is complete
 COPY src/public/ /app/dist/public/
 
+# Copy build-info.json to dist if it exists
+RUN [ -f src/build-info.json ] && cp src/build-info.json dist/build-info.json || echo "No build-info.json found, skipping"
+
 CMD ["node", "dist/index.js"]

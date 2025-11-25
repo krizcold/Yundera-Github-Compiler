@@ -142,7 +142,7 @@ x-casaos:
   main: yunderagithubcompiler
   author: krizcold
   developer: krizcold
-  icon: https://github.com/krizcold/Yundera-Github-Compiler/blob/main/YunderaCompiler.png?raw=true
+  icon: https://cdn.statically.io/gh/krizcold/Yundera-Github-Compiler/main/YunderaCompiler.png
   tagline:
     en_us: "Automatically build and deploy GitHub repos on Yundera"
   category: Utilities
