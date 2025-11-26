@@ -149,6 +149,11 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
       child.stderr.on('data', processLog);
 
       child.on('close', (code) => {
+        // Clean up listeners to prevent memory leaks
+        child.stdout.removeAllListeners();
+        child.stderr.removeAllListeners();
+        child.removeAllListeners();
+
         if (code === 0) {
           console.log(`✅ [${repo.path}] Docker build for image '${localTag}' completed successfully`);
           resolve(isGitHubRepo ? { imageName: localTag, serviceName: serviceToBuildKey! } : null);
@@ -159,6 +164,11 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
       });
 
       child.on('error', (err) => {
+        // Clean up listeners to prevent memory leaks
+        child.stdout.removeAllListeners();
+        child.stderr.removeAllListeners();
+        child.removeAllListeners();
+
         console.error(`❌ [${repo.path}] Docker build process failed:`, err);
         reject(new Error(`Docker build failed for ${repo.path}: ${err.message}`));
       });

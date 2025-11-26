@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import express from "express";
 import path from "path";
 import * as fs from "fs";
@@ -168,149 +168,155 @@ function stopRepoTimer(repositoryId: string) {
 }
 
 // Poll uninstall status until completion
-async function pollUninstallStatus(repositoryId: string, appName: string, attempt: number) {
-  const maxAttempts = 30; // 5 minutes max (10s intervals)
-  const pollInterval = 10000; // 10 seconds
-  
+async function pollUninstallStatus(repositoryId: string, appName: string, attempt: number, backoffMs: number = 5000) {
+  const maxAttempts = 12; // Reduced from 30 with adaptive backoff
+  const maxBackoff = 30000; // Cap at 30 seconds
+
   if (attempt >= maxAttempts) {
     console.log(`⏰ Uninstall polling timeout for ${appName} after ${maxAttempts} attempts`);
     const repo = getRepository(repositoryId);
     if (repo) {
-      updateRepository(repositoryId, { 
+      updateRepository(repositoryId, {
         status: 'error',
         isInstalled: false // Assume it worked even if we can't verify
       });
     }
     return;
   }
-  
+
   try {
     // Use force refresh to bypass any CasaOS caching
     const installedApps = await getCasaOSInstalledApps(true);
     const stillInstalled = installedApps.includes(appName);
-    
+
     if (!stillInstalled) {
       // Uninstall completed successfully
       console.log(`✅ Uninstall completed for ${appName} after ${attempt + 1} attempts`);
-      updateRepository(repositoryId, { 
+      updateRepository(repositoryId, {
         status: 'idle',
         isInstalled: false,
         isRunning: false,
         installMismatch: false
       });
-      
+
       // Trigger full sync to update other repos
       setTimeout(() => syncWithCasaOS(), 1000);
       return;
     }
-    
-    // Still installed, continue polling
-    console.log(`⏳ Uninstall in progress for ${appName} (attempt ${attempt + 1}/${maxAttempts})`);
-    setTimeout(() => pollUninstallStatus(repositoryId, appName, attempt + 1), pollInterval);
-    
+
+    // Still installed, continue polling with exponential backoff
+    const nextBackoff = Math.min(backoffMs * 1.5, maxBackoff);
+    console.log(`⏳ Uninstall in progress for ${appName} (attempt ${attempt + 1}/${maxAttempts}, next check in ${Math.round(nextBackoff/1000)}s)`);
+    setTimeout(() => pollUninstallStatus(repositoryId, appName, attempt + 1, nextBackoff), nextBackoff);
+
   } catch (error) {
     console.error(`❌ Error polling uninstall status for ${appName}:`, error);
-    // Continue polling despite error
-    setTimeout(() => pollUninstallStatus(repositoryId, appName, attempt + 1), pollInterval);
+    // Increase backoff even more on errors to avoid hammering failing service
+    const errorBackoff = Math.min(backoffMs * 2, maxBackoff);
+    setTimeout(() => pollUninstallStatus(repositoryId, appName, attempt + 1, errorBackoff), errorBackoff);
   }
 }
 
 // Poll toggle status and respond to the original HTTP request when complete
-async function pollToggleStatusAndRespond(res: any, repositoryId: string, appName: string, expectedRunning: boolean, attempt: number) {
-  const maxAttempts = 10; // Reduced from 15 - don't make users wait too long
-  const pollInterval = 3000; // 3 seconds
-  
+async function pollToggleStatusAndRespond(res: any, repositoryId: string, appName: string, expectedRunning: boolean, attempt: number, backoffMs: number = 2000) {
+  const maxAttempts = 10; // Reduced from 15 with adaptive backoff
+  const maxBackoff = 10000; // Cap at 10 seconds
+
   if (attempt >= maxAttempts) {
     console.log(`⏰ Toggle verification timeout for ${appName} after ${maxAttempts} attempts`);
     // Get current repository to preserve isInstalled status
     const currentRepo = getRepository(repositoryId);
-    updateRepository(repositoryId, { 
+    updateRepository(repositoryId, {
       status: 'success',
       isInstalled: currentRepo?.isInstalled || true  // Preserve installation status
     });
-    res.status(500).json({ 
-      success: false, 
-      message: `Operation timed out - could not verify ${expectedRunning ? 'start' : 'stop'} completed` 
+    res.status(500).json({
+      success: false,
+      message: `Operation timed out - could not verify ${expectedRunning ? 'start' : 'stop'} completed`
     });
     return;
   }
-  
+
   try {
     const { getCasaOSAppStatus } = await import('./casaos-status');
     const status = await getCasaOSAppStatus(appName);
-    
+
     if (status && status.isRunning === expectedRunning) {
       // Toggle completed successfully
       const action = expectedRunning ? 'started' : 'stopped';
       console.log(`✅ ${action} verified for ${appName} after ${attempt + 1} attempts`);
-      
+
       // Get current repository to preserve isInstalled status
       const currentRepo = getRepository(repositoryId);
-      updateRepository(repositoryId, { 
+      updateRepository(repositoryId, {
         status: 'success',
         isRunning: expectedRunning,
         isInstalled: currentRepo?.isInstalled || true  // Preserve current value, default to true since toggle succeeded
       });
-      res.json({ 
-        success: true, 
-        message: `Application ${action} successfully` 
+      res.json({
+        success: true,
+        message: `Application ${action} successfully`
       });
       return;
     }
-    
-    // Status hasn't changed yet, continue polling
+
+    // Status hasn't changed yet, continue polling with exponential backoff
+    const nextBackoff = Math.min(backoffMs * 1.5, maxBackoff);
     const action = expectedRunning ? 'start' : 'stop';
-    console.log(`⏳ Waiting for ${action} to complete for ${appName} (attempt ${attempt + 1}/${maxAttempts})`);
-    setTimeout(() => pollToggleStatusAndRespond(res, repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
-    
+    console.log(`⏳ Waiting for ${action} to complete for ${appName} (attempt ${attempt + 1}/${maxAttempts}, next check in ${Math.round(nextBackoff/1000)}s)`);
+    setTimeout(() => pollToggleStatusAndRespond(res, repositoryId, appName, expectedRunning, attempt + 1, nextBackoff), nextBackoff);
+
   } catch (error) {
     console.error(`❌ Error verifying toggle status for ${appName}:`, error);
-    // Continue polling despite error
-    setTimeout(() => pollToggleStatusAndRespond(res, repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
+    // Increase backoff on errors
+    const errorBackoff = Math.min(backoffMs * 2, maxBackoff);
+    setTimeout(() => pollToggleStatusAndRespond(res, repositoryId, appName, expectedRunning, attempt + 1, errorBackoff), errorBackoff);
   }
 }
 
 // Poll toggle status until completion (for background operations)
-async function pollToggleStatus(repositoryId: string, appName: string, expectedRunning: boolean, attempt: number) {
-  const maxAttempts = 15; // 2.5 minutes max (10s intervals)
-  const pollInterval = 10000; // 10 seconds
-  
+async function pollToggleStatus(repositoryId: string, appName: string, expectedRunning: boolean, attempt: number, backoffMs: number = 5000) {
+  const maxAttempts = 12; // Reduced from 15 with adaptive backoff
+  const maxBackoff = 30000; // Cap at 30 seconds
+
   if (attempt >= maxAttempts) {
     console.log(`⏰ Toggle polling timeout for ${appName} after ${maxAttempts} attempts`);
     const repo = getRepository(repositoryId);
     if (repo) {
-      updateRepository(repositoryId, { 
+      updateRepository(repositoryId, {
         status: 'success',
         isRunning: expectedRunning // Assume it worked
       });
     }
     return;
   }
-  
+
   try {
     const { getCasaOSAppStatus } = await import('./casaos-status');
     const status = await getCasaOSAppStatus(appName);
-    
+
     if (status && status.isRunning === expectedRunning) {
       // Toggle completed successfully
       const action = expectedRunning ? 'start' : 'stop';
       console.log(`✅ ${action} completed for ${appName} after ${attempt + 1} attempts`);
-      updateRepository(repositoryId, { 
+      updateRepository(repositoryId, {
         status: 'success',
         isRunning: expectedRunning
       });
       return;
     }
-    
-    // Status hasn't changed yet, continue polling
+
+    // Status hasn't changed yet, continue polling with exponential backoff
+    const nextBackoff = Math.min(backoffMs * 1.5, maxBackoff);
     const action = expectedRunning ? 'start' : 'stop';
-    console.log(`⏳ ${action} in progress for ${appName} (attempt ${attempt + 1}/${maxAttempts})`);
-    setTimeout(() => pollToggleStatus(repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
-    
+    console.log(`⏳ ${action} in progress for ${appName} (attempt ${attempt + 1}/${maxAttempts}, next check in ${Math.round(nextBackoff/1000)}s)`);
+    setTimeout(() => pollToggleStatus(repositoryId, appName, expectedRunning, attempt + 1, nextBackoff), nextBackoff);
+
   } catch (error) {
     console.error(`❌ Error polling toggle status for ${appName}:`, error);
-    // Continue polling despite error
-    setTimeout(() => pollToggleStatus(repositoryId, appName, expectedRunning, attempt + 1), pollInterval);
+    // Increase backoff on errors
+    const errorBackoff = Math.min(backoffMs * 2, maxBackoff);
+    setTimeout(() => pollToggleStatus(repositoryId, appName, expectedRunning, attempt + 1, errorBackoff), errorBackoff);
   }
 }
 
@@ -431,10 +437,10 @@ setInterval(() => {
   managedRepos = loadRepositories();
 }, 30000); // Every 30 seconds
 
-// More frequent sync with CasaOS to catch manual changes
+// Periodic sync with CasaOS to catch manual changes
 setInterval(async () => {
   await syncWithCasaOS();
-}, 15000); // Every 15 seconds
+}, 60000); // Every 60 seconds (reduced from 15s to minimize CasaOS API load)
 
 // Protected routes MUST come before static middleware
 // Root serves the loading page (now index.html) - protected with auth
@@ -1165,7 +1171,10 @@ app.delete("/api/admin/repos/:id", async (req, res) => {
     
     // Stop any running timer
     stopRepoTimer(id);
-    
+
+    // Clean up log collector
+    buildQueue.removeLogCollector(id);
+
     // Clean up persistent storage directory
     if (repo && repo.name) {
       const persistentDir = path.join('/app/uidata', repo.name);
@@ -1734,12 +1743,6 @@ app.get("/api/admin/repos/:id/logs", (req, res) => {
 
   logCollector.on('log', onLog);
 
-  // Handle client disconnect
-  req.on('close', () => {
-    logCollector.removeListener('log', onLog);
-    res.end();
-  });
-
   // Keep connection alive
   const keepAlive = setInterval(() => {
     if (res.writable) {
@@ -1748,6 +1751,13 @@ app.get("/api/admin/repos/:id/logs", (req, res) => {
       clearInterval(keepAlive);
     }
   }, 30000);
+
+  // Handle client disconnect
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    logCollector.removeListener('log', onLog);
+    res.end();
+  });
 });
 
 // POST /api/terminal/execute - Execute command in interactive terminal
@@ -2469,51 +2479,58 @@ app.get("/api/admin/services/:service/logs/stream", async (req, res) => {
   
   // Send recent logs immediately
   sendRecentLogs();
-  
-  // Set up interval to send new logs periodically
-  const logInterval = setInterval(() => {
-    try {
-      // Get logs from the last 2 seconds to simulate real-time
-      const result = execSync(`docker logs --since 2s ${containerName}`, { 
-        encoding: 'utf8',
-        timeout: 5000,
-        maxBuffer: 1024 * 1024 // 1MB max buffer
+
+  // Stream logs in real-time using docker logs -f
+  const logsProcess = spawn('docker', ['logs', '-f', '--tail', '0', containerName]);
+
+  logsProcess.stdout.on('data', (data) => {
+    if (res.writable) {
+      const logs = data.toString().split('\n').filter((line: string) => line.trim().length > 0);
+      logs.forEach((logLine: string) => {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
       });
-      
-      if (result.trim()) {
-        const logs = result.split('\n').filter(line => line.trim().length > 0);
-        logs.forEach(logLine => {
-          res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
-        });
-      }
-      
-      // Send keep-alive ping every 30 seconds
-      if (Date.now() % 30000 < 2000) {
-        res.write(`event: ping\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
-      }
-      
-    } catch (error: any) {
-      // Silently handle errors in the interval
-      if (!error.message.includes('No such container')) {
-        console.error(`Log streaming error for ${service}:`, error.message);
-      }
     }
-  }, 2000); // Check for new logs every 2 seconds
-  
+  });
+
+  logsProcess.stderr.on('data', (data) => {
+    if (res.writable) {
+      const logs = data.toString().split('\n').filter((line: string) => line.trim().length > 0);
+      logs.forEach((logLine: string) => {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
+      });
+    }
+  });
+
+  logsProcess.on('error', (error: any) => {
+    if (res.writable) {
+      res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+    }
+  });
+
+  // Keep-alive ping
+  const keepAliveInterval = setInterval(() => {
+    if (res.writable) {
+      res.write(`event: ping\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
+    }
+  }, 30000);
+
   // Clean up when client disconnects
   req.on('close', () => {
     console.log(`📡 Log stream closed for service: ${service}`);
-    clearInterval(logInterval);
+    clearInterval(keepAliveInterval);
+    logsProcess.kill('SIGTERM');
   });
-  
+
   req.on('error', (error) => {
     console.log(`📡 Log stream error for service ${service}:`, error.message);
-    clearInterval(logInterval);
+    clearInterval(keepAliveInterval);
+    logsProcess.kill('SIGTERM');
   });
-  
+
   // Also clean up on response end
   res.on('close', () => {
-    clearInterval(logInterval);
+    clearInterval(keepAliveInterval);
+    logsProcess.kill('SIGTERM');
   });
 });
 
@@ -2634,50 +2651,57 @@ app.get("/api/admin/docker/:containerName/logs/stream", async (req, res) => {
   
   // Send recent logs immediately
   sendRecentLogs();
-  
-  // Set up interval to send new logs periodically
-  const logInterval = setInterval(() => {
-    try {
-      // Get logs from the last 2 seconds to simulate real-time
-      const result = execSync(`docker logs --since 2s ${containerName}`, { 
-        encoding: 'utf8',
-        timeout: 5000,
-        maxBuffer: 1024 * 1024 // 1MB max buffer
+
+  // Stream logs in real-time using docker logs -f
+  const logsProcess = spawn('docker', ['logs', '-f', '--tail', '0', containerName]);
+
+  logsProcess.stdout.on('data', (data) => {
+    if (res.writable) {
+      const logs = data.toString().split('\n').filter((line: string) => line.trim().length > 0);
+      logs.forEach((logLine: string) => {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
       });
-      
-      if (result.trim()) {
-        const logs = result.split('\n').filter(line => line.trim().length > 0);
-        logs.forEach(logLine => {
-          res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
-        });
-      }
-      
-      // Send keep-alive ping every 30 seconds
-      if (Date.now() % 30000 < 2000) {
-        res.write(`event: ping\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
-      }
-      
-    } catch (error: any) {
-      // Silently handle errors in the interval
-      if (!error.message.includes('No such container')) {
-        console.error(`Log streaming error for ${containerName}:`, error.message);
-      }
     }
-  }, 2000); // Check for new logs every 2 seconds
-  
+  });
+
+  logsProcess.stderr.on('data', (data) => {
+    if (res.writable) {
+      const logs = data.toString().split('\n').filter((line: string) => line.trim().length > 0);
+      logs.forEach((logLine: string) => {
+        res.write(`event: log\ndata: ${JSON.stringify({ log: logLine, timestamp: new Date().toISOString() })}\n\n`);
+      });
+    }
+  });
+
+  logsProcess.on('error', (error: any) => {
+    if (res.writable) {
+      res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+    }
+  });
+
+  // Keep-alive ping
+  const keepAliveInterval = setInterval(() => {
+    if (res.writable) {
+      res.write(`event: ping\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
+    }
+  }, 30000);
+
   // Clean up when client disconnects
   req.on('close', () => {
     console.log(`📡 Log stream closed for Docker container: ${containerName}`);
-    clearInterval(logInterval);
+    clearInterval(keepAliveInterval);
+    logsProcess.kill('SIGTERM');
   });
-  
+
   req.on('error', (error) => {
     console.log(`📡 Log stream error for Docker container ${containerName}:`, error.message);
-    clearInterval(logInterval);
+    clearInterval(keepAliveInterval);
+    logsProcess.kill('SIGTERM');
   });
-  
+
   res.on('close', () => {
-    clearInterval(logInterval);
+    clearInterval(keepAliveInterval);
+    logsProcess.kill('SIGTERM');
   });
 });
 

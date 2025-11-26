@@ -13,6 +13,7 @@ export class LogCollector extends EventEmitter {
 
   constructor(public repositoryId: string) {
     super();
+    this.setMaxListeners(5); // Limit concurrent listeners to prevent memory leaks
   }
 
   addLog(message: string, type: LogEntry['type'] = 'info'): void {
@@ -38,6 +39,11 @@ export class LogCollector extends EventEmitter {
   }
 
   clear(): void {
+    this.logs = [];
+  }
+
+  destroy(): void {
+    this.removeAllListeners();
     this.logs = [];
   }
 }
@@ -270,6 +276,29 @@ export class BuildQueue {
     const collector = this.logCollectors.get(repositoryId);
     if (collector) {
       collector.clear();
+    }
+  }
+
+  removeLogCollector(repositoryId: string): void {
+    const collector = this.logCollectors.get(repositoryId);
+    if (collector) {
+      collector.destroy();
+      this.logCollectors.delete(repositoryId);
+      console.log(`🧹 Removed log collector for repository ${repositoryId}`);
+    }
+  }
+
+  cleanupOldLogCollectors(): void {
+    const { loadRepositories } = require('./storage');
+    const repositories = loadRepositories();
+    const activeRepoIds = new Set(repositories.map((r: Repository) => r.id));
+
+    for (const [id, collector] of this.logCollectors.entries()) {
+      if (!activeRepoIds.has(id)) {
+        console.log(`🧹 Cleaning up orphaned log collector for ${id}`);
+        collector.destroy();
+        this.logCollectors.delete(id);
+      }
     }
   }
 }

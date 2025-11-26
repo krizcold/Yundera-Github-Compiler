@@ -60,6 +60,12 @@ export class CasaOSInstaller {
 
       child.on('close', (code) => {
         clearTimeout(timeout); // Clear timeout on completion
+
+        // Clean up listeners to prevent memory leaks
+        child.stdout.removeAllListeners();
+        child.stderr.removeAllListeners();
+        child.removeAllListeners();
+
         if (code === 0) {
           console.log(`✅ Docker Compose process for ${finalProjectName} completed successfully.`);
           resolve({ success: true, message: 'Installation completed successfully.' });
@@ -72,6 +78,12 @@ export class CasaOSInstaller {
 
       child.on('error', (err) => {
         clearTimeout(timeout); // Clear timeout on error
+
+        // Clean up listeners to prevent memory leaks
+        child.stdout.removeAllListeners();
+        child.stderr.removeAllListeners();
+        child.removeAllListeners();
+
         console.error(`❌ Failed to start Docker Compose process for ${finalProjectName}:`, err);
         resolve({ success: false, message: `Failed to start installer: ${err.message}` });
       });
