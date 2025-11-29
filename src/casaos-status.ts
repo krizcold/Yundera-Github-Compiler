@@ -2,7 +2,32 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { isAppLoggingEnabled } from './config';
 
-const execAsync = promisify(exec);
+// Create execAsync with proper error handling and buffer size
+const execAsync = (command: string, options: any = {}) => {
+  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    // Set a larger buffer for CasaOS responses (50MB to be safe)
+    const defaultOptions = {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...options
+    };
+
+    exec(command, defaultOptions, (error, stdout, stderr) => {
+      if (error) {
+        // Log the actual error for debugging
+        console.error(`Command failed: ${command.substring(0, 100)}...`);
+        console.error(`Error: ${error.message}`);
+        // Still resolve with empty stdout to prevent crashes
+        resolve({ stdout: '', stderr: error.message });
+      } else {
+        resolve({
+          stdout: stdout.toString(),
+          stderr: stderr.toString()
+        });
+      }
+    });
+  });
+};
 
 // CasaOS status checking - try multiple endpoints
 export async function getCasaOSInstalledApps(forceRefresh: boolean = false): Promise<string[]> {
@@ -28,14 +53,46 @@ export async function getCasaOSInstalledApps(forceRefresh: boolean = false): Pro
         " 2>&1
       `;
       
-      const { stdout } = await execAsync(command);
-      
+      const { stdout, stderr } = await execAsync(command);
+
+      // Log stderr if present
+      if (stderr) {
+        console.error(`❌ stderr from ${endpoint}: ${stderr}`);
+      }
+
       // Skip empty or error responses
-      if (!stdout || stdout.trim() === '' || stdout.includes('Connection refused') || stdout.includes('404')) {
+      if (!stdout || stdout.trim() === '') {
+        console.log(`📱 Skipping ${endpoint}: empty response`);
         continue;
       }
-      
+
+      // Check for actual connection errors (not data containing these strings)
+      const trimmedResponse = stdout.trim();
+
+      // Skip if it's a connection error
+      if (stdout.includes('Connection refused') || stdout.includes('Failed to connect')) {
+        console.log(`📱 Skipping ${endpoint}: connection refused`);
+        continue;
+      }
+
+      // Skip if it's an HTTP error page (starts with HTML or error text)
+      if (trimmedResponse.startsWith('<!DOCTYPE') ||
+          trimmedResponse.startsWith('<html') ||
+          trimmedResponse.startsWith('404 Not Found') ||
+          trimmedResponse.startsWith('404 Page Not Found') ||
+          trimmedResponse.startsWith('Error 404')) {
+        console.log(`📱 Skipping ${endpoint}: HTTP error page`);
+        continue;
+      }
+
+      // Skip if it's a plaintext error (not JSON)
+      if (!trimmedResponse.startsWith('{') && !trimmedResponse.startsWith('[')) {
+        console.log(`📱 Skipping ${endpoint}: non-JSON response`);
+        continue;
+      }
+
       try {
+        console.log(`📱 Parsing response from ${endpoint} (${stdout.length} bytes)`);
         const response = JSON.parse(stdout);
         
         // Only log when apps are found and beacon is enabled
@@ -91,11 +148,13 @@ export async function getCasaOSInstalledApps(forceRefresh: boolean = false): Pro
         if (isAppLoggingEnabled()) {
           console.log(`📱 ${endpoint} returned no apps`);
         }
-      } catch (parseError) {
-        console.log(`📱 Failed to parse response from ${endpoint}`);
+      } catch (parseError: any) {
+        console.error(`📱 Failed to parse response from ${endpoint}:`, parseError.message);
+        console.error(`📱 Response preview: ${stdout.substring(0, 200)}...`);
         continue;
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error(`📱 Failed to execute command for ${endpoint}:`, error.message);
       continue;
     }
   }
@@ -132,7 +191,8 @@ export async function checkCasaOSInstallationProgress(appName: string): Promise<
       const { stdout } = await execAsync(command);
       
       // Check if we got a valid JSON response (not a 404 or error)
-      if (!stdout.includes('404') && !stdout.includes('error') && stdout.trim().startsWith('{')) {
+      // Only process if it looks like valid JSON (not an error page)
+      if (!stdout.includes('error') && stdout.trim().startsWith('{')) {
         console.log(`🔍 Found potential progress endpoint: ${endpoint}`);
         console.log(`📋 Response: ${stdout}`);
         
@@ -164,7 +224,8 @@ export async function isAppInstalledInCasaOS(appName: string): Promise<boolean> 
     `;
     const { stdout } = await execAsync(command);
 
-    if (!stdout || stdout.includes('Connection refused') || stdout.includes('404')) {
+    if (!stdout || stdout.includes('Connection refused') ||
+        stdout.trim().startsWith('404 Not Found') || stdout.trim().startsWith('<!DOCTYPE') || stdout.trim().startsWith('<html')) {
       console.error('❌ Could not connect to CasaOS API to verify installation.');
       return false;
     }
@@ -208,7 +269,8 @@ export async function getCasaOSAppStatus(appName: string): Promise<{
     
     const { stdout } = await execAsync(command);
     
-    if (stdout && !stdout.includes('Connection refused') && !stdout.includes('404')) {
+    if (stdout && !stdout.includes('Connection refused') &&
+        !stdout.trim().startsWith('404 Not Found') && !stdout.trim().startsWith('<!DOCTYPE') && !stdout.trim().startsWith('<html')) {
       try {
         const response = JSON.parse(stdout);
         
@@ -410,7 +472,8 @@ export async function uninstallCasaOSApp(appName: string, preserveData: boolean 
       lastApiResponse = stdout.trim();
       
       // Check for connection/API unavailable errors first
-      if (stdout.includes('Connection refused') || stdout.includes('404') || stdout.includes('curl: command not found')) {
+      if (stdout.includes('Connection refused') || stdout.includes('curl: command not found') ||
+          stdout.trim().startsWith('404 Not Found') || stdout.trim().startsWith('<!DOCTYPE') || stdout.trim().startsWith('<html')) {
         console.log(`⚠️ CasaOS API unavailable on attempt ${attempt}`);
         if (attempt === maxRetries) {
           console.log(`⚠️ CasaOS API unavailable after all attempts - falling back to manual cleanup`);
@@ -553,7 +616,8 @@ export async function toggleCasaOSApp(appName: string, start: boolean): Promise<
       console.log(`📡 CasaOS ${action} response for ${appName}:`, stdout);
     }
     
-    if (stdout.includes('Connection refused') || stdout.includes('404')) {
+    if (stdout.includes('Connection refused') ||
+        stdout.trim().startsWith('404 Not Found') || stdout.trim().startsWith('<!DOCTYPE') || stdout.trim().startsWith('<html')) {
       console.log(`❌ Failed to connect to CasaOS API`);
     } else {
       // Parse the response - be more strict about what constitutes success
@@ -590,7 +654,7 @@ export async function toggleCasaOSApp(appName: string, start: boolean): Promise<
             (!lowerOutput.includes('error') && 
              !lowerOutput.includes('failed') && 
              !lowerOutput.includes('not found') &&
-             !lowerOutput.includes('404'))) {
+             !lowerOutput.startsWith('404 not found'))) {
           casaOSWorked = true;
           return {
             success: true,

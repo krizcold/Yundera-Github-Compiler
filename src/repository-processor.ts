@@ -100,9 +100,9 @@ export async function processRepo(
         appName = composeObject.name;
         hostMetadataDir = path.join('/DATA/AppData/casaos/apps', appName);
         log(`🏷️ Using app name from compose file: ${appName}`, 'info');
-        // Update the repository display name to match the compose file
-        updateRepository(repository.id, { displayName: appName });
-        log(`📝 Updated repository display name to: ${appName}`, 'info');
+        // Update the repository display name and appName to match the compose file
+        updateRepository(repository.id, { displayName: appName, appName: appName });
+        log(`📝 Updated repository display name and appName to: ${appName}`, 'info');
     }
 
     // Phase 3: Execute pre-install command
@@ -410,7 +410,8 @@ export async function processRepo(
     const repoUpdates: any = {
         status: 'success',
         isInstalled: true,
-        isRunning: isRunning
+        isRunning: isRunning,
+        appName: appName  // Store the app name to prevent sync mismatches
     };
 
     // For GitHub repos, store the new docker-compose as the raw version and update version tracking
@@ -457,13 +458,9 @@ export async function processRepo(
         log(`⏭️ Skipping post-install command - app is not running`, 'info');
     }
 
-    // Trigger immediate sync to update UI
-    log(`🔄 Triggering UI sync...`, 'info');
-    setTimeout(async () => {
-        const { syncWithCasaOS } = await import('./index');
-        await syncWithCasaOS();
-    }, 1000);
-    
+    // Let the periodic sync (every 60 seconds) handle status updates naturally
+    // This avoids race conditions where CasaOS hasn't registered the app yet
+
     log(`🎉 All installation steps completed successfully!`, 'success');
     return { success: true, message: 'Installation completed successfully.' };
     
