@@ -13,6 +13,31 @@ function isBuildxAvailable(): boolean {
   }
 }
 
+// Check if any service has APP_TOKEN in its environment (indicates Yundera app)
+function shouldInjectBuildMode(composeDoc: any): boolean {
+  if (!composeDoc?.services) return false;
+
+  for (const serviceName in composeDoc.services) {
+    const service = composeDoc.services[serviceName];
+    const env = service.environment;
+
+    if (!env) continue;
+
+    // Handle array format: ["APP_TOKEN=value", "OTHER=value"]
+    if (Array.isArray(env)) {
+      if (env.some((e: string) => e.startsWith('APP_TOKEN=') || e === 'APP_TOKEN')) {
+        return true;
+      }
+    }
+    // Handle object format: { APP_TOKEN: "value" }
+    else if (typeof env === 'object' && 'APP_TOKEN' in env) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 interface RepoConfig {
   url: string;
   path: string; // This is the repo name
@@ -109,13 +134,22 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
         throw new Error(`Dockerfile not found at ${dockerfilePath}`);
     }
 
+    // Check if we should inject BUILD_MODE=yundera (for apps with APP_TOKEN)
+    const extraBuildArgs = shouldInjectBuildMode(origDoc)
+      ? ['--build-arg', 'BUILD_MODE=yundera']
+      : [];
+
+    if (extraBuildArgs.length > 0) {
+      console.log(`🔧 [${repo.path}] APP_TOKEN detected, injecting BUILD_MODE=yundera`);
+    }
+
     // For GitHub repos, use simple build command (Dockerfile is in default location)
     // For compose repos, use -f flag for custom dockerfile paths
-    const buildArgs = isGitHubRepo 
-      ? ['build', '-t', localTag, buildContext]
-      : ['build', '-t', localTag, '-f', dockerfilePath, buildContext];
-    
-    console.log(`🔄 Executing build: docker ${buildArgs.join(' ')}`);
+    const dockerArgs = isGitHubRepo
+      ? ['build', '-t', localTag, ...extraBuildArgs, buildContext]
+      : ['build', '-t', localTag, '-f', dockerfilePath, ...extraBuildArgs, buildContext];
+
+    console.log(`🔄 Executing build: docker ${dockerArgs.join(' ')}`);
     
     // Use spawn to stream progress like CasaOSInstaller does
     return new Promise<{ imageName: string; serviceName: string } | null>((resolve, reject) => {
@@ -128,7 +162,7 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
         console.log(`⚠️ BuildKit disabled (buildx not available, using legacy builder)`);
       }
       
-      const child = spawn('docker', buildArgs, { env });
+      const child = spawn('docker', dockerArgs, { env });
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
