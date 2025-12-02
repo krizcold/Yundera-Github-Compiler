@@ -1292,6 +1292,8 @@ app.get("/api/admin/repos/:id/check-updates", async (req, res) => {
         latestCommit: updateInfo.latestCommit,
         currentVersion: updateInfo.currentCommit.substring(0, 8),
         latestVersion: updateInfo.latestCommit.substring(0, 8),
+        currentVersionDate: updateInfo.currentCommitDate,
+        latestVersionDate: updateInfo.latestCommitDate,
         commitsBehind: updateInfo.commitsBehind,
         lastChecked: new Date().toISOString(),
         error: updateInfo.error
@@ -1338,6 +1340,8 @@ app.post("/api/admin/repos/check-updates", async (req, res) => {
               latestCommit: updateInfo.latestCommit,
               currentVersion: updateInfo.currentCommit.substring(0, 8),
               latestVersion: updateInfo.latestCommit.substring(0, 8),
+              currentVersionDate: updateInfo.currentCommitDate,
+              latestVersionDate: updateInfo.latestCommitDate,
               commitsBehind: updateInfo.commitsBehind,
               error: updateInfo.error
             }
@@ -2878,12 +2882,14 @@ app.get("/api/app/check-updates", validateAppTokenMiddleware, async (req, res) =
       repositoryId: repo.id,
       currentVersion: updateInfo.currentCommit,
       latestVersion: updateInfo.latestCommit,
+      currentVersionDate: updateInfo.currentCommitDate,
+      latestVersionDate: updateInfo.latestCommitDate,
       hasUpdates: updateInfo.hasUpdates,
       commitsBehind: updateInfo.commitsBehind,
       lastChecked: new Date().toISOString(),
-      message: !updateInfo.hasUpdates 
-        ? 'App is up to date' 
-        : updateInfo.commitsBehind > 0 
+      message: !updateInfo.hasUpdates
+        ? 'App is up to date'
+        : updateInfo.commitsBehind > 0
           ? `${updateInfo.commitsBehind} commit(s) behind`
           : 'Updates available (count unknown)'
     };

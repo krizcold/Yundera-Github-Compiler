@@ -13,6 +13,8 @@ export interface GitUpdateInfo {
   currentCommit: string;
   latestCommit: string;
   commitsBehind: number;
+  currentCommitDate?: string;
+  latestCommitDate?: string;
   error?: string;
 }
 
@@ -213,13 +215,13 @@ export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo
     // Check if we're behind
     const hasUpdates = currentCommit !== latestCommit;
     console.log(`🔍 Update check for ${repoPath}: current=${currentCommit.substring(0,8)}, latest=${latestCommit.substring(0,8)}, hasUpdates=${hasUpdates}`);
-    
+
     let commitsBehind = 0;
     if (hasUpdates) {
       try {
-        const commitCount = execSync(`git -C "${repoDir}" rev-list --count HEAD..${remoteBranch}`, { 
-          encoding: 'utf8', 
-          stdio: 'pipe' 
+        const commitCount = execSync(`git -C "${repoDir}" rev-list --count HEAD..${remoteBranch}`, {
+          encoding: 'utf8',
+          stdio: 'pipe'
         }).trim();
         commitsBehind = parseInt(commitCount) || 0;
       } catch (error: any) {
@@ -229,12 +231,36 @@ export function checkForUpdates(repoUrl: string, baseDir: string): GitUpdateInfo
         commitsBehind = 1;
       }
     }
-    
+
+    // Get commit dates (ISO 8601 format)
+    let currentCommitDate: string | undefined;
+    let latestCommitDate: string | undefined;
+
+    try {
+      currentCommitDate = execSync(`git -C "${repoDir}" log -1 --format=%cI HEAD`, {
+        encoding: 'utf8',
+        stdio: 'pipe'
+      }).trim();
+    } catch (error: any) {
+      console.warn(`⚠️ Failed to get current commit date: ${error.message}`);
+    }
+
+    try {
+      latestCommitDate = execSync(`git -C "${repoDir}" log -1 --format=%cI ${remoteBranch}`, {
+        encoding: 'utf8',
+        stdio: 'pipe'
+      }).trim();
+    } catch (error: any) {
+      console.warn(`⚠️ Failed to get latest commit date: ${error.message}`);
+    }
+
     return {
       hasUpdates,
       currentCommit,
       latestCommit,
-      commitsBehind
+      commitsBehind,
+      currentCommitDate,
+      latestCommitDate
     };
     
   } catch (error: any) {
