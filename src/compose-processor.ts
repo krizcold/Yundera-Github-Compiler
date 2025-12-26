@@ -486,13 +486,15 @@ export function applyPCSProcessing(composeContent: string): string {
 export interface ProcessedCompose {
     rich: any;
     clean: any;
+    authHash: string; // The AUTH_HASH used (for persistence)
 }
 
 /**
  * Pre-processes an App Store-style docker-compose object.
  * Returns two versions: one for saving (rich) and one for installation (clean).
+ * @param existingAuthHash - If provided, reuses this AUTH_HASH instead of generating a new one (for updates)
  */
-export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null, appToken?: string | null, builtServiceName?: string | null): ProcessedCompose {
+export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSettings, localImageName?: string | null, appToken?: string | null, builtServiceName?: string | null, existingAuthHash?: string | null): ProcessedCompose {
     console.log('🔧 Pre-processing App Store-style compose file...');
 
     // Create a deep copy to avoid modifying the original object in memory
@@ -508,9 +510,15 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
     // Get the main service key from x-casaos
     const mainServiceKey = richCompose['x-casaos']?.main;
 
-    // Generate a unique AUTH_HASH for this app installation (once for the entire app)
+    // Use existing AUTH_HASH if provided (for updates), otherwise generate a new one
     const crypto = require('crypto');
-    const authHash = crypto.randomBytes(32).toString('hex');
+    const authHash = existingAuthHash || crypto.randomBytes(32).toString('hex');
+
+    if (existingAuthHash) {
+        console.log(`🔑 Using existing AUTH_HASH for app update: ${authHash.substring(0, 8)}...`);
+    } else {
+        console.log(`🔑 Generated new AUTH_HASH for first installation: ${authHash.substring(0, 8)}...`);
+    }
 
     // Helper function to replace template variables in strings
     const replaceTemplateVars = (value: string): string => {
@@ -621,15 +629,9 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 }
             }
 
-            // Inject AUTH_HASH for apps that need authentication
-            if (!service.environment) {
-                service.environment = {};
-            }
-
-            // Only add AUTH_HASH if the service doesn't already have it
-            if (!service.environment.AUTH_HASH) {
-                service.environment.AUTH_HASH = authHash;
-            }
+            // NOTE: AUTH_HASH is NOT force-injected anymore
+            // It is only replaced via template variable substitution (replaceTemplateVars)
+            // Apps that need AUTH_HASH must explicitly define it with $AUTH_HASH in their environment
 
             // Process template substitutions in volumes
             if (service.volumes && Array.isArray(service.volumes)) {
@@ -769,6 +771,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
 
     return {
         rich: finalRichCompose,
-        clean: finalCleanCompose
+        clean: finalCleanCompose,
+        authHash: authHash
     };
 }

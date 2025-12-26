@@ -146,8 +146,14 @@ export async function processRepo(
       throw new Error(`Token synchronization issue: App uses API_HASH but no matching token exists for "${appName}". This may indicate an appName/repositoryId mismatch.`);
     }
 
-    const { rich, clean } = preprocessAppstoreCompose(composeObject, settings, localImageName, appToken, builtServiceName);
+    const { rich, clean, authHash } = preprocessAppstoreCompose(composeObject, settings, localImageName, appToken, builtServiceName, repository.authHash);
     log(`✅ Compose file preprocessing completed`, 'success');
+
+    // Persist the AUTH_HASH for future updates (only if it's new or changed)
+    if (authHash && authHash !== repository.authHash) {
+      updateRepository(repository.id, { authHash });
+      log(`💾 Saved AUTH_HASH for ${appName}: ${authHash.substring(0, 8)}...`, 'info');
+    }
 
     // Step 3: Create all host volume paths
     log('📁 Creating host directories for app data volumes...', 'info');

@@ -31,6 +31,7 @@ export interface Repository {
   hasCompose?: boolean; // for backward compatibility
   rawDockerCompose?: string; // Original docker-compose.yml from repo (for comparison)
   modifiedDockerCompose?: string; // User-modified docker-compose.yml
+  authHash?: string; // Persistent AUTH_HASH for app authentication (preserved across updates)
 }
 
 export interface GlobalSettings {
