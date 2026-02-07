@@ -37,44 +37,50 @@ services:
     environment:
       # Application settings
       WEBUI_PORT: "3000"
-      
+
       # CasaOS integration
       DEPLOYMENT_MODE: "appstore"
       CASAOS_API_HOST: "localhost"
       CASAOS_API_PORT: "8080"
-      DATA_ROOT: $DATA_ROOT
-      
-      # Yundera platform integration (unused - set to blank)
-      DOMAIN: ""
-      PROVIDER_STR: ""
-      UID: ""
-      DEFAULT_PWD: ""
-      PUBLIC_IP: ""
-      DEFAULT_USER: ""
-      
-      # Authentication and paths (unused - set to blank)
-      JWT_SECRET: ""
-      AUTHORITY_ENDPOINT: ""
-      COMPOSE_FOLDER_PATH: ""
-      BASE_PATH: ""
-      MOCK: ""
-      
+
       # Pass through the host's CasaOS environment variables.
       # These will be populated by the AppStore during installation.
+
+      # Hardcoded/built-in variables
       PUID: $PUID
       PGID: $PGID
-      REF_DOMAIN: $REF_DOMAIN
-      REF_NET: $REF_NET
-      REF_PORT: $REF_PORT
-      REF_SCHEME: $REF_SCHEME
-      REF_SEPARATOR: $REF_SEPARATOR
-      
-      # Debug/logging settings (unused - set to blank)
-      LOG_APPS_BEACON: ""      
-      
-      user: $user
+      TZ: $TZ
+      DefaultUserName: $DefaultUserName
+      DefaultPassword: $DefaultPassword
+
+      # CasaOS container OS environment variables
       default_pwd: $default_pwd
       public_ip: $public_ip
+      domain: $domain
+      USER: $USER
+
+      # PCS environment variables (MUST be included)
+      PCS_DEFAULT_PASSWORD: $PCS_DEFAULT_PASSWORD
+      PCS_DOMAIN: $PCS_DOMAIN
+      PCS_DATA_ROOT: $PCS_DATA_ROOT
+      PCS_PUBLIC_IP: $PCS_PUBLIC_IP
+      PCS_PUBLIC_IPV6: $PCS_PUBLIC_IPV6
+      PCS_EMAIL: $PCS_EMAIL
+
+      # REF variables
+      REF_DOMAIN: $REF_DOMAIN
+      REF_NET: $REF_NET
+      REF_SCHEME: $REF_SCHEME
+      REF_PORT: $REF_PORT
+      REF_SEPARATOR: $REF_SEPARATOR
+      REF_DEFAULT_PORT: $REF_DEFAULT_PORT
+
+      # Data root
+      DATA_ROOT: $DATA_ROOT
+
+      # SMTP variables
+      SMTP_HOST: $SMTP_HOST
+      SMTP_PORT: $SMTP_PORT
 
     volumes:        
       # cloned repos
