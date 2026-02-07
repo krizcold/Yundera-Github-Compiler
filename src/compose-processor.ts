@@ -410,13 +410,41 @@ function updateCasaOSExtensions(compose: any, pcsEnv: PCSEnvironment): any {
 
     // Process tips.before_install environment variables
     if (casaos.tips?.before_install) {
+        const env = process.env;
         for (const [lang, tip] of Object.entries(casaos.tips.before_install)) {
             if (typeof tip === 'string') {
-                // Expand environment variables
+                // Expand all environment variables (matching replaceTemplateVars)
                 casaos.tips.before_install[lang] = (tip as string)
-                    .replace(/\$DATA_ROOT/g, pcsEnv.DATA_ROOT)
-                    .replace(/\$PUID/g, pcsEnv.PUID)
-                    .replace(/\$PGID/g, pcsEnv.PGID);
+                    // Hardcoded/built-in variables
+                    .replace(/\$\{?DefaultUserName\}?/g, env.DefaultUserName || 'admin')
+                    .replace(/\$\{?DefaultPassword\}?/g, env.DefaultPassword || env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
+                    .replace(/\$\{?PUID\}?/g, pcsEnv.PUID)
+                    .replace(/\$\{?PGID\}?/g, pcsEnv.PGID)
+                    .replace(/\$\{?TZ\}?/g, env.TZ || 'UTC')
+                    // CasaOS container OS environment variables
+                    .replace(/\$\{?default_pwd\}?/g, env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
+                    .replace(/\$\{?public_ip\}?/g, env.public_ip || env.PCS_PUBLIC_IP || '')
+                    .replace(/\$\{?domain\}?/g, env.domain || env.PCS_DOMAIN || '')
+                    // PCS environment variables
+                    .replace(/\$\{?PCS_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
+                    .replace(/\$\{?PCS_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
+                    .replace(/\$\{?PCS_DATA_ROOT\}?/g, env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
+                    .replace(/\$\{?PCS_PUBLIC_IP\}?/g, env.PCS_PUBLIC_IP || env.public_ip || '')
+                    .replace(/\$\{?PCS_PUBLIC_IPV6\}?/g, env.PCS_PUBLIC_IPV6 || '')
+                    .replace(/\$\{?PCS_EMAIL\}?/g, env.PCS_EMAIL || '')
+                    // REF variables
+                    .replace(/\$\{?REF_NET\}?/g, env.REF_NET || pcsEnv.REF_NET)
+                    .replace(/\$\{?REF_SCHEME\}?/g, pcsEnv.REF_SCHEME)
+                    .replace(/\$\{?REF_PORT\}?/g, pcsEnv.REF_PORT)
+                    .replace(/\$\{?REF_SEPARATOR\}?/g, pcsEnv.REF_SEPARATOR)
+                    .replace(/\$\{?REF_DEFAULT_PORT\}?/g, env.REF_DEFAULT_PORT || '80')
+                    // Data and system variables
+                    .replace(/\$\{?DATA_ROOT\}?/g, pcsEnv.DATA_ROOT)
+                    // SMTP variables
+                    .replace(/\$\{?SMTP_HOST\}?/g, env.SMTP_HOST || '')
+                    .replace(/\$\{?SMTP_PORT\}?/g, env.SMTP_PORT || '')
+                    // User variable
+                    .replace(/\$\{?USER\}?/g, env.USER || 'root');
             }
         }
     }
@@ -522,21 +550,55 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
 
     // Helper function to replace template variables in strings
     const replaceTemplateVars = (value: string): string => {
-        const originalValue = value;
         const webUiPort = richCompose['x-casaos']?.webui_port || 80;
         const domainValue = webUiPort === 80
             ? `${appId}${settings.refSeparator}${settings.refDomain}`
             : `${appId}${settings.refSeparator}${settings.refDomain}:${webUiPort}`;
 
+        // Get all environment variables for template replacement
+        const env = process.env;
+
         let result = value
+            // Hardcoded/built-in variables
+            .replace(/\$\{?AppID\}?/g, appId)
+            .replace(/\$\{?APP_ID\}?/g, appId)
+            .replace(/\$\{?DefaultUserName\}?/g, env.DefaultUserName || 'admin')
+            .replace(/\$\{?DefaultPassword\}?/g, env.DefaultPassword || env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
             .replace(/\$\{?PUID\}?/g, settings.puid)
             .replace(/\$\{?PGID\}?/g, settings.pgid)
-            .replace(/\$\{?APP_ID\}?/g, appId)
-            .replace(/\$AppID/g, appId)  // Handle $AppID without braces
+            .replace(/\$\{?TZ\}?/g, env.TZ || 'UTC')
+            .replace(/\$\{?AUTH_HASH\}?/g, authHash)
+
+            // CasaOS container OS environment variables
+            .replace(/\$\{?default_pwd\}?/g, env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
+            .replace(/\$\{?public_ip\}?/g, env.public_ip || env.PCS_PUBLIC_IP || '')
+            .replace(/\$\{?domain\}?/g, env.domain || env.PCS_DOMAIN || '')
+
+            // PCS environment variables (MUST be included)
+            .replace(/\$\{?PCS_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
+            .replace(/\$\{?PCS_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
+            .replace(/\$\{?PCS_DATA_ROOT\}?/g, env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
+            .replace(/\$\{?PCS_PUBLIC_IP\}?/g, env.PCS_PUBLIC_IP || env.public_ip || '')
+            .replace(/\$\{?PCS_PUBLIC_IPV6\}?/g, env.PCS_PUBLIC_IPV6 || '')
+            .replace(/\$\{?PCS_EMAIL\}?/g, env.PCS_EMAIL || '')
+
+            // REF variables
             .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
+            .replace(/\$\{?REF_NET\}?/g, env.REF_NET || 'pcs')
             .replace(/\$\{?REF_SCHEME\}?/g, settings.refScheme)
             .replace(/\$\{?REF_PORT\}?/g, settings.refPort)
-            .replace(/\$\{?AUTH_HASH\}?/g, authHash);  // Replace AUTH_HASH globally
+            .replace(/\$\{?REF_SEPARATOR\}?/g, settings.refSeparator)
+            .replace(/\$\{?REF_DEFAULT_PORT\}?/g, env.REF_DEFAULT_PORT || '80')
+
+            // Data and system variables
+            .replace(/\$\{?DATA_ROOT\}?/g, env.DATA_ROOT || '/DATA')
+
+            // SMTP variables
+            .replace(/\$\{?SMTP_HOST\}?/g, env.SMTP_HOST || '')
+            .replace(/\$\{?SMTP_PORT\}?/g, env.SMTP_PORT || '')
+
+            // User variable
+            .replace(/\$\{?USER\}?/g, env.USER || 'root');
 
         // Replace $API_HASH with the app's specific token if available
         if (appToken) {
