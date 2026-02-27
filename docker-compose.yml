@@ -160,7 +160,3 @@ x-casaos:
   is_uncontrolled: false
   index: /?hash=$AUTH_HASH
   webui_port: 3000
-  pre-install-cmd: |
-    mkdir -p /DATA/AppData/yunderagithubcompiler/{repos,uidata} 2>/dev/null
-    chown -R ubuntu:988 /DATA/AppData/yunderagithubcompiler/ 2>/dev/null || true
-    chmod -R 755 /DATA/AppData/yunderagithubcompiler/ 2>/dev/null || true
