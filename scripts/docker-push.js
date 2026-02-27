@@ -15,7 +15,7 @@ function getCurrentVersion() {
 }
 
 function pushDocker(tag) {
-    const REPO = "krizcold/yundera-github-compiler";
+    const REPO = "krizcold/yundera-dev-kit";
     
     console.log(`🚀 Pushing Docker image: ${REPO}:${tag}...`);
     

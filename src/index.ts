@@ -67,7 +67,7 @@ function performStartupCheck() {
 
 // Initialize storage and load persisted data
 (async () => {
-  console.log("🚀 Starting Yundera GitHub Compiler...");
+  console.log("🚀 Starting Yundera Dev Kit...");
   performStartupCheck();
   
   // Load persisted repositories and settings
@@ -1527,7 +1527,7 @@ app.get("/build-info", (req, res) => {
         buildDate: 'unknown',
         buildCount: 0,
         buildType: 'unknown',
-        repository: 'krizcold/yundera-github-compiler'
+        repository: 'krizcold/yundera-dev-kit'
       });
     }
   } catch (error) {
@@ -2249,8 +2249,8 @@ app.get("/api/admin/services/:service/logs", async (req, res) => {
     
     // Map service names to container names and log commands
     switch (service) {
-      case 'github-compiler':
-        containerName = 'yunderagithubcompiler';
+      case 'dev-kit':
+        containerName = 'yunderadevkit';
         logCommand = `docker logs --tail ${lines} ${containerName}`;
         break;
       case 'casaos':
@@ -2318,8 +2318,8 @@ app.post("/api/admin/services/execute", async (req, res) => {
     
     // Map service names to container names
     switch (service) {
-      case 'github-compiler':
-        containerName = 'yunderagithubcompiler';
+      case 'dev-kit':
+        containerName = 'yunderadevkit';
         break;
       case 'casaos':
         containerName = 'casaos';
@@ -2382,7 +2382,7 @@ app.get("/api/admin/services/status", async (req, res) => {
   console.log(`🔍 Checking status of all services`);
   
   try {
-    const services = ['yunderagithubcompiler', 'casaos', 'mesh-router'];
+    const services = ['yunderadevkit', 'casaos', 'mesh-router'];
     const statusResults = [];
     
     for (const container of services) {
@@ -2440,8 +2440,8 @@ app.get("/api/admin/services/:service/logs/stream", async (req, res) => {
   
   // Map service names to container names
   switch (service) {
-    case 'github-compiler':
-      containerName = 'yunderagithubcompiler';
+    case 'dev-kit':
+      containerName = 'yunderadevkit';
       break;
     case 'casaos':
       containerName = 'casaos';
@@ -2556,8 +2556,8 @@ app.post("/api/admin/services/autocomplete", async (req, res) => {
     
     // Map service names to container names
     switch (service) {
-      case 'github-compiler':
-        containerName = 'yunderagithubcompiler';
+      case 'dev-kit':
+        containerName = 'yunderadevkit';
         break;
       case 'casaos':
         containerName = 'casaos';

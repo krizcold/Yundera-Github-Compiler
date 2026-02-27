@@ -1,4 +1,4 @@
-# Yundera GitHub Compiler
+# Yundera Dev Kit
 
 Automatically clone, build, and deploy Docker-based projects from GitHub repositories to YUNDERA. This containerized service is specifically designed for the YUNDERA platform and integrates directly with YUNDERA's infrastructure to monitor configured repositories and install them as YUNDERA applications with a complete API for external integration.
 
@@ -21,7 +21,7 @@ Automatically clone, build, and deploy Docker-based projects from GitHub reposit
 version: '3.8'
 services:
   yundera-compiler:
-    image: yundera/github-compiler:latest
+    image: yundera/dev-kit:latest
     ports:
       - "3000:3000"
     volumes:
@@ -60,11 +60,11 @@ The compiler automatically replaces template variables in your docker-compose.ym
 - `$AUTH_HASH` / `${AUTH_HASH}` - Random authentication hash (for admin access)
 - `$API_HASH` / `${API_HASH}` - App-specific API token (for secure app updates)
 
-**Important:** Apps using `$API_HASH` must be on the same Docker network as the GitHub Compiler (`pcs` network) and use `yunderagithubcompiler` as the hostname to communicate with the API.
+**Important:** Apps using `$API_HASH` must be on the same Docker network as the Dev Kit (`pcs` network) and use `yunderadevkit` as the hostname to communicate with the API.
 
 **Complete Requirements Checklist:**
 - ✅ Include `$API_HASH` in environment variables
-- ✅ Use `COMPILER_API=http://yunderagithubcompiler:3000/api/app`
+- ✅ Use `COMPILER_API=http://yunderadevkit:3000/api/app`
 - ✅ Add `networks: [pcs]` to your service
 - ✅ Read token from `process.env.APP_TOKEN`
 - ✅ Use `X-App-Token` header for API calls
@@ -315,7 +315,7 @@ services:
     image: myapp:latest
     environment:
       - APP_TOKEN=$API_HASH
-      - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+      - COMPILER_API=http://yunderadevkit:3000/api/app
     networks:
       - pcs
     restart: unless-stopped
@@ -326,7 +326,7 @@ networks:
 ```
 
 **Step 2: Install your app**
-- The GitHub Compiler will automatically replace `$API_HASH` with your unique token
+- The Dev Kit will automatically replace `$API_HASH` with your unique token
 
 **Step 3: Verify the setup**
 ```bash
@@ -334,10 +334,10 @@ networks:
 docker exec -it myapp env | grep APP_TOKEN
 
 # Test network connectivity:
-docker exec -it myapp nslookup yunderagithubcompiler
+docker exec -it myapp nslookup yunderadevkit
 
 # Test API access:
-docker exec -it myapp curl -H "X-App-Token: $APP_TOKEN" http://yunderagithubcompiler:3000/api/app/check-updates
+docker exec -it myapp curl -H "X-App-Token: $APP_TOKEN" http://yunderadevkit:3000/api/app/check-updates
 ```
 
 #### Getting Your Token
@@ -348,14 +348,14 @@ services:
   myapp:
     environment:
       - APP_TOKEN=$API_HASH
-      - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+      - COMPILER_API=http://yunderadevkit:3000/api/app
 ```
 
 During installation, `$API_HASH` is replaced with your app's unique token. Your application can then read it from the environment variable.
 
 #### Network Configuration (IMPORTANT)
 
-**Apps MUST be on the same Docker network as the GitHub Compiler to communicate.**
+**Apps MUST be on the same Docker network as the Dev Kit to communicate.**
 
 **Example docker-compose.yml for an app:**
 ```yaml
@@ -366,7 +366,7 @@ services:
     environment:
       - NODE_ENV=production
       - APP_TOKEN=$API_HASH
-      - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+      - COMPILER_API=http://yunderadevkit:3000/api/app
     networks:
       - pcs
     restart: unless-stopped
@@ -377,7 +377,7 @@ networks:
 ```
 
 **Key Points:**
-- Use `yunderagithubcompiler` as the hostname (the compiler's container name)
+- Use `yunderadevkit` as the hostname (the compiler's container name)
 - Both containers must be on the `pcs` network
 - Port remains `3000`
 - **Do NOT use IP addresses, localhost, or host.docker.internal**
@@ -387,7 +387,7 @@ networks:
 environment:
   - NODE_ENV=production  
   - APP_TOKEN=a1b2c3d4e5f6789...  # Your app's unique 64-char token
-  - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+  - COMPILER_API=http://yunderadevkit:3000/api/app
 ```
 
 #### Secure API Endpoints
@@ -395,7 +395,7 @@ environment:
 **Check for Updates (App-Specific)**
 ```bash
 # From another container on the same network:
-curl -H "X-App-Token: your-token" http://yunderagithubcompiler:3000/api/app/check-updates
+curl -H "X-App-Token: your-token" http://yunderadevkit:3000/api/app/check-updates
 
 # From the host machine:
 curl -H "X-App-Token: your-token" http://localhost:3000/api/app/check-updates
@@ -404,7 +404,7 @@ curl -H "X-App-Token: your-token" http://localhost:3000/api/app/check-updates
 **Trigger Self-Update**
 ```bash
 # From another container on the same network:
-curl -X POST -H "X-App-Token: your-token" http://yunderagithubcompiler:3000/api/app/update
+curl -X POST -H "X-App-Token: your-token" http://yunderadevkit:3000/api/app/update
 
 # From the host machine:
 curl -X POST -H "X-App-Token: your-token" http://localhost:3000/api/app/update
@@ -413,7 +413,7 @@ curl -X POST -H "X-App-Token: your-token" http://localhost:3000/api/app/update
 **Check App Status**
 ```bash
 # From another container on the same network:
-curl -H "X-App-Token: your-token" http://yunderagithubcompiler:3000/api/app/status
+curl -H "X-App-Token: your-token" http://yunderadevkit:3000/api/app/status
 
 # From the host machine:
 curl -H "X-App-Token: your-token" http://localhost:3000/api/app/status
@@ -482,7 +482,7 @@ class AppUpdater {
   constructor() {
     // Read token from environment variable (injected via $API_HASH)
     this.appToken = process.env.APP_TOKEN;
-    this.apiBase = process.env.COMPILER_API || 'http://yunderagithubcompiler:3000/api/app';
+    this.apiBase = process.env.COMPILER_API || 'http://yunderadevkit:3000/api/app';
     
     if (!this.appToken) {
       throw new Error('APP_TOKEN environment variable not set. Ensure your docker-compose.yml includes $API_HASH.');
@@ -610,7 +610,7 @@ async function triggerUpdate() {
   } catch (error) {
     if (error.response?.status === 409 && error.response?.data?.code === 'COMPOSE_CHANGED') {
       console.log('Update blocked: Docker-compose changes require manual server review');
-      console.log('Please update via the GitHub Compiler dashboard');
+      console.log('Please update via the Dev Kit dashboard');
       // Notify user to manually review changes on server
     } else {
       console.error('Update failed:', error.message);
@@ -641,15 +641,15 @@ Error: connect ECONNREFUSED 192.168.x.x:3000
 2. Use the correct hostname:
    ```yaml
    environment:
-     - COMPILER_API=http://yunderagithubcompiler:3000/api/app
+     - COMPILER_API=http://yunderadevkit:3000/api/app
    ```
 
 3. Test connectivity from inside your container:
    ```bash
    docker exec -it your-app-container sh
    # Inside container:
-   nslookup yunderagithubcompiler
-   wget http://yunderagithubcompiler:3000/api/system/status
+   nslookup yunderadevkit
+   wget http://yunderadevkit:3000/api/system/status
    ```
 
 **Alternative Network Configuration:**
@@ -677,20 +677,20 @@ Test connectivity from your app container:
 docker exec -it your-app-container sh
 # Inside container:
 echo $APP_TOKEN
-curl -H "X-App-Token: $APP_TOKEN" http://yunderagithubcompiler:3000/api/app/check-updates
+curl -H "X-App-Token: $APP_TOKEN" http://yunderadevkit:3000/api/app/check-updates
 ```
 
 **3. Check Token in Storage**
 Verify the token was created on the compiler side:
 ```bash
-docker exec yunderagithubcompiler cat /app/uidata/app-tokens.json
+docker exec yunderadevkit cat /app/uidata/app-tokens.json
 ```
 
 **4. Check Network Configuration**
 Verify both containers are on the same network:
 ```bash
 # Check compiler network:
-docker inspect yunderagithubcompiler | grep NetworkMode
+docker inspect yunderadevkit | grep NetworkMode
 
 # Check your app network:
 docker inspect your-app-container | grep NetworkMode
@@ -700,7 +700,7 @@ docker inspect your-app-container | grep NetworkMode
 - **Token not injected**: `$API_HASH` wasn't in your docker-compose.yml
 - **Wrong environment variable**: Using `API_ENDPOINT` instead of `COMPILER_API`
 - **Network isolation**: Containers on different networks
-- **Wrong hostname**: Using `localhost` instead of `yunderagithubcompiler`
+- **Wrong hostname**: Using `localhost` instead of `yunderadevkit`
 
 ### JavaScript/Node.js Integration
 
@@ -916,7 +916,7 @@ The project uses `dockflow.json` for automatic semantic versioning:
 ```json
 {
   "version": "1.0.0",
-  "repository": "krizcold/yundera-github-compiler",
+  "repository": "krizcold/yundera-dev-kit",
   "lastPublish": {
     "latest": "2024-08-15T...",
     "dev": "2024-08-15T..."
@@ -985,10 +985,10 @@ npm run docker:build
 # Build Docker image with :dev tag
 npm run docker:build-dev
 
-# Push :latest tag to krizcold/yundera-github-compiler
+# Push :latest tag to krizcold/yundera-dev-kit
 npm run docker:push
 
-# Push :dev tag to krizcold/yundera-github-compiler
+# Push :dev tag to krizcold/yundera-dev-kit
 npm run docker:push-dev
 ```
 

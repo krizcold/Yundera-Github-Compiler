@@ -1,5 +1,5 @@
 {
-  "name": "yundera-github-compiler",
+  "name": "yundera-dev-kit",
   "version": "1.x.x",
   "description": "Clone, build, and run Docker-based projects directly from GitHub URLs.",
   "main": "dist/index.js",

@@ -19,7 +19,7 @@ check_buildx() {
 # Initialize BuildKit setting
 check_buildx
 
-REPO="krizcold/yundera-github-compiler"
+REPO="krizcold/yundera-dev-kit"
 
 show_help() {
     echo "Dockflow - Docker Build and Push Workflow"

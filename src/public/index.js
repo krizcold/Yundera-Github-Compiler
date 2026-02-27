@@ -4824,11 +4824,11 @@ class RepoManager {
         
         // Initialize service logs state with persistent terminal sessions
         this.serviceLogsState = {
-            selectedService: 'github-compiler',
+            selectedService: 'dev-kit',
             services: {
-                'github-compiler': { 
-                    name: 'GitHub Compiler', 
-                    container: 'yunderagithubcompiler',
+                'dev-kit': {
+                    name: 'Dev Kit',
+                    container: 'yunderadevkit',
                     terminalHistory: [],  // Each service keeps its own terminal history
                     logHistory: [],  // Store log messages for this service
                     terminalSession: {
@@ -4910,10 +4910,10 @@ class RepoManager {
                             <span class="sidebar-title">Services</span>
                         </div>
                         <div class="service-list" id="service-list">
-                            <div class="service-item active" data-service="github-compiler">
+                            <div class="service-item active" data-service="dev-kit">
                                 <div class="service-icon"><i class="fas fa-code-branch"></i></div>
                                 <div class="service-info">
-                                    <div class="service-name">GitHub Compiler</div>
+                                    <div class="service-name">Dev Kit</div>
                                     <div class="service-status">Active</div>
                                 </div>
                             </div>
@@ -4954,7 +4954,7 @@ class RepoManager {
                         <div class="logs-content">
                             <div class="logs-panel active" id="logs-panel">
                                 <div class="logs-toolbar">
-                                    <div class="logs-service-title">GitHub Compiler Logs</div>
+                                    <div class="logs-service-title">Dev Kit Logs</div>
                                     <div class="logs-toolbar-controls">
                                         <button class="logs-btn" id="logs-refresh-btn" title="Refresh logs">
                                             <i class="fas fa-sync-alt"></i>
@@ -4968,7 +4968,7 @@ class RepoManager {
                                     </div>
                                 </div>
                                 <div class="logs-viewer" id="logs-viewer">
-                                    <div class="log-line system">📋 Loading logs for GitHub Compiler...</div>
+                                    <div class="log-line system">📋 Loading logs for Dev Kit...</div>
                                 </div>
                             </div>
                             <div class="logs-panel" id="terminal-panel">
@@ -4977,7 +4977,7 @@ class RepoManager {
                                 </div>
                                 <div class="terminal-input-section">
                                     <div class="terminal-prompt">
-                                        <span id="service-terminal-prompt">ubuntu@github-compiler:/$</span>
+                                        <span id="service-terminal-prompt">ubuntu@dev-kit:/$</span>
                                         <input type="text" id="service-terminal-input" placeholder="Enter command..." autocomplete="off">
                                         <div class="terminal-controls">
                                             <button id="service-terminal-execute" class="logs-btn" title="Execute command">
@@ -5457,7 +5457,7 @@ class RepoManager {
             if (service.isApp) {
                 icon = '<i class="fas fa-cube"></i>';
                 status = 'App';
-            } else if (serviceKey === 'github-compiler') {
+            } else if (serviceKey === 'dev-kit') {
                 icon = '<i class="fas fa-code-branch"></i>';
                 status = 'Active';
             } else if (serviceKey === 'casaos') {
@@ -5816,8 +5816,8 @@ class RepoManager {
                 services.forEach(service => {
                     let serviceId;
                     switch (service.container) {
-                        case 'yunderagithubcompiler':
-                            serviceId = 'github-compiler';
+                        case 'yunderadevkit':
+                            serviceId = 'dev-kit';
                             break;
                         case 'casaos':
                             serviceId = 'casaos';
@@ -8058,7 +8058,7 @@ async function loadBuildInfo() {
 let repoManager;
 
 function initializeApp() {
-    console.log('🚀 Initializing Yundera GitHub Compiler...');
+    console.log('🚀 Initializing Yundera Dev Kit...');
     try {
         repoManager = new RepoManager();
         console.log('✅ RepoManager initialized successfully');

@@ -25,7 +25,7 @@ function getCurrentVersion() {
 }
 
 function buildDocker(tag) {
-    const REPO = "krizcold/yundera-github-compiler";
+    const REPO = "krizcold/yundera-dev-kit";
 
     const versionManagerPath = path.join(__dirname, 'version-manager.js');
 

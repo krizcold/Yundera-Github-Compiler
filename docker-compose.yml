@@ -1,22 +1,22 @@
-name: yunderagithubcompiler
+name: yunderadevkit
 
 services:
-  yunderagithubcompiler:
+  yunderadevkit:
     image: krizcold/nginxhashlock:latest
-    container_name: yunderagithubcompiler
+    container_name: yunderadevkit
     restart: unless-stopped
     expose:
       - "3000"
     user: "root"
     environment:
       AUTH_HASH: $AUTH_HASH
-      BACKEND_HOST: "yunderagithubcompilerapp"
+      BACKEND_HOST: "yunderadevkitapp"
       BACKEND_PORT: "3000"
       LISTEN_PORT: "3000"
       ALLOWED_EXTENSIONS: "js,css,png,ico,svg,jpg,jpeg,gif,woff,woff2,ttf,eot"
       ALLOWED_PATHS: "api/app,build-info"
     depends_on:
-      - yunderagithubcompilerapp
+      - yunderadevkitapp
     networks:
       - pcs
     privileged: true
@@ -24,9 +24,9 @@ services:
       - SYS_ADMIN
       - NET_ADMIN
 
-  yunderagithubcompilerapp:
-    image: krizcold/yundera-github-compiler:latest
-    container_name: yunderagithubcompilerapp
+  yunderadevkitapp:
+    image: ghcr.io/krizcold/yundera-dev-kit:latest
+    container_name: yunderadevkitapp
     restart: unless-stopped
     user: "root"
     entrypoint: ["/bin/sh"]
@@ -85,12 +85,12 @@ services:
     volumes:        
       # cloned repos
       - type: bind
-        source: /DATA/AppData/yunderagithubcompiler/repos
+        source: /DATA/AppData/yunderadevkit/repos
         target: /app/repos
 
       # persistent UI data storage
       - type: bind
-        source: /DATA/AppData/yunderagithubcompiler/uidata
+        source: /DATA/AppData/yunderadevkit/uidata
         target: /app/uidata
 
       # Writable mount for app metadata
@@ -100,8 +100,8 @@ services:
 
       # Bind mount for the main app directory
       - type: bind
-        source: /DATA/AppData/casaos/apps/yunderagithubcompiler
-        target: /DATA/AppData/casaos/apps/yunderagithubcompiler
+        source: /DATA/AppData/casaos/apps/yunderadevkit
+        target: /DATA/AppData/casaos/apps/yunderadevkit
         read_only: true
 
       - type: bind
@@ -145,18 +145,18 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  main: yunderagithubcompiler
+  main: yunderadevkit
   author: krizcold
   developer: krizcold
-  icon: https://cdn.statically.io/gh/krizcold/Yundera-Github-Compiler/main/YunderaCompiler.png
+  icon: https://cdn.statically.io/gh/krizcold/Yundera-Dev-Kit/main/YunderaCompiler.png
   tagline:
     en_us: "Automatically build and deploy GitHub repos on Yundera"
   category: Utilities
   description:
     en_us: "Clone, build, and run Docker-based projects directly from GitHub URLs."
   title:
-    en_us: "Yundera GitHub Compiler"
-  store_app_id: yunderagithubcompiler
+    en_us: "Yundera Dev Kit"
+  store_app_id: yunderadevkit
   is_uncontrolled: false
   index: /?hash=$AUTH_HASH
   webui_port: 3000
