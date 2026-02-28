@@ -18,7 +18,7 @@ class RepoManager {
         // State for the "new repository" row
         this.emptyRepoState = {
             name: '',
-            type: 'github',
+            type: 'compose',
             url: ''
         };
         // State for URL editing
@@ -345,8 +345,8 @@ class RepoManager {
 
         const typeDropdownHTML = `
             <select onchange="repoManager.handleTypeChange('empty', this.value)" ${!isEmpty ? 'disabled' : ''}>
-                <option value="github" ${repoType === 'github' ? 'selected' : ''}>GitHub Repository</option>
                 <option value="compose" ${repoType === 'compose' ? 'selected' : ''}>Docker Compose</option>
+                <option value="github" ${repoType === 'github' ? 'selected' : ''}>GitHub Repository</option>
             </select>`;
 
         const updateStatus = this.getUpdateStatus(repo);
