@@ -2461,7 +2461,7 @@ app.get("/api/admin/services/:service/logs/stream", async (req, res) => {
   // Function to get and send recent logs
   const sendRecentLogs = () => {
     try {
-      const result = execSync(`docker logs --tail ${lines} ${containerName}`, { 
+      const result = execSync(`docker logs --tail ${lines} ${containerName} 2>&1`, {
         encoding: 'utf8',
         timeout: 10000,
         maxBuffer: 1024 * 1024 * 5 // 5MB max buffer
@@ -2633,7 +2633,7 @@ app.get("/api/admin/docker/:containerName/logs/stream", async (req, res) => {
   // Function to get and send recent logs
   const sendRecentLogs = () => {
     try {
-      const result = execSync(`docker logs --tail ${lines} ${containerName}`, { 
+      const result = execSync(`docker logs --tail ${lines} ${containerName} 2>&1`, {
         encoding: 'utf8',
         timeout: 10000,
         maxBuffer: 1024 * 1024 * 5 // 5MB max buffer
