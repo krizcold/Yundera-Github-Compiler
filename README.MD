@@ -904,26 +904,13 @@ This ensures that users always have a smooth experience, especially during the c
 
 ## Version Management
 
-The project uses `dockflow.json` for automatic semantic versioning:
+Versions are managed via **git tags**. The format is `v<major>.<minor>.<patch>` (e.g., `v1.0.40`).
 
-- **Current System**: Starts at `1.0.0` and auto-increments patch version (1.0.1, 1.0.2, etc.)
-- **Automatic Incrementing**: Happens on `latest` and `both` publishes
-- **Docker Tags**: Creates both `:latest` and `:1.x.x` version tags
-- **Dev Builds**: Uses `:dev` tag without version incrementing
-- **Tracking**: Maintains build count and publish timestamps
-
-**dockflow.json Structure:**
-```json
-{
-  "version": "1.0.0",
-  "repository": "krizcold/yundera-dev-kit",
-  "lastPublish": {
-    "latest": "2024-08-15T...",
-    "dev": "2024-08-15T..."
-  },
-  "buildCount": 5
-}
-```
+- **Tagged pushes** (`v*`): Produce a `prod` build with the exact version from the tag
+- **Main branch pushes**: Produce a `dev` build with version `<latest-tag>-dev`
+- **Build info**: GitHub Actions generates `build-info.json` with version, commit SHA, date, and build type
+- **Docker tags**: `:latest` on default branch, semver tags (`:1.0.40`, `:1.0`) for releases, SHA prefix for all builds
+- **Registry**: Images are published to `ghcr.io/krizcold/yundera-dev-kit`
 
 ## Requirements
 
@@ -948,55 +935,15 @@ npm run build
 npm start
 ```
 
-### Docker Workflow Commands (Dockflow)
+### Creating a Release
 
-**One-Command Build & Push:**
 ```bash
-# Build TypeScript + Docker + auto-increment version + push to :latest and :1.x.x + cleanup
-npm run dockflow:latest
-
-# Build TypeScript + Docker + push to :dev (no version increment) + cleanup
-npm run dockflow:dev
-
-# Build TypeScript + Docker + auto-increment version + push to :latest, :1.x.x, and :dev + cleanup
-npm run dockflow:both
+# Tag and push a new release
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
-**Version Management:**
-```bash
-# Show current version
-npm run version:current
-
-# Show detailed version status
-npm run version:status
-
-# Manual version increment (not needed - automatic on latest/both)
-npm run version:increment
-
-# Clean up local Docker images (automatic after dockflow)
-npm run docker:cleanup
-```
-
-**Individual Docker Operations:**
-```bash
-# Build Docker image with :latest tag
-npm run docker:build
-
-# Build Docker image with :dev tag
-npm run docker:build-dev
-
-# Push :latest tag to krizcold/yundera-dev-kit
-npm run docker:push
-
-# Push :dev tag to krizcold/yundera-dev-kit
-npm run docker:push-dev
-```
-
-**Alternative Shell Script:**
-```bash
-# Shell script alternative to npm commands
-./dockflow.sh latest|dev|both
-```
+This triggers GitHub Actions to build and push to `ghcr.io` with tags `:latest`, `:1.1.0`, `:1.1`, and the commit SHA.
 
 ## API Response Formats
 

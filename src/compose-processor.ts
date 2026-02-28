@@ -130,7 +130,7 @@ export async function executePostInstallCommand(composeObject: any, logCollector
 
     try {
         // SIMPLE APPROACH: Execute directly in host context
-        // Since we're running in the GitHub Compiler container, we need to execute
+        // Since we're running in the Dev Kit container, we need to execute
         // the post-install command in a way that accesses the host filesystem
 
         const { exec } = await import('child_process');
@@ -262,7 +262,7 @@ export async function executePreInstallCommand(composeObject: any, logCollector?
     
     try {
         // SIMPLE APPROACH: Execute directly in host context
-        // Since we're running in the GitHub Compiler container, we need to execute
+        // Since we're running in the Dev Kit container, we need to execute
         // the pre-install command in a way that accesses the host filesystem
         
         const { exec } = await import('child_process');
@@ -418,6 +418,7 @@ function updateCasaOSExtensions(compose: any, pcsEnv: PCSEnvironment): any {
                     // Hardcoded/built-in variables
                     .replace(/\$\{?DefaultUserName\}?/g, env.DefaultUserName || 'admin')
                     .replace(/\$\{?DefaultPassword\}?/g, env.DefaultPassword || env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
+                    .replace(/\$\{?APP_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
                     .replace(/\$\{?PUID\}?/g, pcsEnv.PUID)
                     .replace(/\$\{?PGID\}?/g, pcsEnv.PGID)
                     .replace(/\$\{?TZ\}?/g, env.TZ || 'UTC')
@@ -425,6 +426,7 @@ function updateCasaOSExtensions(compose: any, pcsEnv: PCSEnvironment): any {
                     .replace(/\$\{?default_pwd\}?/g, env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
                     .replace(/\$\{?public_ip\}?/g, env.public_ip || env.PCS_PUBLIC_IP || '')
                     .replace(/\$\{?domain\}?/g, env.domain || env.PCS_DOMAIN || '')
+                    .replace(/\$\{?APP_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
                     // PCS environment variables
                     .replace(/\$\{?PCS_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
                     .replace(/\$\{?PCS_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
@@ -562,8 +564,10 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             // Hardcoded/built-in variables
             .replace(/\$\{?AppID\}?/g, appId)
             .replace(/\$\{?APP_ID\}?/g, appId)
+            .replace(/\$\{?name\}?/g, appId)
             .replace(/\$\{?DefaultUserName\}?/g, env.DefaultUserName || 'admin')
             .replace(/\$\{?DefaultPassword\}?/g, env.DefaultPassword || env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
+            .replace(/\$\{?APP_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
             .replace(/\$\{?PUID\}?/g, settings.puid)
             .replace(/\$\{?PGID\}?/g, settings.pgid)
             .replace(/\$\{?TZ\}?/g, env.TZ || 'UTC')
@@ -573,6 +577,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             .replace(/\$\{?default_pwd\}?/g, env.default_pwd || env.PCS_DEFAULT_PASSWORD || 'casaos')
             .replace(/\$\{?public_ip\}?/g, env.public_ip || env.PCS_PUBLIC_IP || '')
             .replace(/\$\{?domain\}?/g, env.domain || env.PCS_DOMAIN || '')
+            .replace(/\$\{?APP_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
 
             // PCS environment variables (MUST be included)
             .replace(/\$\{?PCS_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
@@ -789,16 +794,12 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
         richCompose['x-casaos'].store_app_id = appId;
 
         // Generate hostname using REF_DOMAIN format if available
+        // Hostname must match the caddy/compass label pattern: appname-domain (no port prefix)
+        // Caddy handles internal port mapping via {{upstreams PORT}} in the reverse_proxy label
         if (settings.refDomain) {
-            const mainService = richCompose.services[mainServiceKey];
-            if (mainService && mainService.expose && mainService.expose.length > 0) {
-                const port = mainService.expose[0];
-                // Omit port prefix for standard port 80
-                const portPrefix = (port === 80 || port === '80') ? '' : `${port}${settings.refSeparator}`;
-                richCompose['x-casaos'].hostname = `${portPrefix}${appId}${settings.refSeparator}${settings.refDomain}`;
-                richCompose['x-casaos'].scheme = settings.refScheme || 'https';
-                richCompose['x-casaos'].port_map = settings.refScheme === 'https' ? "443" : "80";
-            }
+            richCompose['x-casaos'].hostname = `${appId}${settings.refSeparator}${settings.refDomain}`;
+            richCompose['x-casaos'].scheme = settings.refScheme || 'https';
+            richCompose['x-casaos'].port_map = settings.refScheme === 'https' ? "443" : "80";
         }
 
         // Note: x-casaos template variable processing (including volumes) is now handled above by recursive processing

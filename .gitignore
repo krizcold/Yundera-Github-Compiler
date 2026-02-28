@@ -2,7 +2,7 @@ node_modules
 dist
 app/repos/*
 .env
-package-lock.json
+src/build-info.json
 CLAUDE.md
 .claude/settings.local.json
 /nginxhashlock

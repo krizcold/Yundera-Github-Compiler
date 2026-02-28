@@ -7,18 +7,7 @@
     "build": "tsc",
     "setup": "node dist/setup.js",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "version:current": "node scripts/version-manager.js current",
-    "version:increment": "node scripts/version-manager.js increment",
-    "version:status": "node scripts/version-manager.js status",
-    "docker:cleanup": "node scripts/version-manager.js cleanup",
-    "docker:build": "node scripts/docker-build.js latest",
-    "docker:build-dev": "node scripts/docker-build.js dev",
-    "docker:push": "node scripts/docker-push.js latest",
-    "docker:push-dev": "node scripts/docker-push.js dev",
-    "dockflow:latest": "npm run build && node scripts/version-manager.js increment && npm run docker:build && npm run docker:push && npm run docker:cleanup",
-    "dockflow:dev": "npm run build && npm run docker:build-dev && npm run docker:push-dev && npm run docker:cleanup",
-    "dockflow:both": "npm run build && node scripts/version-manager.js increment && npm run docker:build && npm run docker:build-dev && npm run docker:push && npm run docker:push-dev && npm run docker:cleanup"
+    "dev": "ts-node src/index.ts"
   },
   "dependencies": {
     "axios": "^1.10.0",

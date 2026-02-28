@@ -23,6 +23,37 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate build-info.json
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            BUILD_TYPE="prod"
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            BUILD_TYPE="dev"
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+            LATEST_TAG="${LATEST_TAG#v}"
+            VERSION="${LATEST_TAG}-dev"
+          fi
+
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          REPO="${{ github.repository }}"
+
+          cat > src/build-info.json <<EOF
+          {
+            "version": "${VERSION}",
+            "buildDate": "${BUILD_DATE}",
+            "commitSha": "${SHORT_SHA}",
+            "buildType": "${BUILD_TYPE}",
+            "repository": "${REPO}"
+          }
+          EOF
+
+          echo "Generated build-info.json:"
+          cat src/build-info.json
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

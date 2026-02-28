@@ -1525,7 +1525,7 @@ app.get("/build-info", (req, res) => {
       res.json({
         version: 'unknown',
         buildDate: 'unknown',
-        buildCount: 0,
+        commitSha: 'unknown',
         buildType: 'unknown',
         repository: 'krizcold/yundera-dev-kit'
       });

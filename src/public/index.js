@@ -8039,7 +8039,7 @@ async function loadBuildInfo() {
         const buildInfo = response.data;
 
         document.getElementById('build-version').textContent = buildInfo.version;
-        document.getElementById('build-count').textContent = buildInfo.buildCount;
+        document.getElementById('build-sha').textContent = buildInfo.commitSha;
 
         const buildDate = new Date(buildInfo.buildDate);
         const formattedDate = buildDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
