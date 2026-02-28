@@ -7,6 +7,9 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    labels:
+      - "caddy=vaultwarden-${APP_DOMAIN}"
+      - "caddy.reverse_proxy={{upstreams 3000}}"
     user: "root"
     environment:
       AUTH_HASH: $AUTH_HASH
@@ -85,23 +88,23 @@ services:
     volumes:        
       # cloned repos
       - type: bind
-        source: /DATA/AppData/yunderadevkit/repos
-        target: /app/repos
+        source: /DATA/AppData/yunderadevkit/repos/
+        target: /app/repos/
 
       # persistent UI data storage
       - type: bind
-        source: /DATA/AppData/yunderadevkit/uidata
-        target: /app/uidata
+        source: /DATA/AppData/yunderadevkit/uidata/
+        target: /app/uidata/
 
       # Writable mount for app metadata
       - type: bind
-        source: /DATA/AppData
-        target: /DATA/AppData
+        source: /DATA/AppData/
+        target: /DATA/AppData/
 
       # Bind mount for the main app directory
       - type: bind
-        source: /DATA/AppData/casaos/apps/yunderadevkit
-        target: /DATA/AppData/casaos/apps/yunderadevkit
+        source: /DATA/AppData/casaos/apps/yunderadevkit/
+        target: /DATA/AppData/casaos/apps/yunderadevkit/
         read_only: true
 
       - type: bind
@@ -129,10 +132,10 @@ services:
 
     x-casaos:
       volumes:
-        - container: /app/repos
+        - container: /app/repos/
           description:
             en_us: "Git repos are cloned here."
-        - container: /app/uidata
+        - container: /app/uidata/
           description:
             en_us: "Persistent UI data storage."
 
