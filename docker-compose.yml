@@ -2,7 +2,7 @@ name: yunderadevkit
 
 services:
   yunderadevkit:
-    image: krizcold/nginxhashlock:latest
+    image: ghcr.io/yundera/nginx-hash-lock:latest
     container_name: yunderadevkit
     restart: unless-stopped
     expose:
