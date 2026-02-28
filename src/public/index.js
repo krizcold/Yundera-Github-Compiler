@@ -1422,7 +1422,8 @@ class RepoManager {
     }
 
     openTerminalPopup(appName, repoId, action) {
-        // Create terminal popup if it doesn't exist
+        // Close any existing streams and popup
+        this.closeLogStreams();
         let terminal = document.getElementById('terminal-popup');
         if (terminal) {
             terminal.remove();
@@ -1431,7 +1432,7 @@ class RepoManager {
         terminal = document.createElement('div');
         terminal.id = 'terminal-popup';
         terminal.innerHTML = `
-            <div class="terminal-backdrop" onclick="this.parentElement.remove()"></div>
+            <div class="terminal-backdrop" onclick="repoManager.closeTerminalPopup()"></div>
             <div class="terminal-container">
                 <div class="terminal-header">
                     <div class="terminal-title">
@@ -1439,7 +1440,7 @@ class RepoManager {
                         ${appName} - ${action.charAt(0).toUpperCase() + action.slice(1)} Logs
                     </div>
                     <div class="terminal-controls">
-                        <button class="terminal-btn" onclick="document.getElementById('terminal-popup').remove()">
+                        <button class="terminal-btn" onclick="repoManager.closeTerminalPopup()">
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
@@ -1608,14 +1609,30 @@ class RepoManager {
         content.scrollTop = content.scrollHeight;
     }
 
+    closeLogStreams() {
+        if (this.activeLogStreams) {
+            this.activeLogStreams.forEach(es => es.close());
+            this.activeLogStreams.clear();
+        }
+    }
+
+    closeTerminalPopup() {
+        this.closeLogStreams();
+        const terminal = document.getElementById('terminal-popup');
+        if (terminal) terminal.remove();
+    }
+
     async streamLogs(repoId) {
         const content = document.getElementById('terminal-content');
         if (!content) return;
 
+        // Close any existing streams before opening a new one
+        this.closeLogStreams();
+
         try {
             // Use EventSource for real-time log streaming
             const eventSource = new EventSource(this.addHashToUrl(`/api/admin/repos/${repoId}/logs`));
-            
+
             eventSource.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -1635,7 +1652,8 @@ class RepoManager {
             eventSource.onerror = () => {
                 this.addLogLine('❌ Log stream disconnected', 'error');
                 eventSource.close();
-                
+                if (this.activeLogStreams) this.activeLogStreams.delete(eventSource);
+
                 // Update status indicator
                 const indicator = document.querySelector('.status-indicator');
                 if (indicator) {
@@ -1647,7 +1665,7 @@ class RepoManager {
             // Store reference for cleanup
             if (!this.activeLogStreams) this.activeLogStreams = new Set();
             this.activeLogStreams.add(eventSource);
-            
+
         } catch (error) {
             this.addLogLine(`❌ Failed to connect to log stream: ${error.message}`, 'error');
         }
