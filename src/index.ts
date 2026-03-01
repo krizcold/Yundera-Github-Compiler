@@ -461,14 +461,7 @@ app.use("/public", express.static(path.join(__dirname, "public"), {
   }
 }));
 
-// Explicitly serve specific static assets that are safe
-app.get("/index.js", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.js"));
-});
-
-app.get("/style.css", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "style.css"));
-});
+// Static JS and CSS files are served via /public/ static middleware above
 
 // Helper function to extract app name from compose
 function getAppNameFromCompose(yamlContent: string): string {

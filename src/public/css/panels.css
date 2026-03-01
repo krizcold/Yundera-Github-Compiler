@@ -1,0 +1,802 @@
+/* ============================================
+   Build Terminal Panel
+   ============================================ */
+#terminal-popup {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease;
+}
+
+#terminal-popup .terminal-backdrop {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+#terminal-popup .terminal-container {
+    position: relative;
+    width: 90%;
+    max-width: 1000px;
+    height: 70%;
+    max-height: 600px;
+    background: #1a1a1a;
+    border-radius: 12px;
+    border: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+#terminal-popup .terminal-header {
+    background: #2d2d2d;
+    padding: 12px 16px;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+#terminal-popup .terminal-title {
+    color: #fff;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#terminal-popup .terminal-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+#terminal-popup .terminal-btn:hover {
+    background: #444;
+    color: #fff;
+}
+
+#terminal-popup .terminal-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#terminal-popup .terminal-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    background: #1a1a1a;
+    color: #e0e0e0;
+}
+
+#terminal-popup .log-line {
+    margin: 2px 0;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+
+#terminal-popup .log-line.system { color: #64b5f6; }
+#terminal-popup .log-line.success { color: #81c784; }
+#terminal-popup .log-line.error { color: #e57373; }
+#terminal-popup .log-line.warning { color: #ffb74d; }
+#terminal-popup .log-line.info { color: #90caf9; }
+
+#terminal-popup .terminal-footer {
+    background: #2d2d2d;
+    padding: 8px 16px;
+    border-top: 1px solid #333;
+    border-radius: 0 0 12px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#terminal-popup .terminal-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #888;
+    font-size: 12px;
+}
+
+#terminal-popup .status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #666;
+}
+
+#terminal-popup .status-indicator.active {
+    background: #4caf50;
+    animation: pulse 2s infinite;
+}
+
+/* ============================================
+   Interactive Terminal Panel
+   ============================================ */
+#interactive-terminal-popup {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease;
+}
+
+#interactive-terminal-popup .terminal-backdrop {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+#interactive-terminal-popup .terminal-container {
+    position: relative;
+    width: 95%;
+    max-width: 1400px;
+    height: 80%;
+    max-height: 800px;
+    background: #1a1a1a;
+    border-radius: 12px;
+    border: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+#interactive-terminal-popup .terminal-header {
+    background: #2d2d2d;
+    padding: 12px 16px;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+#interactive-terminal-popup .terminal-title {
+    color: #fff;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#interactive-terminal-popup .terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+#interactive-terminal-popup .user-selector {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #ccc;
+    font-size: 12px;
+}
+
+#interactive-terminal-popup .user-selector select {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-size: 12px;
+}
+
+#interactive-terminal-popup .user-selector input {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 12px;
+    width: 100px;
+}
+
+#interactive-terminal-popup .terminal-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+#interactive-terminal-popup .terminal-btn:hover {
+    background: #444;
+    color: #fff;
+}
+
+#interactive-terminal-popup .terminal-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: row;
+}
+
+#interactive-terminal-popup .terminal-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    background: #1a1a1a;
+    color: #e0e0e0;
+}
+
+#interactive-terminal-popup .terminal-input-section {
+    background: #2d2d2d;
+    border-top: 1px solid #333;
+    padding: 12px 16px;
+}
+
+#interactive-terminal-popup .terminal-prompt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 13px;
+}
+
+#interactive-terminal-popup .terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#interactive-terminal-popup .terminal-prompt span {
+    color: #81c784;
+    white-space: nowrap;
+}
+
+#interactive-terminal-popup .terminal-prompt input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: inherit;
+    outline: none;
+    padding: 4px 0;
+}
+
+#interactive-terminal-popup .log-line {
+    margin: 2px 0;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+
+#interactive-terminal-popup .log-line.system { color: #64b5f6; }
+#interactive-terminal-popup .log-line.success { color: #81c784; }
+#interactive-terminal-popup .log-line.error { color: #e57373; }
+#interactive-terminal-popup .log-line.warning { color: #ffb74d; }
+#interactive-terminal-popup .log-line.info { color: #90caf9; }
+#interactive-terminal-popup .log-line.command { color: #81c784; }
+#interactive-terminal-popup .log-line.output { color: #e0e0e0; }
+
+/* Sidebar styles */
+#interactive-terminal-popup .terminal-sidebar {
+    width: 280px;
+    min-width: 280px;
+    background: #2d2d2d;
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#interactive-terminal-popup .sidebar-header {
+    padding: 8px 12px;
+    background: #333;
+    border-bottom: 1px solid #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#interactive-terminal-popup .sidebar-title {
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+#interactive-terminal-popup .sidebar-path {
+    padding: 8px 12px;
+    background: #262626;
+    border-bottom: 1px solid #333;
+    color: #888;
+    font-size: 11px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    word-break: break-all;
+}
+
+#interactive-terminal-popup .file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+#interactive-terminal-popup .file-item {
+    padding: 4px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #ccc;
+    font-size: 12px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    border-bottom: 1px solid transparent;
+    transition: all 0.1s;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+#interactive-terminal-popup .file-item:hover {
+    background: #333;
+    color: #fff;
+}
+
+#interactive-terminal-popup .file-item.directory {
+    color: #64b5f6;
+}
+
+#interactive-terminal-popup .file-item.file {
+    color: #e0e0e0;
+}
+
+#interactive-terminal-popup .file-item.executable {
+    color: #81c784;
+}
+
+#interactive-terminal-popup .file-icon {
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+#interactive-terminal-popup .file-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#interactive-terminal-popup .file-details {
+    font-size: 10px;
+    color: #666;
+    flex-shrink: 0;
+}
+
+#interactive-terminal-popup .loading-files {
+    padding: 20px;
+    text-align: center;
+    color: #888;
+    font-size: 12px;
+}
+
+#interactive-terminal-popup .file-item.selected {
+    background: #2563eb;
+    color: white;
+}
+
+#interactive-terminal-popup .context-menu {
+    position: absolute;
+    background: #2d2d2d;
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 4px 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    min-width: 150px;
+    display: none;
+}
+
+#interactive-terminal-popup .context-menu-item {
+    padding: 8px 16px;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.1s;
+}
+
+#interactive-terminal-popup .context-menu-item:hover {
+    background: #444;
+    color: white;
+}
+
+#interactive-terminal-popup .context-menu-item.disabled {
+    color: #666;
+    cursor: not-allowed;
+}
+
+#interactive-terminal-popup .context-menu-item.disabled:hover {
+    background: transparent;
+    color: #666;
+}
+
+#interactive-terminal-popup .context-menu-separator {
+    height: 1px;
+    background: #555;
+    margin: 4px 0;
+}
+
+/* ============================================
+   Service Logs Panel (also used by App Logs)
+   ============================================ */
+#service-logs-popup {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease;
+}
+
+#service-logs-popup .terminal-backdrop {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.logs-container {
+    position: relative;
+    width: 95%;
+    max-width: 1400px;
+    height: 85%;
+    max-height: 900px;
+    background: #1a1a1a;
+    border-radius: 12px;
+    border: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.logs-header {
+    background: #2d2d2d;
+    padding: 12px 16px;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+.logs-title {
+    color: #fff;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.logs-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.logs-btn {
+    background: #444;
+    border: none;
+    color: #e0e0e0;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.logs-btn:hover {
+    background: #555;
+    color: #fff;
+}
+
+.logs-btn.active {
+    background: #3b82f6;
+    color: #fff;
+}
+
+.logs-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.logs-sidebar {
+    width: 280px;
+    background: #2d2d2d;
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+}
+
+.logs-sidebar .sidebar-header {
+    padding: 12px 16px;
+    background: #3d3d3d;
+    border-bottom: 1px solid #444;
+}
+
+.logs-sidebar .sidebar-title {
+    color: #e0e0e0;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.service-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.service-item {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-bottom: 1px solid #3d3d3d;
+}
+
+.service-item:hover {
+    background: #3d3d3d;
+}
+
+.service-item.active {
+    background: #3b82f6;
+    color: #fff;
+}
+
+.service-icon {
+    color: #888;
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+}
+
+.service-item.active .service-icon {
+    color: #fff;
+}
+
+.service-info {
+    flex: 1;
+}
+
+.service-name {
+    color: #e0e0e0;
+    font-weight: 500;
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+
+.service-item.active .service-name {
+    color: #fff;
+}
+
+.service-status {
+    color: #888;
+    font-size: 11px;
+}
+
+.service-item.active .service-status {
+    color: #bfdbfe;
+}
+
+.logs-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.logs-tabs {
+    display: flex;
+    background: #2d2d2d;
+    border-bottom: 1px solid #333;
+}
+
+.logs-tab {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    border-bottom: 2px solid transparent;
+}
+
+.logs-tab:hover {
+    background: #3d3d3d;
+    color: #e0e0e0;
+}
+
+.logs-tab.active {
+    background: #1a1a1a;
+    color: #3b82f6;
+    border-bottom-color: #3b82f6;
+}
+
+.logs-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.logs-panel {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.logs-panel.active {
+    display: flex;
+}
+
+.logs-toolbar {
+    background: #2d2d2d;
+    padding: 8px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+}
+
+.logs-service-title {
+    color: #e0e0e0;
+    font-weight: 500;
+    font-size: 13px;
+}
+
+.logs-toolbar-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.logs-viewer {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    background: #1a1a1a;
+    color: #e0e0e0;
+}
+
+#terminal-panel {
+    background: #1a1a1a;
+}
+
+#service-terminal-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #e0e0e0;
+}
+
+#terminal-panel .terminal-input-section {
+    border-top: 1px solid #333;
+    background: #2d2d2d;
+    padding: 12px 16px;
+}
+
+#terminal-panel .terminal-prompt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#service-terminal-prompt,
+#app-terminal-prompt {
+    color: #2563eb;
+    font-weight: 600;
+    font-size: 13px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    white-space: nowrap;
+}
+
+#service-terminal-input,
+#app-terminal-input {
+    flex: 1;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: #e0e0e0;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 13px;
+}
+
+#service-terminal-input:focus,
+#app-terminal-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.terminal-controls {
+    display: flex;
+    gap: 4px;
+}
+
+/* ============================================
+   Shared Log Line Styles (panels context)
+   ============================================ */
+.log-line {
+    margin: 1px 0;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.log-line.error {
+    color: #ef4444;
+}
+
+.log-line.system {
+    color: #10b981;
+}
+
+.log-line.command {
+    color: #3b82f6;
+    font-weight: 600;
+}
+
+.log-line.output {
+    color: #e0e0e0;
+}
+
+.log-timestamp {
+    color: #666;
+    font-size: 11px;
+    margin-right: 8px;
+}
+
+/* ============================================
+   Shared Animations
+   ============================================ */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}

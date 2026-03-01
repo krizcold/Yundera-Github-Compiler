@@ -1,0 +1,509 @@
+/* Buttons */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-hover);
+}
+
+.btn-success {
+    background-color: var(--success-color);
+    color: white;
+}
+
+.btn-warning {
+    background-color: var(--warning-color);
+    color: white;
+}
+
+.btn-secondary {
+    background-color: var(--gray-600);
+    color: white;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed !important;
+    pointer-events: auto;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+/* Split button */
+.split-button-group {
+    display: inline-flex;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+
+.split-button-left {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.3);
+    flex: 1;
+}
+
+.split-button-right {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    padding: 6px 10px;
+    min-width: 36px;
+}
+
+.split-button-left:hover,
+.split-button-right:hover {
+    filter: brightness(0.95);
+}
+
+/* Disabled card */
+.repo-item.disabled-card {
+    opacity: 0.5;
+    pointer-events: none;
+    position: relative;
+}
+
+.repo-item.disabled-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(128, 128, 128, 0.1);
+    z-index: 10;
+    pointer-events: auto;
+    cursor: not-allowed;
+}
+
+/* Toggle switches */
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.switch {
+    position: relative;
+    width: 50px;
+    height: 24px;
+    background-color: var(--gray-300);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.switch.active {
+    background-color: var(--primary-color);
+}
+
+.switch-slider {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+}
+
+.switch.active .switch-slider {
+    transform: translateX(26px);
+}
+
+/* App toggle */
+.app-toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background-color: var(--gray-300);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    display: flex;
+    align-items: center;
+}
+
+.app-toggle.running {
+    background-color: var(--success-color);
+}
+
+.app-toggle.disabled {
+    background-color: var(--gray-200);
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.app-toggle-slider {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.3s;
+    transform: translateX(2px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.app-toggle.running .app-toggle-slider {
+    transform: translateX(18px);
+}
+
+.app-toggle-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    margin-top: 2px;
+    letter-spacing: 0.5px;
+}
+
+.app-toggle.disabled .app-toggle-label {
+    color: var(--gray-400);
+}
+
+/* Status indicators */
+.status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+
+.status-idle { background-color: var(--gray-400); }
+.status-building { background-color: var(--warning-color); }
+.status-success { background-color: var(--success-color); }
+.status-error { background-color: var(--danger-color); }
+
+.install-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+
+.installed { background-color: var(--success-color); }
+.not-installed { background-color: var(--gray-400); }
+
+/* Warning triangle */
+.warning-triangle {
+    color: var(--warning-color);
+    margin-left: 8px;
+    cursor: help;
+    animation: pulse-warning 2s infinite;
+}
+
+@keyframes pulse-warning {
+    0% { opacity: 1; }
+    50% { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+.warning-triangle:hover {
+    color: var(--danger-color);
+}
+
+/* Status text */
+.status-enabled { color: var(--success-color); font-weight: 500; }
+.status-disabled { color: var(--danger-color); font-weight: 500; }
+
+/* Installation badges */
+.installation-badge {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.installation-uninstalled {
+    background-color: var(--gray-200);
+    color: var(--gray-700);
+}
+
+.installation-imported {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.installation-installed {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+/* Update status */
+.update-status {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 8px;
+    display: inline-block;
+}
+
+.update-status-uptodate {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.update-status-available {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+}
+
+.update-status-unknown {
+    background-color: #f3f4f6;
+    color: #374151;
+    cursor: pointer;
+}
+
+.update-status-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.update-refresh-btn {
+    background: none;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 10px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+}
+
+.update-refresh-btn:hover {
+    background-color: #f3f4f6;
+    color: #374151;
+    border-color: #9ca3af;
+    transform: rotate(180deg);
+}
+
+/* Version info */
+.version-info {
+    font-size: 11px;
+    color: var(--gray-500);
+    font-family: 'Courier New', monospace;
+}
+
+.version-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.version-current {
+    background-color: var(--gray-200);
+    color: var(--gray-700);
+}
+
+.version-latest {
+    background-color: var(--success-color);
+    color: white;
+}
+
+/* Modals */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+}
+
+.modal-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-lg);
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: auto;
+}
+
+.modal-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    padding: 20px;
+    border-top: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--gray-500);
+}
+
+/* Textarea */
+textarea {
+    width: 100%;
+    height: 400px;
+    padding: 12px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--border-radius);
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    resize: vertical;
+}
+
+/* Repo name styles */
+.repo-details .repo-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--gray-800);
+    margin-bottom: 4px;
+    padding: 4px 0;
+    min-height: 25px;
+}
+
+.repo-details .repo-name-input:focus {
+    outline: none;
+    box-shadow: 0 1px 0 var(--primary-color);
+}
+
+/* Repo type selector */
+.repo-type-selector {
+    margin-bottom: 8px;
+}
+
+.repo-type-selector select {
+    padding: 6px 10px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--border-radius);
+    font-size: 12px;
+    background-color: var(--gray-100);
+}
+
+/* Repo settings */
+.repo-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+}
+
+.repo-settings input[type="number"] {
+    width: 60px;
+    padding: 4px 8px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--border-radius);
+}
+
+.repo-settings input:disabled {
+    background-color: var(--gray-200);
+    cursor: not-allowed;
+}
+
+/* Build info */
+.build-info {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--gray-600);
+    font-family: 'Courier New', monospace;
+    box-shadow: var(--shadow);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.4;
+}
+
+.build-info-version {
+    font-weight: 600;
+    color: var(--gray-800);
+}
+
+.build-info-type {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.build-type-prod {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.build-type-dev {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.build-type-unknown {
+    background-color: var(--gray-200);
+    color: var(--gray-600);
+}

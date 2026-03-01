@@ -1,0 +1,269 @@
+/* ============================================
+   Dark Theme
+   ============================================ */
+[data-theme="dark"] {
+    --bg-primary: #1f2937;
+    --bg-secondary: #374151;
+    --bg-surface: #4b5563;
+    --text-primary: #f3f4f6;
+    --text-secondary: #d1d5db;
+    --text-tertiary: #9ca3af;
+    --border-color: #4b5563;
+    --border-color-strong: #6b7280;
+    --modal-backdrop: rgba(0, 0, 0, 0.7);
+    --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+    --gray-100: #374151;
+    --gray-200: #4b5563;
+    --gray-300: #6b7280;
+    --gray-800: #e5e7eb;
+    --gray-900: #f3f4f6;
+}
+
+/* Dark theme specific adjustments */
+[data-theme="dark"] .modal-content {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] textarea {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .repo-url input {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .repo-type-selector select {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .repo-settings input[type="number"] {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .build-info {
+    background-color: rgba(31, 41, 55, 0.95);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .build-info-version {
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .installation-uninstalled {
+    background-color: var(--gray-200);
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .update-status-unknown {
+    background-color: var(--bg-surface);
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .update-refresh-btn {
+    border-color: var(--border-color);
+    color: var(--text-tertiary);
+}
+
+[data-theme="dark"] .update-refresh-btn:hover {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color-strong);
+}
+
+[data-theme="dark"] .url-lock-btn {
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .url-lock-btn:hover {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .url-cancel-btn:hover {
+    background-color: rgba(220, 38, 38, 0.2);
+}
+
+[data-theme="dark"] .close-btn {
+    color: var(--text-tertiary);
+}
+
+[data-theme="dark"] .modal-header {
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .modal-footer {
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] #settings-modal input[type="text"],
+[data-theme="dark"] #settings-modal input[type="number"] {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] #settings-modal hr {
+    border-color: var(--border-color);
+}
+
+/* ============================================
+   Midnight Theme (deeper dark)
+   ============================================ */
+[data-theme="midnight"] {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-surface: #334155;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-tertiary: #64748b;
+    --border-color: #334155;
+    --border-color-strong: #475569;
+    --modal-backdrop: rgba(0, 0, 0, 0.8);
+    --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+    --gray-100: #1e293b;
+    --gray-200: #334155;
+    --gray-300: #475569;
+    --gray-800: #cbd5e1;
+    --gray-900: #e2e8f0;
+    --primary-color: #3b82f6;
+    --primary-hover: #2563eb;
+}
+
+/* Midnight theme specific adjustments (same pattern as dark) */
+[data-theme="midnight"] .modal-content {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+[data-theme="midnight"] textarea {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .repo-url input {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .repo-type-selector select {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .repo-settings input[type="number"] {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .build-info {
+    background-color: rgba(15, 23, 42, 0.95);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+[data-theme="midnight"] .build-info-version {
+    color: var(--text-primary);
+}
+
+[data-theme="midnight"] .installation-uninstalled {
+    background-color: var(--gray-200);
+    color: var(--text-secondary);
+}
+
+[data-theme="midnight"] .update-status-unknown {
+    background-color: var(--bg-surface);
+    color: var(--text-secondary);
+}
+
+[data-theme="midnight"] .update-refresh-btn {
+    border-color: var(--border-color);
+    color: var(--text-tertiary);
+}
+
+[data-theme="midnight"] .update-refresh-btn:hover {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color-strong);
+}
+
+[data-theme="midnight"] .url-lock-btn {
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+[data-theme="midnight"] .url-lock-btn:hover {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+}
+
+[data-theme="midnight"] .url-cancel-btn:hover {
+    background-color: rgba(220, 38, 38, 0.2);
+}
+
+[data-theme="midnight"] .close-btn {
+    color: var(--text-tertiary);
+}
+
+[data-theme="midnight"] .modal-header {
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .modal-footer {
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] #settings-modal input[type="text"],
+[data-theme="midnight"] #settings-modal input[type="number"] {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] #settings-modal hr {
+    border-color: var(--border-color);
+}
+
+/* ============================================
+   Theme Dropdown Styles
+   ============================================ */
+.theme-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.theme-selector select {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    font-size: 12px;
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.theme-selector select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
