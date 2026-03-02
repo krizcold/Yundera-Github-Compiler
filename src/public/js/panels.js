@@ -1312,8 +1312,11 @@ Object.assign(RepoManager.prototype, {
         line.innerHTML = `<span class="log-timestamp">[${time}]</span> ${prefix} ${message}`;
         viewer.appendChild(line);
 
-        // Auto-scroll to bottom
-        viewer.scrollTop = viewer.scrollHeight;
+        // Auto-scroll to bottom only if follow mode is active
+        const followBtn = document.getElementById('logs-follow-btn');
+        if (followBtn && followBtn.classList.contains('active')) {
+            viewer.scrollTop = viewer.scrollHeight;
+        }
 
         // Limit lines
         if (viewer.children.length > 1000) {
@@ -1346,7 +1349,10 @@ Object.assign(RepoManager.prototype, {
 
         if (container.logHistory && container.logHistory.length > 0) {
             viewer.innerHTML = container.logHistory.join('');
-            viewer.scrollTop = viewer.scrollHeight;
+            const followBtn = document.getElementById('logs-follow-btn');
+            if (followBtn && followBtn.classList.contains('active')) {
+                viewer.scrollTop = viewer.scrollHeight;
+            }
         } else {
             viewer.innerHTML = '<div class="log-line system">📡 Log stream active (no previous logs)</div>';
         }
@@ -1382,11 +1388,19 @@ Object.assign(RepoManager.prototype, {
     },
 
     toggleAppAutoScroll: function() {
-        // App logs always auto-scroll for now - just toggle the button appearance
         const btn = document.getElementById('logs-follow-btn');
+        const viewer = document.getElementById('logs-viewer');
         if (btn) {
             btn.classList.toggle('active');
-            btn.title = btn.classList.contains('active') ? 'Auto-scroll: ON' : 'Auto-scroll: OFF';
+            if (btn.classList.contains('active')) {
+                btn.title = 'Auto-scroll: ON';
+                // Scroll to bottom immediately when re-enabling
+                if (viewer) {
+                    viewer.scrollTop = viewer.scrollHeight;
+                }
+            } else {
+                btn.title = 'Auto-scroll: OFF';
+            }
         }
     },
 
