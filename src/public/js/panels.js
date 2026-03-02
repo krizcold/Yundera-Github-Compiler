@@ -1008,6 +1008,9 @@ Object.assign(RepoManager.prototype, {
                                 <div class="logs-toolbar">
                                     <div class="logs-service-title" id="app-logs-title">${this.appLogsState.loading ? 'Loading...' : (this.appLogsState.containers[this.appLogsState.selectedContainer]?.displayName || 'Container')} Logs</div>
                                     <div class="logs-toolbar-controls">
+                                        <button class="logs-btn" id="logs-copy-btn" title="Copy logs">
+                                            <i class="fas fa-copy"></i>
+                                        </button>
                                         <button class="logs-btn" id="logs-refresh-btn" title="Refresh logs">
                                             <i class="fas fa-sync-alt"></i>
                                         </button>
@@ -1121,6 +1124,10 @@ Object.assign(RepoManager.prototype, {
         });
 
         // Toolbar controls
+        document.getElementById('logs-copy-btn')?.addEventListener('click', () => {
+            this.copyAppLogs();
+        });
+
         document.getElementById('logs-refresh-btn')?.addEventListener('click', () => {
             this.refreshAppLogs();
         });
@@ -1371,6 +1378,24 @@ Object.assign(RepoManager.prototype, {
             }
         }
         this.startAppLogStreaming();
+    },
+
+    copyAppLogs: function() {
+        const viewer = document.getElementById('logs-viewer');
+        if (!viewer) return;
+
+        const text = Array.from(viewer.querySelectorAll('.log-line'))
+            .map(line => line.textContent)
+            .join('\n');
+
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById('logs-copy-btn');
+            if (btn) {
+                const icon = btn.querySelector('i');
+                icon.className = 'fas fa-check';
+                setTimeout(() => { icon.className = 'fas fa-copy'; }, 1500);
+            }
+        });
     },
 
     clearAppLogs: function() {
