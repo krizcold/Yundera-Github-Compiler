@@ -41,16 +41,32 @@ export class CasaOSInstaller {
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
-        const lines = message.split(/[\r\n]+/);
-        
+        // Strip ANSI escape codes (colors, cursor movement, line clearing)
+        const clean = message.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+
+        // Split on newlines first
+        const lines = clean.split('\n');
+
         lines.forEach(line => {
-          if (!line) return;
-          console.log(`[${finalProjectName} log]: ${line}`);
-          
-          
-          // Also send to log collector for terminal display
-          if (logCollector) {
-            logCollector.addLog(`🐳 ${line}`, 'info');
+          if (!line.trim()) return;
+
+          // Handle carriage returns - \r means "overwrite current line" (progress output)
+          // Take only the last \r-separated segment (the final state)
+          if (line.includes('\r')) {
+            const segments = line.split('\r');
+            const lastSegment = segments[segments.length - 1].trim();
+            if (!lastSegment) return;
+
+            console.log(`[${finalProjectName} log]: ${lastSegment}`);
+            if (logCollector) {
+              logCollector.addLog(`🐳 ${lastSegment}`, 'progress');
+            }
+          } else {
+            const trimmed = line.trim();
+            console.log(`[${finalProjectName} log]: ${trimmed}`);
+            if (logCollector) {
+              logCollector.addLog(`🐳 ${trimmed}`, 'info');
+            }
           }
         });
       };

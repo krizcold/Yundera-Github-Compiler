@@ -166,15 +166,32 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
-        const lines = message.split(/[\r\n]+/);
-        
+        // Strip ANSI escape codes (colors, cursor movement, line clearing)
+        const clean = message.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+
+        // Split on newlines first
+        const lines = clean.split('\n');
+
         lines.forEach(line => {
           if (!line.trim()) return;
-          console.log(`🐳 [${repo.path}]: ${line}`);
-          
-          // Stream to UI with whale icon (like CasaOSInstaller)
-          if (logCollector) {
-            logCollector.addLog(`🐳 ${line}`, 'info');
+
+          // Handle carriage returns - \r means "overwrite current line" (progress output)
+          // Take only the last \r-separated segment (the final state)
+          if (line.includes('\r')) {
+            const segments = line.split('\r');
+            const lastSegment = segments[segments.length - 1].trim();
+            if (!lastSegment) return;
+
+            console.log(`🐳 [${repo.path}]: ${lastSegment}`);
+            if (logCollector) {
+              logCollector.addLog(`🐳 ${lastSegment}`, 'progress');
+            }
+          } else {
+            const trimmed = line.trim();
+            console.log(`🐳 [${repo.path}]: ${trimmed}`);
+            if (logCollector) {
+              logCollector.addLog(`🐳 ${trimmed}`, 'info');
+            }
           }
         });
       };

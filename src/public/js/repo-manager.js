@@ -1459,6 +1459,16 @@ class RepoManager {
         const content = document.getElementById('terminal-content');
         if (!content) return;
 
+        // For progress lines, replace the previous progress line instead of appending
+        if (type === 'progress') {
+            const lastLine = content.lastElementChild;
+            if (lastLine && lastLine.classList.contains('progress')) {
+                lastLine.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+                content.scrollTop = content.scrollHeight;
+                return;
+            }
+        }
+
         const line = document.createElement('div');
         line.className = `log-line ${type}`;
         line.textContent = `${new Date().toLocaleTimeString()} ${message}`;

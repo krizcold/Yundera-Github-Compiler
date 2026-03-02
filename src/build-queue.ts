@@ -3,7 +3,7 @@ import { EventEmitter } from 'events';
 
 export interface LogEntry {
   message: string;
-  type: 'system' | 'info' | 'warning' | 'error' | 'success';
+  type: 'system' | 'info' | 'warning' | 'error' | 'success' | 'progress';
   timestamp: number;
 }
 
