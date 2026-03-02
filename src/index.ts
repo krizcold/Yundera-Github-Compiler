@@ -8,7 +8,7 @@ import { loadConfig, isAppLoggingEnabled } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings, StoreConfig } from "./storage";
 import { fetchStoreApps, checkImageVersions, clearStoreCache, parseGitHubUrl, DockerImageRef } from "./store-tracker";
-import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
+import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp, findInstalledApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
 import { validateAppTokenMiddleware, AppAuthenticatedRequest } from "./auth-middleware";
 import { createAppToken, removeAppToken, hasPermission } from "./app-tokens";
@@ -188,7 +188,7 @@ async function pollUninstallStatus(repositoryId: string, appName: string, attemp
   try {
     // Use force refresh to bypass any CasaOS caching
     const installedApps = await getCasaOSInstalledApps(true);
-    const stillInstalled = installedApps.includes(appName);
+    const stillInstalled = !!findInstalledApp(installedApps, appName);
 
     if (!stillInstalled) {
       // Uninstall completed successfully
@@ -328,21 +328,26 @@ export async function syncWithCasaOS() {
     const installedApps = await getCasaOSInstalledApps();
     
     for (const repo of managedRepos) {
-      // Try to get actual app name from docker-compose.yml
-      let appNameToCheck = repo.name;
+      // Build candidate names: stored appName first, then compose-derived, then repo name
+      let composeAppName: string | undefined;
       const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-      
+
       if (fs.existsSync(composePath)) {
         try {
           const composeContent = fs.readFileSync(composePath, 'utf8');
-          appNameToCheck = getAppNameFromCompose(composeContent);
+          composeAppName = getAppNameFromCompose(composeContent);
         } catch (error) {
-          // If we can't parse, fall back to repo name
+          // If we can't parse, skip this candidate
         }
       }
-      
-      const isInstalledInCasaOS = installedApps.includes(appNameToCheck);
-      
+
+      // Try multiple candidates with case-insensitive matching
+      // Priority: stored appName > compose-derived name > repo name
+      const matchedName = findInstalledApp(installedApps, repo.appName, composeAppName, repo.name);
+      const isInstalledInCasaOS = !!matchedName;
+      // Use the matched name (actual CasaOS key) for further lookups, or fall back to best candidate
+      const appNameToCheck = matchedName || repo.appName || composeAppName || repo.name;
+
       // Get detailed status including running state
       let isRunning = false;
       if (isInstalledInCasaOS) {
@@ -354,13 +359,13 @@ export async function syncWithCasaOS() {
           console.log(`⚠️ Could not get running status for ${appNameToCheck}`);
         }
       }
-      
+
       // Don't sync if we're in an intermediate state (let polling handle it)
-      const isInIntermediateState = 
+      const isInIntermediateState =
         repo.status === 'uninstalling' ||
         repo.status === 'starting' ||
         repo.status === 'stopping';
-      
+
       // Check for changes that need syncing (but respect intermediate states)
       const needsUpdate = !isInIntermediateState && (
         repo.isInstalled !== isInstalledInCasaOS ||
@@ -378,9 +383,9 @@ export async function syncWithCasaOS() {
         };
 
         updateRepository(repo.id, updates);
-        
+
         if (repo.isInstalled !== isInstalledInCasaOS) {
-          console.log(`🔄 Updated ${repo.name} installation status: ${isInstalledInCasaOS}`);
+          console.log(`🔄 Updated ${repo.name} installation status: ${isInstalledInCasaOS} (matched as '${appNameToCheck}')`);
         }
       }
     }
@@ -491,6 +496,24 @@ function getAppNameFromCompose(yamlContent: string): string {
     console.error("Error parsing YAML to get app name:", error);
     throw new Error("Invalid docker-compose.yml format.");
   }
+}
+
+// Resolve the best app name to use for CasaOS operations.
+// Prefers stored appName (set during installation), then compose-derived, then repo name.
+function resolveAppName(repo: Repository): string {
+  if (repo.appName) return repo.appName;
+
+  const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+  if (fs.existsSync(composePath)) {
+    try {
+      const composeContent = fs.readFileSync(composePath, 'utf8');
+      return getAppNameFromCompose(composeContent);
+    } catch (error) {
+      // fall through
+    }
+  }
+
+  return repo.name;
 }
 
 // Repository Management API endpoints
@@ -879,16 +902,7 @@ app.post("/api/admin/repos/:id/reinstall/delete-data", async (req, res) => {
   }
 
   try {
-    let appDataDirName = repo.name;
-    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-
-    if (fs.existsSync(composePath)) {
-      try {
-        const composeContent = fs.readFileSync(composePath, 'utf8');
-        appDataDirName = getAppNameFromCompose(composeContent);
-      } catch (error) {
-      }
-    }
+    const appDataDirName = resolveAppName(repo);
 
     const appDataDir = path.join('/DATA/AppData', appDataDirName);
     if (fs.existsSync(appDataDir)) {
@@ -1115,18 +1129,8 @@ app.delete("/api/admin/repos/:id", async (req, res) => {
   try {
     // First, uninstall the app from CasaOS if it's installed
     if (repo.isInstalled) {
-      let appNameToUninstall = repo.name;
-      const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+      const appNameToUninstall = resolveAppName(repo);
 
-      if (fs.existsSync(composePath)) {
-        try {
-          const composeContent = fs.readFileSync(composePath, 'utf8');
-          appNameToUninstall = getAppNameFromCompose(composeContent);
-        } catch (error) {
-          console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
-        }
-      }
-      
       console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS before removing repository...`);
       const uninstallResult = await uninstallCasaOSApp(appNameToUninstall, preserveData);
       
@@ -1181,17 +1185,8 @@ app.delete("/api/admin/repos/:id", async (req, res) => {
         console.error(`⚠️ Failed to clean up persistent storage for ${repo.name}:`, error.message);
       }
       
-      let appDataDirName = repo.name;
-      const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+      const appDataDirName = resolveAppName(repo);
 
-      if (fs.existsSync(composePath)) {
-        try {
-          const composeContent = fs.readFileSync(composePath, 'utf8');
-          appDataDirName = getAppNameFromCompose(composeContent);
-        } catch (error) {
-        }
-      }
-      
       const appDataDir = path.join('/DATA/AppData', appDataDirName);
       if (!preserveData && fs.existsSync(appDataDir)) {
         // Remove data directory when checkbox is checked (preserveData = false)
@@ -1666,24 +1661,14 @@ app.post("/api/admin/repos/:id/uninstall", async (req, res) => {
   }
   
   try {
-    let appNameToUninstall = repo.name;
-    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
+    const appNameToUninstall = resolveAppName(repo);
 
-    if (fs.existsSync(composePath)) {
-      try {
-        const composeContent = fs.readFileSync(composePath, 'utf8');
-        appNameToUninstall = getAppNameFromCompose(composeContent);
-      } catch (error) {
-        console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
-      }
-    }
-    
     // Set status to uninstalling immediately
-    updateRepository(id, { 
+    updateRepository(id, {
       status: 'uninstalling',
       isRunning: false
     });
-    
+
     const { preserveData } = req.body || {};
     console.log(`🗑️ Uninstalling ${appNameToUninstall} from CasaOS (preserveData: ${preserveData})...`);
     const result = await uninstallCasaOSApp(appNameToUninstall, preserveData);
@@ -1726,18 +1711,7 @@ app.post("/api/admin/repos/:id/toggle", async (req, res) => {
   }
   
   try {
-    // Get app name from docker-compose.yml
-    let appNameToToggle = repo.name;
-    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-    
-    if (fs.existsSync(composePath)) {
-      try {
-        const composeContent = fs.readFileSync(composePath, 'utf8');
-        appNameToToggle = getAppNameFromCompose(composeContent);
-      } catch (error) {
-        console.log(`⚠️ Could not parse docker-compose.yml, using repo name: ${repo.name}`);
-      }
-    }
+    const appNameToToggle = resolveAppName(repo);
     
     const action = start ? 'start' : 'stop';
     
@@ -1781,19 +1755,7 @@ app.get("/api/admin/repos/:id/debug", async (req, res) => {
   try {
     const { getCasaOSAppStatus } = await import('./casaos-status');
     
-    // Use repo.appName (the actual Docker project name used during installation) if available
-    // Fallback to getAppNameFromCompose only if appName wasn't stored yet
-    let appNameToCheck = (repo as any).appName || repo.name;
-    const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
-
-    if (!(repo as any).appName && fs.existsSync(composePath)) {
-      try {
-        const composeContent = fs.readFileSync(composePath, 'utf8');
-        appNameToCheck = getAppNameFromCompose(composeContent);
-      } catch (error) {
-        console.log(`⚠️ Could not parse docker-compose.yml for debug`);
-      }
-    }
+    const appNameToCheck = resolveAppName(repo);
 
     const casaosStatus = await getCasaOSAppStatus(appNameToCheck);
 

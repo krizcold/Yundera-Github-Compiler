@@ -213,6 +213,23 @@ export async function checkCasaOSInstallationProgress(appName: string): Promise<
   return null;
 }
 
+// Case-insensitive key lookup in an object. Returns the actual key if found.
+function findKeyIgnoreCase(obj: Record<string, any>, searchKey: string): string | undefined {
+  const lower = searchKey.toLowerCase();
+  return Object.keys(obj).find(k => k.toLowerCase() === lower);
+}
+
+// Case-insensitive search in installed apps list. Returns the actual name if found.
+export function findInstalledApp(installedApps: string[], ...candidates: (string | undefined)[]): string | undefined {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const lower = candidate.toLowerCase();
+    const match = installedApps.find(app => app.toLowerCase() === lower);
+    if (match) return match;
+  }
+  return undefined;
+}
+
 // A precise check to see if a compose app is registered with CasaOS.
 export async function isAppInstalledInCasaOS(appName: string): Promise<boolean> {
   try {
@@ -232,20 +249,26 @@ export async function isAppInstalledInCasaOS(appName: string): Promise<boolean> 
 
     const response = JSON.parse(stdout);
 
-    // The app name should exist as a key in the 'data' object.
-    const isInstalled = response.data && typeof response.data === 'object' && response.data.hasOwnProperty(appName);
-
-    if (isInstalled) {
-      console.log(`✅ Verification successful: App '${appName}' is installed in CasaOS.`);
-    } else {
-      console.log(`❌ Verification failed: App '${appName}' is not installed in CasaOS.`);
-      // Log the list of actual apps for debugging
-      if (response.data) {
-        console.log(`ℹ️ Available apps: [${Object.keys(response.data).join(', ')}]`);
-      }
+    if (!response.data || typeof response.data !== 'object') {
+      console.log(`❌ Verification failed: App '${appName}' is not installed in CasaOS (no data).`);
+      return false;
     }
 
-    return isInstalled;
+    // Case-insensitive key lookup
+    const matchedKey = findKeyIgnoreCase(response.data, appName);
+
+    if (matchedKey) {
+      if (matchedKey !== appName) {
+        console.log(`✅ Verification successful: App '${appName}' matched CasaOS key '${matchedKey}' (case-insensitive).`);
+      } else {
+        console.log(`✅ Verification successful: App '${appName}' is installed in CasaOS.`);
+      }
+      return true;
+    } else {
+      console.log(`❌ Verification failed: App '${appName}' is not installed in CasaOS.`);
+      console.log(`ℹ️ Available apps: [${Object.keys(response.data).join(', ')}]`);
+      return false;
+    }
   } catch (error) {
     console.error(`❌ Error checking if app ${appName} is installed:`, error);
     return false;
@@ -275,10 +298,10 @@ export async function getCasaOSAppStatus(appName: string): Promise<{
         const response = JSON.parse(stdout);
         
         if (response.data && typeof response.data === 'object') {
-          const appExists = response.data.hasOwnProperty(appName);
-          
-          if (appExists) {
-            const appData = response.data[appName];
+          const matchedKey = findKeyIgnoreCase(response.data, appName);
+
+          if (matchedKey) {
+            const appData = response.data[matchedKey];
             // Try to determine running status from the app data
             let isRunning = false;
             
