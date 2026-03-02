@@ -1781,10 +1781,12 @@ app.get("/api/admin/repos/:id/debug", async (req, res) => {
   try {
     const { getCasaOSAppStatus } = await import('./casaos-status');
     
-    let appNameToCheck = repo.name;
+    // Use repo.appName (the actual Docker project name used during installation) if available
+    // Fallback to getAppNameFromCompose only if appName wasn't stored yet
+    let appNameToCheck = (repo as any).appName || repo.name;
     const composePath = path.join('/app/uidata', repo.name, 'docker-compose.yml');
 
-    if (fs.existsSync(composePath)) {
+    if (!(repo as any).appName && fs.existsSync(composePath)) {
       try {
         const composeContent = fs.readFileSync(composePath, 'utf8');
         appNameToCheck = getAppNameFromCompose(composeContent);
@@ -1792,17 +1794,23 @@ app.get("/api/admin/repos/:id/debug", async (req, res) => {
         console.log(`⚠️ Could not parse docker-compose.yml for debug`);
       }
     }
-    
+
     const casaosStatus = await getCasaOSAppStatus(appNameToCheck);
-    
-    // Also get Docker container info
+
+    // Also get Docker container info - use label filter for exact project match
     let dockerInfo = {};
     try {
       const { exec } = require('child_process');
       const { promisify } = require('util');
       const execAsync = promisify(exec);
-      const { stdout } = await execAsync(`docker ps -a --filter "name=${appNameToCheck}" --format "{{.Names}}\t{{.Status}}\t{{.State}}"`);
+      const { stdout } = await execAsync(`docker ps -a --filter "label=com.docker.compose.project=${appNameToCheck}" --format "{{.Names}}\t{{.Status}}\t{{.State}}"`);
       dockerInfo = { containerList: stdout };
+
+      // Fallback to name filter if label filter returns nothing (for older containers)
+      if (!stdout.trim()) {
+        const fallback = await execAsync(`docker ps -a --filter "name=${appNameToCheck}" --format "{{.Names}}\t{{.Status}}\t{{.State}}"`);
+        dockerInfo = { containerList: fallback.stdout };
+      }
     } catch (error: any) {
       dockerInfo = { error: error.message };
     }

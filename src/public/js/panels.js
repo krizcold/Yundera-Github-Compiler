@@ -1177,8 +1177,24 @@ Object.assign(RepoManager.prototype, {
         document.getElementById('app-logs-title').textContent = `${container.displayName} Logs`;
         document.getElementById('service-terminal-prompt').textContent = `root@${containerName}:/$`;
 
-        // Clear and reload logs
-        this.refreshAppLogs();
+        // Restore terminal history for the selected container
+        const terminalOutput = document.getElementById('service-terminal-output');
+        if (terminalOutput) {
+            terminalOutput.innerHTML = '<div class="log-line system">🖥️ Container Terminal Ready</div>';
+            const termHistory = container.terminalHistory || [];
+            termHistory.forEach(historyItem => {
+                terminalOutput.innerHTML += historyItem;
+            });
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+        }
+
+        // If this container already has a running stream, restore its log history
+        // Otherwise start a new stream
+        if (this.appLogsState.eventSources[containerName]) {
+            this.restoreAppLogHistory(containerName);
+        } else {
+            this.refreshAppLogs();
+        }
     },
 
     switchAppLogsTab: function(tabType) {
@@ -1221,36 +1237,44 @@ Object.assign(RepoManager.prototype, {
             eventSource.addEventListener('connected', (event) => {
                 const data = JSON.parse(event.data);
                 // Only update viewer if this container is still selected
-                if (this.appLogsState.selectedContainer === containerName) {
+                if (this.appLogsState && this.appLogsState.selectedContainer === containerName) {
                     console.log(`✅ Connected to ${containerName} logs`);
                     this.appendAppLogLine('📡 ' + data.message, null, 'system');
                 }
             });
 
-            // Handle actual log messages (this is the key fix!)
+            // Handle actual log messages - always save to history, only display if selected
             eventSource.addEventListener('log', (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    // Only update if this container is still selected
-                    if (this.appLogsState.selectedContainer === containerName) {
+                    // Always save log to this container's history
+                    this.saveAppLogToHistory(containerName, data.log, data.timestamp);
+
+                    // Only update viewer if this container is currently selected
+                    if (this.appLogsState && this.appLogsState.selectedContainer === containerName) {
                         this.appendAppLogLine(data.log, data.timestamp);
                     }
-                } catch (error) {
-                    console.error('Failed to parse log message:', error);
+                } catch (parseError) {
+                    console.error('Failed to parse log message:', parseError);
                 }
             });
 
             // Handle connection errors with retry logic
             eventSource.addEventListener('error', (event) => {
-                console.error(`App log stream error for ${containerName}:`, error);
+                console.error(`App log stream error for ${containerName}`);
 
                 // Only show error if connection is permanently closed
                 if (eventSource.readyState === EventSource.CLOSED) {
                     // Connection is closed, remove from eventSources
-                    delete this.appLogsState.eventSources[containerName];
+                    if (this.appLogsState) {
+                        delete this.appLogsState.eventSources[containerName];
+                    }
 
-                    // Only show error if this container is still selected
-                    if (this.appLogsState.selectedContainer === containerName) {
+                    // Save error to history
+                    this.saveAppLogToHistory(containerName, '❌ Log stream disconnected. Attempting to reconnect...', new Date().toISOString(), 'error');
+
+                    // Only show error in viewer if this container is still selected
+                    if (this.appLogsState && this.appLogsState.selectedContainer === containerName) {
                         this.appendAppLogLine('❌ Log stream disconnected. Attempting to reconnect...', null, 'error');
 
                         // Attempt to reconnect after 5 seconds
@@ -1297,10 +1321,48 @@ Object.assign(RepoManager.prototype, {
         }
     },
 
+    saveAppLogToHistory: function(containerName, logText, timestamp, type = 'log') {
+        if (!this.appLogsState || !this.appLogsState.containers[containerName]) return;
+
+        const container = this.appLogsState.containers[containerName];
+        const time = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+        const prefix = type === 'system' ? '🖥️' : type === 'error' ? '❌' : '📋';
+        const logHtml = `<div class="log-line ${type}"><span class="log-timestamp">[${time}]</span> ${prefix} ${logText}</div>`;
+
+        container.logHistory.push(logHtml);
+
+        // Limit history to prevent memory issues (keep last 500 logs per container)
+        if (container.logHistory.length > 500) {
+            container.logHistory.shift();
+        }
+    },
+
+    restoreAppLogHistory: function(containerName) {
+        if (!this.appLogsState || !this.appLogsState.containers[containerName]) return;
+
+        const container = this.appLogsState.containers[containerName];
+        const viewer = document.getElementById('logs-viewer');
+        if (!viewer) return;
+
+        if (container.logHistory && container.logHistory.length > 0) {
+            viewer.innerHTML = container.logHistory.join('');
+            viewer.scrollTop = viewer.scrollHeight;
+        } else {
+            viewer.innerHTML = '<div class="log-line system">📡 Log stream active (no previous logs)</div>';
+        }
+    },
+
     refreshAppLogs: function() {
         const viewer = document.getElementById('logs-viewer');
         if (viewer) {
             viewer.innerHTML = '<div class="log-line system">📋 Refreshing logs...</div>';
+        }
+        // Clear the log history for the selected container on manual refresh
+        if (this.appLogsState && this.appLogsState.selectedContainer) {
+            const container = this.appLogsState.containers[this.appLogsState.selectedContainer];
+            if (container) {
+                container.logHistory = [];
+            }
         }
         this.startAppLogStreaming();
     },
@@ -1309,6 +1371,13 @@ Object.assign(RepoManager.prototype, {
         const viewer = document.getElementById('logs-viewer');
         if (viewer) {
             viewer.innerHTML = '<div class="log-line system">📋 Logs cleared</div>';
+        }
+        // Also clear the history for the selected container
+        if (this.appLogsState && this.appLogsState.selectedContainer) {
+            const container = this.appLogsState.containers[this.appLogsState.selectedContainer];
+            if (container) {
+                container.logHistory = [];
+            }
         }
     },
 
