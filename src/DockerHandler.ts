@@ -164,8 +164,8 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
       
       const child = spawn('docker', dockerArgs, { env });
 
-      // Regex to detect Docker progress noise (download bars, extraction timers, waiting, etc.)
-      const dockerProgressPattern = /^[a-f0-9]+ (Downloading \[|Extracting \d|Waiting$|Pulling fs layer$|Verifying Checksum$|Download complete$)/;
+      // Regex to detect Docker layer progress lines (download bars, extraction timers, etc.)
+      const dockerProgressPattern = /^([a-f0-9]+) (Downloading \[|Extracting \d|Waiting$|Pulling fs layer$|Verifying Checksum$|Download complete$)/;
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
@@ -179,8 +179,14 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
           const trimmed = line.trim();
           if (!trimmed) return;
 
-          // Skip Docker layer progress noise (download bars, extraction timers, etc.)
-          if (dockerProgressPattern.test(trimmed)) {
+          // Detect Docker layer progress lines and mark them as 'progress'
+          // so the frontend can replace-in-place per layer
+          const progressMatch = trimmed.match(dockerProgressPattern);
+          if (progressMatch) {
+            console.log(`🐳 [${repo.path}]: ${trimmed}`);
+            if (logCollector) {
+              logCollector.addLog(`🐳 ${trimmed}`, 'progress');
+            }
             return;
           }
 

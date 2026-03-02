@@ -39,9 +39,9 @@ export class CasaOSInstaller {
         resolve({ success: false, message: `Installation timed out after ${Math.round(timeoutMs / 1000)} seconds. This may indicate a network issue or resource constraint.` });
       }, timeoutMs);
 
-      // Regex to detect Docker progress noise (download bars, extraction timers, waiting, etc.)
-      // These lines are repetitive and clutter the log - skip them, only keep completion/status lines
-      const dockerProgressPattern = /^[a-f0-9]+ (Downloading \[|Extracting \d|Waiting$|Pulling fs layer$|Verifying Checksum$|Download complete$)/;
+      // Regex to detect Docker layer progress lines (download bars, extraction timers, etc.)
+      // These get marked as 'progress' so the frontend can update them in-place per layer
+      const dockerProgressPattern = /^([a-f0-9]+) (Downloading \[|Extracting \d|Waiting$|Pulling fs layer$|Verifying Checksum$|Download complete$)/;
 
       const processLog = (data: Buffer) => {
         const message = data.toString();
@@ -55,9 +55,14 @@ export class CasaOSInstaller {
           const trimmed = line.trim();
           if (!trimmed) return;
 
-          // Skip Docker layer progress noise (download bars, extraction timers, etc.)
-          // Keep meaningful status lines like "Pull complete", "Pulled", "Container ... Started"
-          if (dockerProgressPattern.test(trimmed)) {
+          // Detect Docker layer progress lines and mark them with their layer hash
+          // so the frontend can replace-in-place per layer
+          const progressMatch = trimmed.match(dockerProgressPattern);
+          if (progressMatch) {
+            console.log(`[${finalProjectName} log]: ${trimmed}`);
+            if (logCollector) {
+              logCollector.addLog(`🐳 ${trimmed}`, 'progress');
+            }
             return;
           }
 

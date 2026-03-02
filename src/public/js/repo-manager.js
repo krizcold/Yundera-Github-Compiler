@@ -1459,11 +1459,25 @@ class RepoManager {
         const content = document.getElementById('terminal-content');
         if (!content) return;
 
-        // For progress lines, replace the previous progress line instead of appending
+        // For progress lines, update in-place per layer hash
+        // e.g. "🐳 ec589e2672fb Downloading [=====>   ] 2MB/6MB" -> extract "ec589e2672fb" as the layer key
         if (type === 'progress') {
-            const lastLine = content.lastElementChild;
-            if (lastLine && lastLine.classList.contains('progress')) {
-                lastLine.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+            const hashMatch = message.match(/🐳\s+([a-f0-9]+)\s/);
+            if (hashMatch) {
+                const layerHash = hashMatch[1];
+                // Find existing progress line for this layer
+                const existing = content.querySelector(`[data-layer="${layerHash}"]`);
+                if (existing) {
+                    existing.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+                    content.scrollTop = content.scrollHeight;
+                    return;
+                }
+                // No existing line for this layer — create one with the data attribute
+                const line = document.createElement('div');
+                line.className = `log-line ${type}`;
+                line.setAttribute('data-layer', layerHash);
+                line.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+                content.appendChild(line);
                 content.scrollTop = content.scrollHeight;
                 return;
             }
