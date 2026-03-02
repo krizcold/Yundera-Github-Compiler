@@ -18,8 +18,9 @@ export class CasaOSInstaller {
       console.log(`🚀 Spawning Docker Compose process for: ${finalProjectName}`);
       
       const command = 'docker';
+      // Use --progress=plain to avoid ANSI escape codes and progress bar spam in logs
       // Don't use --pull=always for local builds to avoid pulling from registry
-      const args = ['compose', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans'];
+      const args = ['compose', '--progress', 'plain', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans'];
       if (!hasLocalImage) {
         args.push('--pull=always'); // Only pull for non-local images
       }

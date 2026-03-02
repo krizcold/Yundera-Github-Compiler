@@ -146,11 +146,11 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
     // For GitHub repos, use simple build command (Dockerfile is in default location)
     // For compose repos, use -f flag for custom dockerfile paths
     const dockerArgs = isGitHubRepo
-      ? ['build', '-t', localTag, ...extraBuildArgs, buildContext]
-      : ['build', '-t', localTag, '-f', dockerfilePath, ...extraBuildArgs, buildContext];
+      ? ['build', '--progress=plain', '-t', localTag, ...extraBuildArgs, buildContext]
+      : ['build', '--progress=plain', '-t', localTag, '-f', dockerfilePath, ...extraBuildArgs, buildContext];
 
     console.log(`🔄 Executing build: docker ${dockerArgs.join(' ')}`);
-    
+
     // Use spawn to stream progress like CasaOSInstaller does
     return new Promise<{ imageName: string; serviceName: string } | null>((resolve, reject) => {
       // Only enable BuildKit if buildx is available
