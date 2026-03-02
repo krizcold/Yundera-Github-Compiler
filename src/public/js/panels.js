@@ -2043,7 +2043,7 @@ Object.assign(RepoManager.prototype, {
                 <div class="modal-body">
                     <p><strong>Are you sure you want to delete the following ${fileNames.length} item(s)?</strong></p>
                     <p style="color: #dc2626; font-size: 14px; margin: 10px 0;">This action cannot be undone!</p>
-                    <div style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 10px; background: #f9f9f9;">
+                    <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color, #ddd); border-radius: 4px; padding: 10px; background: var(--bg-surface, #f9f9f9); color: var(--text-primary, inherit);">
                         ${fileNames.map(name => `<div style="padding: 2px 0; font-family: monospace;">${name}</div>`).join('')}
                     </div>
                 </div>

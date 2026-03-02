@@ -255,6 +255,278 @@
 }
 
 /* ============================================
+   Dark/Midnight Dialog & Popup Overrides
+   ============================================ */
+
+/* --- Container backgrounds (white → dark) --- */
+[data-theme="dark"] .uninstall-container,
+[data-theme="dark"] .warning-container,
+[data-theme="dark"] .first-time-container,
+[data-theme="dark"] .compose-change-container {
+    background: var(--bg-secondary);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="midnight"] .uninstall-container,
+[data-theme="midnight"] .warning-container,
+[data-theme="midnight"] .first-time-container,
+[data-theme="midnight"] .compose-change-container {
+    background: var(--bg-secondary);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* --- Main text colors --- */
+[data-theme="dark"] .uninstall-content p,
+[data-theme="dark"] .overview p,
+[data-theme="dark"] .risk-item ul,
+[data-theme="midnight"] .uninstall-content p,
+[data-theme="midnight"] .overview p,
+[data-theme="midnight"] .risk-item ul {
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .data-preservation h3,
+[data-theme="dark"] .warning-explanation h3,
+[data-theme="dark"] .command-preview h3,
+[data-theme="dark"] .user-selection h3,
+[data-theme="dark"] .diff-section h4,
+[data-theme="dark"] .option-text strong,
+[data-theme="dark"] .data-content strong,
+[data-theme="midnight"] .data-preservation h3,
+[data-theme="midnight"] .warning-explanation h3,
+[data-theme="midnight"] .command-preview h3,
+[data-theme="midnight"] .user-selection h3,
+[data-theme="midnight"] .diff-section h4,
+[data-theme="midnight"] .option-text strong,
+[data-theme="midnight"] .data-content strong {
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .data-description,
+[data-theme="dark"] .warning-explanation ul,
+[data-theme="dark"] .radio-description,
+[data-theme="dark"] .option-text small,
+[data-theme="dark"] .preserve-data-text small,
+[data-theme="midnight"] .data-description,
+[data-theme="midnight"] .warning-explanation ul,
+[data-theme="midnight"] .radio-description,
+[data-theme="midnight"] .option-text small,
+[data-theme="midnight"] .preserve-data-text small {
+    color: var(--text-tertiary);
+}
+
+[data-theme="dark"] .preserve-data-text strong,
+[data-theme="midnight"] .preserve-data-text strong {
+    color: var(--text-primary);
+}
+
+/* --- Info/notice boxes (light blue → dark tint) --- */
+[data-theme="dark"] .uninstall-notice {
+    background: rgba(14, 165, 233, 0.1);
+    border-color: rgba(14, 165, 233, 0.3);
+    color: #7dd3fc;
+}
+
+[data-theme="midnight"] .uninstall-notice {
+    background: rgba(14, 165, 233, 0.08);
+    border-color: rgba(14, 165, 233, 0.25);
+    color: #7dd3fc;
+}
+
+[data-theme="dark"] .best-practice {
+    background: rgba(14, 165, 233, 0.1);
+    border-color: rgba(14, 165, 233, 0.3);
+}
+
+[data-theme="midnight"] .best-practice {
+    background: rgba(14, 165, 233, 0.08);
+    border-color: rgba(14, 165, 233, 0.25);
+}
+
+[data-theme="dark"] .best-practice h3,
+[data-theme="dark"] .best-practice p,
+[data-theme="midnight"] .best-practice h3,
+[data-theme="midnight"] .best-practice p {
+    color: #7dd3fc;
+}
+
+/* --- Surface/section backgrounds (light gray → dark surface) --- */
+[data-theme="dark"] .warning-explanation,
+[data-theme="dark"] .data-preservation,
+[data-theme="dark"] .user-selection,
+[data-theme="dark"] .compose-change-options {
+    background: var(--bg-surface);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .warning-explanation,
+[data-theme="midnight"] .data-preservation,
+[data-theme="midnight"] .user-selection,
+[data-theme="midnight"] .compose-change-options {
+    background: var(--bg-surface);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .compose-option:hover,
+[data-theme="midnight"] .compose-option:hover {
+    background: var(--bg-secondary);
+}
+
+/* --- Warning/danger boxes (light red → dark red tint) --- */
+[data-theme="dark"] .uninstall-warning,
+[data-theme="dark"] .risk-warning,
+[data-theme="dark"] .risk-item {
+    background: rgba(220, 38, 38, 0.1);
+    border-color: rgba(220, 38, 38, 0.3);
+}
+
+[data-theme="midnight"] .uninstall-warning,
+[data-theme="midnight"] .risk-warning,
+[data-theme="midnight"] .risk-item {
+    background: rgba(220, 38, 38, 0.08);
+    border-color: rgba(220, 38, 38, 0.25);
+}
+
+/* --- Border colors (light gray → theme border) --- */
+[data-theme="dark"] .uninstall-actions,
+[data-theme="dark"] .warning-actions,
+[data-theme="dark"] .first-time-actions,
+[data-theme="dark"] .compose-change-actions,
+[data-theme="midnight"] .uninstall-actions,
+[data-theme="midnight"] .warning-actions,
+[data-theme="midnight"] .first-time-actions,
+[data-theme="midnight"] .compose-change-actions {
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .preserve-data-label,
+[data-theme="midnight"] .preserve-data-label {
+    border-color: var(--border-color);
+}
+
+/* --- Radio options & form elements --- */
+[data-theme="dark"] .radio-option,
+[data-theme="midnight"] .radio-option {
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .radio-option:hover,
+[data-theme="midnight"] .radio-option:hover {
+    border-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="dark"] .radio-mark,
+[data-theme="midnight"] .radio-mark {
+    border-color: var(--border-color-strong);
+    background: var(--bg-surface);
+}
+
+[data-theme="dark"] .radio-option input[type="radio"]:checked + .radio-mark + .radio-content,
+[data-theme="midnight"] .radio-option input[type="radio"]:checked + .radio-mark + .radio-content {
+    color: #93c5fd;
+}
+
+/* --- Checkmark / checkbox styling --- */
+[data-theme="dark"] .data-checkmark,
+[data-theme="midnight"] .data-checkmark {
+    border-color: var(--border-color-strong);
+    background: var(--bg-surface);
+}
+
+[data-theme="dark"] .data-checkbox input[type="checkbox"]:disabled + .data-checkmark,
+[data-theme="midnight"] .data-checkbox input[type="checkbox"]:disabled + .data-checkmark {
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+}
+
+/* --- Command preview textarea --- */
+[data-theme="dark"] .command-text,
+[data-theme="midnight"] .command-text {
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+/* --- Custom username input --- */
+[data-theme="dark"] #custom-username,
+[data-theme="midnight"] #custom-username {
+    background: var(--bg-surface);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] #custom-username:disabled,
+[data-theme="midnight"] #custom-username:disabled {
+    background: var(--bg-primary);
+    color: var(--text-tertiary);
+}
+
+/* --- Compose diff content --- */
+[data-theme="dark"] .compose-content,
+[data-theme="midnight"] .compose-content {
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .compose-content pre,
+[data-theme="midnight"] .compose-content pre {
+    color: var(--text-primary);
+}
+
+/* --- Diff highlighting (adjusted for dark backgrounds) --- */
+[data-theme="dark"] .diff-added,
+[data-theme="midnight"] .diff-added {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #86efac;
+}
+
+[data-theme="dark"] .diff-removed,
+[data-theme="midnight"] .diff-removed {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+}
+
+[data-theme="dark"] .diff-env-transfer,
+[data-theme="midnight"] .diff-env-transfer {
+    background-color: rgba(234, 179, 8, 0.15);
+    color: #fde68a;
+    border-color: rgba(234, 179, 8, 0.3);
+}
+
+/* --- Loading spinner --- */
+[data-theme="dark"] .loading-spinner,
+[data-theme="midnight"] .loading-spinner {
+    border-color: var(--border-color);
+    border-top-color: #3b82f6;
+}
+
+/* --- Consent checkbox label text --- */
+[data-theme="dark"] .consent-checkbox,
+[data-theme="midnight"] .consent-checkbox {
+    color: var(--text-primary);
+}
+
+/* --- General dialog content text --- */
+[data-theme="dark"] .warning-content > p,
+[data-theme="dark"] .compose-change-content > p,
+[data-theme="dark"] .first-time-content > p,
+[data-theme="dark"] .radio-content strong,
+[data-theme="dark"] .data-label,
+[data-theme="midnight"] .warning-content > p,
+[data-theme="midnight"] .compose-change-content > p,
+[data-theme="midnight"] .first-time-content > p,
+[data-theme="midnight"] .radio-content strong,
+[data-theme="midnight"] .data-label {
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .radio-content,
+[data-theme="midnight"] .radio-content {
+    color: var(--text-secondary);
+}
+
+/* ============================================
    Theme Dropdown Styles
    ============================================ */
 .theme-selector {
