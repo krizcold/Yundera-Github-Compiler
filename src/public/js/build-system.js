@@ -1445,6 +1445,56 @@ Object.assign(RepoManager.prototype, {
         });
     },
 
+    checkForPreInstallCommand: async function(repoId) {
+        try {
+            const response = await axios.get(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`));
+            const composeContent = response.data.yaml || response.data.content;
+
+            // Parse YAML to check for pre-install-cmd
+            const lines = composeContent.split('\n');
+            let inXCasaOS = false;
+
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const line = lines[lineIndex];
+                const trimmed = line.trim();
+
+                if (trimmed === 'x-casaos:') {
+                    inXCasaOS = true;
+                } else if (inXCasaOS && trimmed.startsWith('pre-install-cmd:')) {
+                    // Extract the command content
+                    let command = trimmed.substring('pre-install-cmd:'.length).trim();
+
+                    // Handle multiline commands
+                    if (command === '|') {
+                        // Multiline command, collect following indented lines
+                        const commandLines = [];
+                        for (let i = lineIndex + 1; i < lines.length; i++) {
+                            const nextLine = lines[i];
+                            if (nextLine.trim() === '' || nextLine.startsWith('    ')) {
+                                commandLines.push(nextLine.substring(4)); // Remove indentation
+                            } else {
+                                break;
+                            }
+                        }
+                        command = commandLines.join('\n').trim();
+                    }
+
+                    return command;
+                } else if (inXCasaOS && trimmed && !trimmed.startsWith('#')) {
+                    // Check if we've left the x-casaos section (another top-level key)
+                    const currentIndentation = line.length - line.trimStart().length;
+                    if (currentIndentation === 0 && trimmed.endsWith(':')) {
+                        inXCasaOS = false;
+                    }
+                }
+            }
+            return null;
+        } catch (error) {
+            console.error('Failed to check for pre-install command:', error);
+            return null;
+        }
+    },
+
     showPreInstallWarning: async function(repo, preInstallCommand) {
         return new Promise((resolve) => {
             // Create warning popup
