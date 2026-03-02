@@ -173,6 +173,11 @@ class RepoManager {
             });
         }
 
+        const storeTrackerBtn = document.getElementById('store-tracker-btn');
+        if (storeTrackerBtn) {
+            storeTrackerBtn.addEventListener('click', () => this.openStoreTracker());
+        }
+
         console.log('✅ Events bound successfully');
 
         document.querySelectorAll('.modal').forEach(modal => {

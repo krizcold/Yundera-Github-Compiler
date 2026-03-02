@@ -6,7 +6,8 @@ import * as crypto from "crypto";
 import axios from "axios"; // Import axios for the backend
 import { loadConfig, isAppLoggingEnabled } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
-import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings } from "./storage";
+import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings, StoreConfig } from "./storage";
+import { fetchStoreApps, checkImageVersions, clearStoreCache, parseGitHubUrl, DockerImageRef } from "./store-tracker";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
 import { validateAppTokenMiddleware, AppAuthenticatedRequest } from "./auth-middleware";
@@ -1368,6 +1369,131 @@ app.post("/api/admin/repos/check-updates", async (req, res) => {
       },
       repositories: results
     });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==========================================
+// Store Tracker API endpoints
+// ==========================================
+
+// GET /api/admin/store-tracker/stores - List configured stores
+app.get("/api/admin/store-tracker/stores", (req, res) => {
+  try {
+    const settings = loadSettings();
+    res.json({ success: true, stores: settings.storeTrackerStores || [] });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/admin/store-tracker/stores - Add a new store
+app.post("/api/admin/store-tracker/stores", (req, res) => {
+  try {
+    const { repoUrl } = req.body;
+    if (!repoUrl) {
+      return res.status(400).json({ success: false, message: "repoUrl is required" });
+    }
+
+    // Auto-detect name from GitHub URL: "owner - repoName"
+    const parsed = parseGitHubUrl(repoUrl);
+    if (!parsed) {
+      return res.status(400).json({ success: false, message: "Invalid GitHub URL" });
+    }
+    const name = `${parsed.owner} - ${parsed.repo}`;
+
+    const settings = loadSettings();
+    const stores = settings.storeTrackerStores || [];
+
+    // Prevent duplicate stores for the same repo
+    const normalizedUrl = repoUrl.replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
+    const duplicate = stores.find(s => s.repoUrl.replace(/\.git$/, '').replace(/\/$/, '').toLowerCase() === normalizedUrl);
+    if (duplicate) {
+      return res.status(409).json({ success: false, message: "This store repository is already added" });
+    }
+
+    const newStore: StoreConfig = {
+      id: `store-${Date.now().toString(36)}`,
+      name,
+      repoUrl,
+      appsPath: 'Apps',
+      enabled: true,
+    };
+
+    stores.push(newStore);
+    settings.storeTrackerStores = stores;
+    saveSettings(settings);
+
+    res.json({ success: true, store: newStore });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE /api/admin/store-tracker/stores/:storeId - Remove a store
+app.delete("/api/admin/store-tracker/stores/:storeId", (req, res) => {
+  try {
+    const { storeId } = req.params;
+    const settings = loadSettings();
+    const stores = settings.storeTrackerStores || [];
+    const index = stores.findIndex(s => s.id === storeId);
+
+    if (index === -1) {
+      return res.status(404).json({ success: false, message: "Store not found" });
+    }
+
+    stores.splice(index, 1);
+    settings.storeTrackerStores = stores;
+    saveSettings(settings);
+    clearStoreCache(storeId);
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET /api/admin/store-tracker/apps - Fetch apps from stores
+app.get("/api/admin/store-tracker/apps", async (req, res) => {
+  try {
+    const storeId = req.query.storeId as string | undefined;
+    const refresh = req.query.refresh === 'true';
+    const settings = loadSettings();
+    let stores = settings.storeTrackerStores || [];
+
+    if (storeId) {
+      stores = stores.filter(s => s.id === storeId);
+    }
+
+    stores = stores.filter(s => s.enabled);
+
+    const allApps = [];
+    for (const store of stores) {
+      try {
+        const apps = await fetchStoreApps(store, refresh);
+        allApps.push(...apps);
+      } catch (err: any) {
+        console.error(`❌ Failed to fetch apps from store ${store.name}: ${err.message}`);
+      }
+    }
+
+    res.json({ success: true, apps: allApps });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/admin/store-tracker/check-versions - Check image versions
+app.post("/api/admin/store-tracker/check-versions", async (req, res) => {
+  try {
+    const { images, refresh } = req.body as { images: DockerImageRef[]; refresh?: boolean };
+    if (!images || !Array.isArray(images)) {
+      return res.status(400).json({ success: false, message: "images array is required" });
+    }
+
+    const results = await checkImageVersions(images, !!refresh);
+    res.json({ success: true, results });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

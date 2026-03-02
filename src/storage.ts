@@ -34,6 +34,15 @@ export interface Repository {
   authHash?: string; // Persistent AUTH_HASH for app authentication (preserved across updates)
 }
 
+export interface StoreConfig {
+  id: string;
+  name: string;
+  repoUrl: string;       // e.g. "https://github.com/Yundera/AppStore"
+  appsPath: string;       // default "Apps"
+  enabled: boolean;
+  lastFetched?: string;
+}
+
 export interface GlobalSettings {
   globalApiUpdatesEnabled: boolean;
   defaultAutoUpdateInterval: number;
@@ -45,6 +54,7 @@ export interface GlobalSettings {
   refScheme: string;
   refPort: string;
   refSeparator: string;
+  storeTrackerStores?: StoreConfig[];
 }
 
 // Default settings
@@ -58,6 +68,7 @@ const DEFAULT_SETTINGS: GlobalSettings = {
   refScheme: "http",
   refPort: "80",
   refSeparator: "-",
+  storeTrackerStores: [],
 };
 
 // Ensure UI data directory exists
