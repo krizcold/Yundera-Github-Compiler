@@ -18,9 +18,8 @@ export class CasaOSInstaller {
       console.log(`🚀 Spawning Docker Compose process for: ${finalProjectName}`);
       
       const command = 'docker';
-      // Use --progress=plain to avoid ANSI escape codes and progress bar spam in logs
       // Don't use --pull=always for local builds to avoid pulling from registry
-      const args = ['compose', '--progress', 'plain', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans'];
+      const args = ['compose', '-p', finalProjectName, '-f', composeFilePath, 'up', '-d', '--remove-orphans'];
       if (!hasLocalImage) {
         args.push('--pull=always'); // Only pull for non-local images
       }
@@ -40,34 +39,31 @@ export class CasaOSInstaller {
         resolve({ success: false, message: `Installation timed out after ${Math.round(timeoutMs / 1000)} seconds. This may indicate a network issue or resource constraint.` });
       }, timeoutMs);
 
+      // Regex to detect Docker progress noise (download bars, extraction timers, waiting, etc.)
+      // These lines are repetitive and clutter the log - skip them, only keep completion/status lines
+      const dockerProgressPattern = /^[a-f0-9]+ (Downloading \[|Extracting \d|Waiting$|Pulling fs layer$|Verifying Checksum$|Download complete$)/;
+
       const processLog = (data: Buffer) => {
         const message = data.toString();
         // Strip ANSI escape codes (colors, cursor movement, line clearing)
         const clean = message.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 
-        // Split on newlines first
-        const lines = clean.split('\n');
+        // Split on all line separators
+        const lines = clean.split(/[\r\n]+/);
 
         lines.forEach(line => {
-          if (!line.trim()) return;
+          const trimmed = line.trim();
+          if (!trimmed) return;
 
-          // Handle carriage returns - \r means "overwrite current line" (progress output)
-          // Take only the last \r-separated segment (the final state)
-          if (line.includes('\r')) {
-            const segments = line.split('\r');
-            const lastSegment = segments[segments.length - 1].trim();
-            if (!lastSegment) return;
+          // Skip Docker layer progress noise (download bars, extraction timers, etc.)
+          // Keep meaningful status lines like "Pull complete", "Pulled", "Container ... Started"
+          if (dockerProgressPattern.test(trimmed)) {
+            return;
+          }
 
-            console.log(`[${finalProjectName} log]: ${lastSegment}`);
-            if (logCollector) {
-              logCollector.addLog(`🐳 ${lastSegment}`, 'progress');
-            }
-          } else {
-            const trimmed = line.trim();
-            console.log(`[${finalProjectName} log]: ${trimmed}`);
-            if (logCollector) {
-              logCollector.addLog(`🐳 ${trimmed}`, 'info');
-            }
+          console.log(`[${finalProjectName} log]: ${trimmed}`);
+          if (logCollector) {
+            logCollector.addLog(`🐳 ${trimmed}`, 'info');
           }
         });
       };

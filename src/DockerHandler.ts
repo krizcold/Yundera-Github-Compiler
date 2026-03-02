@@ -146,8 +146,8 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
     // For GitHub repos, use simple build command (Dockerfile is in default location)
     // For compose repos, use -f flag for custom dockerfile paths
     const dockerArgs = isGitHubRepo
-      ? ['build', '--progress=plain', '-t', localTag, ...extraBuildArgs, buildContext]
-      : ['build', '--progress=plain', '-t', localTag, '-f', dockerfilePath, ...extraBuildArgs, buildContext];
+      ? ['build', '-t', localTag, ...extraBuildArgs, buildContext]
+      : ['build', '-t', localTag, '-f', dockerfilePath, ...extraBuildArgs, buildContext];
 
     console.log(`🔄 Executing build: docker ${dockerArgs.join(' ')}`);
 
@@ -164,34 +164,29 @@ export async function buildImageFromRepo(repo: RepoConfig, baseDir: string, isGi
       
       const child = spawn('docker', dockerArgs, { env });
 
+      // Regex to detect Docker progress noise (download bars, extraction timers, waiting, etc.)
+      const dockerProgressPattern = /^[a-f0-9]+ (Downloading \[|Extracting \d|Waiting$|Pulling fs layer$|Verifying Checksum$|Download complete$)/;
+
       const processLog = (data: Buffer) => {
         const message = data.toString();
         // Strip ANSI escape codes (colors, cursor movement, line clearing)
         const clean = message.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 
-        // Split on newlines first
-        const lines = clean.split('\n');
+        // Split on all line separators
+        const lines = clean.split(/[\r\n]+/);
 
         lines.forEach(line => {
-          if (!line.trim()) return;
+          const trimmed = line.trim();
+          if (!trimmed) return;
 
-          // Handle carriage returns - \r means "overwrite current line" (progress output)
-          // Take only the last \r-separated segment (the final state)
-          if (line.includes('\r')) {
-            const segments = line.split('\r');
-            const lastSegment = segments[segments.length - 1].trim();
-            if (!lastSegment) return;
+          // Skip Docker layer progress noise (download bars, extraction timers, etc.)
+          if (dockerProgressPattern.test(trimmed)) {
+            return;
+          }
 
-            console.log(`🐳 [${repo.path}]: ${lastSegment}`);
-            if (logCollector) {
-              logCollector.addLog(`🐳 ${lastSegment}`, 'progress');
-            }
-          } else {
-            const trimmed = line.trim();
-            console.log(`🐳 [${repo.path}]: ${trimmed}`);
-            if (logCollector) {
-              logCollector.addLog(`🐳 ${trimmed}`, 'info');
-            }
+          console.log(`🐳 [${repo.path}]: ${trimmed}`);
+          if (logCollector) {
+            logCollector.addLog(`🐳 ${trimmed}`, 'info');
           }
         });
       };
