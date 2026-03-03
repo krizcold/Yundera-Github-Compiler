@@ -690,7 +690,7 @@ class RepoManager {
 
     createComposeRepo() {
         this.currentEditingRepo = 'new-compose';
-        document.getElementById('yaml-textarea').value = '';
+        YmlBuilder.open('', 'New Compose Application');
         this.openModal('yaml-modal');
     }
 
@@ -818,7 +818,9 @@ class RepoManager {
         try {
             const response = await axios.get(this.addHashToUrl(`/api/admin/repos/${repoId}/compose`));
             this.currentEditingRepo = repoId;
-            document.getElementById('yaml-textarea').value = response.data.yaml || '';
+            const repo = this.repos.find(r => r.id === repoId);
+            const subtitle = repo ? repo.name : repoId;
+            YmlBuilder.open(response.data.yaml || '', subtitle);
             this.openModal('yaml-modal');
         } catch (error) {
             this.showNotification('Failed to load Docker Compose file', 'error');
@@ -1315,12 +1317,30 @@ class RepoManager {
 
     closeModal(modalId) {
         document.getElementById(modalId).style.display = 'none';
+        if (modalId === 'yaml-modal') {
+            YmlBuilder.resetPreview();
+        }
         this.currentEditingRepo = null;
     }
 
     async saveYaml() {
+        const yamlContent = YmlBuilder.getValue();
+        const validation = YmlBuilder.getValidationResults();
+
+        // Warn if required checks fail
+        if (validation.hasRequiredFailures) {
+            const failedChecks = validation.results
+                .filter(r => r.section === 'required' && r.status === 'fail')
+                .map(r => r.label.replace(/<[^>]*>/g, ''));
+            const proceed = confirm(
+                `There are ${validation.failCount} validation error(s):\n\n` +
+                failedChecks.map(c => `  - ${c}`).join('\n') +
+                '\n\nSave anyway?'
+            );
+            if (!proceed) return;
+        }
+
         try {
-            const yamlContent = document.getElementById('yaml-textarea').value;
             if (this.currentEditingRepo === 'new-compose') {
                 // This is a new compose repo
                 const response = await axios.post(this.addHashToUrl('/api/admin/repos/create-from-compose'), { yaml: yamlContent });

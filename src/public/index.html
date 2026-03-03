@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/public/css/layout.css">
     <link rel="stylesheet" href="/public/css/panels.css">
     <link rel="stylesheet" href="/public/css/dialogs.css">
+    <link rel="stylesheet" href="/public/css/yml-builder.css">
     <link rel="stylesheet" href="/public/css/themes.css">
     <!-- CDN dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
@@ -83,20 +84,58 @@
         </div>
     </div>
 
-    <!-- YAML Editor Modal -->
-    <div class="modal" id="yaml-modal">
-        <div class="modal-content" style="width: 800px;">
-            <div class="modal-header">
-                <h3>Docker Compose YAML</h3>
-                <button class="close-btn" onclick="closeModal('yaml-modal')">&times;</button>
+    <!-- Smart YML Builder Modal -->
+    <div class="modal yml-builder-modal" id="yaml-modal">
+        <div class="modal-content">
+            <div class="yml-builder-header">
+                <h3>Smart YML Builder</h3>
+                <div class="yml-builder-header-actions">
+                    <button class="yml-env-toggle" id="yml-env-toggle" onclick="YmlBuilder.toggleEnvPreview()" title="Preview resolved environment variables">
+                        <i class="fas fa-eye"></i> Env Preview
+                    </button>
+                    <button class="close-btn" onclick="closeModal('yaml-modal')">&times;</button>
+                </div>
             </div>
-            <div class="modal-body">
-                <textarea id="yaml-textarea" placeholder="Docker Compose YAML will appear here..."></textarea>
+            <div class="yml-builder-body" style="position:relative;">
+                <div class="yml-validation-sidebar" id="yml-validation-sidebar">
+                    <div class="yml-sidebar-content" id="yml-sidebar-content">
+                        <!-- Populated by yml-builder.js -->
+                    </div>
+                </div>
+                <button class="yml-sidebar-toggle" id="yml-sidebar-toggle" onclick="YmlBuilder.toggleSidebar()" title="Toggle validation sidebar">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <div class="yml-editor-panel">
+                    <div class="yml-editor-toolbar">
+                        <div class="yml-parse-status">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Ready</span>
+                        </div>
+                        <div class="yml-toolbar-actions">
+                            <button class="yml-toolbar-btn" id="yml-undo-btn" onclick="YmlBuilder.undo()" title="Undo (Ctrl+Z)"><i class="fas fa-undo"></i></button>
+                            <button class="yml-toolbar-btn" id="yml-redo-btn" onclick="YmlBuilder.redo()" title="Redo (Ctrl+Y / Ctrl+Shift+Z)"><i class="fas fa-redo"></i></button>
+                            <span class="yml-toolbar-separator"></span>
+                            <div class="yml-cursor-pos" id="yml-cursor-pos">Ln 1, Col 1</div>
+                        </div>
+                    </div>
+                    <div class="yml-editor-container" id="yml-editor-container">
+                        <!-- CodeMirror 6 or fallback textarea -->
+                    </div>
+                    <div class="yml-env-preview-overlay" id="yml-env-preview-overlay">
+                        <div class="yml-env-preview-badge"><i class="fas fa-eye"></i> ENV PREVIEW - Showing resolved values (read-only)</div>
+                        <div class="yml-env-preview-content"><pre></pre></div>
+                    </div>
+                </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('yaml-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="saveYaml()">Save</button>
+            <div class="yml-builder-footer">
+                <div class="yml-validation-summary" id="yml-validation-summary"></div>
+                <div class="yml-builder-footer-buttons">
+                    <button class="btn btn-secondary" onclick="closeModal('yaml-modal')">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveYaml()">Save</button>
+                </div>
             </div>
+            <!-- Hidden textarea for backward compatibility -->
+            <textarea id="yaml-textarea" style="display:none;"></textarea>
         </div>
     </div>
 
@@ -196,5 +235,49 @@
     <script src="/public/js/panels.js"></script>
     <script src="/public/js/store-tracker.js"></script>
     <script src="/public/js/main.js"></script>
+    <!-- Smart YML Builder -->
+    <script src="/public/js/yml-builder.js"></script>
+    <!-- CodeMirror 6 ESM loader (async, with fallback) -->
+    <!-- CodeMirror 6 ESM loader (async, with fallback) -->
+    <script type="module">
+        try {
+            const [
+                { basicSetup },
+                { yaml },
+                viewMod,
+                stateMod,
+                { linter, lintGutter },
+                { oneDark },
+                cmdMod,
+            ] = await Promise.all([
+                import('https://esm.sh/codemirror'),
+                import('https://esm.sh/@codemirror/lang-yaml'),
+                import('https://esm.sh/@codemirror/view'),
+                import('https://esm.sh/@codemirror/state'),
+                import('https://esm.sh/@codemirror/lint'),
+                import('https://esm.sh/@codemirror/theme-one-dark'),
+                import('https://esm.sh/@codemirror/commands'),
+            ]);
+            window.CM6 = {
+                basicSetup,
+                yaml,
+                EditorView: viewMod.EditorView,
+                EditorState: stateMod.EditorState,
+                ViewPlugin: viewMod.ViewPlugin,
+                Decoration: viewMod.Decoration,
+                RangeSetBuilder: stateMod.RangeSetBuilder,
+                hoverTooltip: viewMod.hoverTooltip,
+                keymap: viewMod.keymap,
+                undo: cmdMod.undo,
+                redo: cmdMod.redo,
+                linter,
+                lintGutter,
+                oneDark,
+            };
+            document.dispatchEvent(new CustomEvent('cm6-ready'));
+        } catch (e) {
+            console.warn('CodeMirror 6 failed to load, using textarea fallback:', e);
+        }
+    </script>
 </body>
 </html>

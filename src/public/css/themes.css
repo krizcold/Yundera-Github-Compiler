@@ -527,6 +527,203 @@
 }
 
 /* ============================================
+   Smart YML Builder - Dark/Midnight Overrides
+   ============================================ */
+
+/* --- Sidebar --- */
+[data-theme="dark"] .yml-validation-sidebar,
+[data-theme="dark"] .yml-editor-toolbar {
+    background: var(--bg-secondary);
+}
+
+[data-theme="midnight"] .yml-validation-sidebar,
+[data-theme="midnight"] .yml-editor-toolbar {
+    background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .yml-sidebar-toggle,
+[data-theme="midnight"] .yml-sidebar-toggle {
+    background: var(--bg-secondary);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .yml-sidebar-toggle:hover,
+[data-theme="midnight"] .yml-sidebar-toggle:hover {
+    background: var(--bg-surface);
+}
+
+/* --- Toolbar buttons --- */
+[data-theme="dark"] .yml-toolbar-btn,
+[data-theme="midnight"] .yml-toolbar-btn {
+    border-color: var(--border-color);
+    color: var(--text-tertiary);
+}
+
+[data-theme="dark"] .yml-toolbar-btn:hover,
+[data-theme="midnight"] .yml-toolbar-btn:hover {
+    background: var(--bg-surface);
+    border-color: var(--border-color-strong);
+    color: var(--text-primary);
+}
+
+/* --- Check items --- */
+[data-theme="dark"] .yml-check-item:hover,
+[data-theme="midnight"] .yml-check-item:hover {
+    background: var(--bg-surface);
+}
+
+[data-theme="dark"] .yml-check-label code,
+[data-theme="dark"] .yml-check-detail code,
+[data-theme="midnight"] .yml-check-label code,
+[data-theme="midnight"] .yml-check-detail code {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .yml-check-help,
+[data-theme="dark"] .yml-check-insert,
+[data-theme="midnight"] .yml-check-help,
+[data-theme="midnight"] .yml-check-insert {
+    border-color: var(--border-color);
+    color: var(--text-tertiary);
+}
+
+/* --- Tooltips (fixed-position popup + CM6 hover) --- */
+[data-theme="dark"] .yml-tooltip-popup,
+[data-theme="dark"] .yml-hover-tooltip {
+    background: #111827;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+[data-theme="dark"] .yml-tooltip-popup code {
+    background: rgba(255,255,255,0.1);
+}
+
+[data-theme="midnight"] .yml-tooltip-popup,
+[data-theme="midnight"] .yml-hover-tooltip {
+    background: #0a0f1a;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+
+[data-theme="midnight"] .yml-tooltip-popup code {
+    background: rgba(255,255,255,0.08);
+}
+
+/* --- Env preview overlay --- */
+[data-theme="dark"] .yml-env-preview-overlay {
+    background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .yml-env-preview-badge {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: var(--border-color);
+}
+
+[data-theme="midnight"] .yml-env-preview-overlay {
+    background: var(--bg-secondary);
+}
+
+[data-theme="midnight"] .yml-env-preview-badge {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: var(--border-color);
+}
+
+/* --- Env var decoration colors for dark themes --- */
+[data-theme="dark"] .yml-env-known,
+[data-theme="midnight"] .yml-env-known {
+    background: rgba(34, 197, 94, 0.2);
+}
+
+[data-theme="dark"] .yml-env-deprecated,
+[data-theme="midnight"] .yml-env-deprecated {
+    background: rgba(251, 191, 36, 0.2);
+}
+
+[data-theme="dark"] .yml-env-unknown,
+[data-theme="midnight"] .yml-env-unknown {
+    background: rgba(234, 179, 8, 0.25);
+}
+
+[data-theme="dark"] .yml-image-warn,
+[data-theme="midnight"] .yml-image-warn {
+    background: rgba(220, 38, 38, 0.18);
+}
+
+/* --- Env toggle button --- */
+[data-theme="dark"] .yml-env-toggle,
+[data-theme="midnight"] .yml-env-toggle {
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .yml-env-toggle:hover,
+[data-theme="midnight"] .yml-env-toggle:hover {
+    background: var(--bg-surface);
+    border-color: var(--border-color-strong);
+}
+
+[data-theme="dark"] .yml-env-toggle.active,
+[data-theme="midnight"] .yml-env-toggle.active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: var(--primary-color);
+    color: #93c5fd;
+}
+
+/* --- CodeMirror dark theme integration --- */
+[data-theme="dark"] .cm-editor,
+[data-theme="midnight"] .cm-editor {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .cm-editor .cm-gutters,
+[data-theme="midnight"] .cm-editor .cm-gutters {
+    background: var(--bg-primary) !important;
+    color: var(--text-tertiary) !important;
+    border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .cm-editor .cm-activeLineGutter,
+[data-theme="midnight"] .cm-editor .cm-activeLineGutter {
+    background: var(--bg-surface) !important;
+}
+
+[data-theme="dark"] .cm-editor .cm-activeLine,
+[data-theme="midnight"] .cm-editor .cm-activeLine {
+    background: rgba(59, 130, 246, 0.08) !important;
+}
+
+[data-theme="dark"] .cm-editor .cm-selectionBackground,
+[data-theme="midnight"] .cm-editor .cm-selectionBackground {
+    background: rgba(59, 130, 246, 0.2) !important;
+}
+
+[data-theme="dark"] .cm-editor .cm-content,
+[data-theme="midnight"] .cm-editor .cm-content {
+    caret-color: var(--text-primary);
+}
+
+[data-theme="dark"] .cm-editor .cm-cursor,
+[data-theme="midnight"] .cm-editor .cm-cursor {
+    border-left-color: var(--text-primary) !important;
+}
+
+/* --- Fallback textarea --- */
+[data-theme="dark"] .yml-fallback-editor,
+[data-theme="midnight"] .yml-fallback-editor {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+/* --- Footer --- */
+[data-theme="dark"] .yml-builder-footer,
+[data-theme="dark"] .yml-builder-header,
+[data-theme="midnight"] .yml-builder-footer,
+[data-theme="midnight"] .yml-builder-header {
+    border-color: var(--border-color);
+}
+
+/* ============================================
    Theme Dropdown Styles
    ============================================ */
 .theme-selector {
