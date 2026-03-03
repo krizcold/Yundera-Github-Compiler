@@ -2325,6 +2325,318 @@ app.post("/api/admin/terminal/delete", async (req, res) => {
   }
 });
 
+// POST /api/terminal/read-file - Read file contents for editing
+app.post("/api/admin/terminal/read-file", async (req, res) => {
+  const { filePath, currentDir = '/', runAsUser = 'ubuntu' } = req.body;
+
+  if (!filePath) {
+    return res.json({ success: false, message: 'No file path specified', errorCode: 'INVALID_INPUT' });
+  }
+
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+
+    // Test Docker and CasaOS container access
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 5000, maxBuffer: 1024 * 1024
+      });
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.json({ success: false, message: 'CasaOS container not found', errorCode: 'NO_CONTAINER' });
+      }
+    } catch (error: any) {
+      return res.json({ success: false, message: 'Cannot access Docker or CasaOS container', errorCode: 'NO_CONTAINER' });
+    }
+
+    // Build the read script
+    const readScript = `
+      TARGET="${filePath}"
+      if [ ! "${filePath}" = /* ]; then
+        TARGET="${currentDir}/${filePath}"
+      fi
+
+      if [ ! -e "\$TARGET" ]; then
+        echo "ERROR_CODE:NOT_FOUND"
+        exit 0
+      fi
+      if [ -d "\$TARGET" ]; then
+        echo "ERROR_CODE:IS_DIRECTORY"
+        exit 0
+      fi
+      if [ ! -r "\$TARGET" ]; then
+        echo "ERROR_CODE:NO_READ_PERMISSION"
+        exit 0
+      fi
+
+      FILE_SIZE=\$(stat -c%s "\$TARGET" 2>/dev/null || stat -f%z "\$TARGET" 2>/dev/null || echo "0")
+      if [ "\$FILE_SIZE" -gt 1048576 ] 2>/dev/null; then
+        echo "ERROR_CODE:TOO_LARGE"
+        echo "SIZE:\$FILE_SIZE"
+        exit 0
+      fi
+
+      MIME_TYPE=\$(file --mime-type -b "\$TARGET" 2>/dev/null || echo "application/octet-stream")
+      case "\$MIME_TYPE" in
+        text/*|application/json|application/xml|application/javascript|application/x-yaml|application/yaml|application/toml|inode/x-empty)
+          ;;
+        application/octet-stream)
+          if head -c 512 "\$TARGET" | grep -qP '[\\x00-\\x08\\x0E-\\x1F]' 2>/dev/null; then
+            echo "ERROR_CODE:BINARY"
+            echo "MIME:\$MIME_TYPE"
+            exit 0
+          fi
+          ;;
+        *)
+          echo "ERROR_CODE:BINARY"
+          echo "MIME:\$MIME_TYPE"
+          exit 0
+          ;;
+      esac
+
+      PERMS_OCTAL=\$(stat -c%a "\$TARGET" 2>/dev/null || stat -f%OLp "\$TARGET" 2>/dev/null || echo "000")
+      PERMS_SYMBOLIC=\$(stat -c%A "\$TARGET" 2>/dev/null || ls -la "\$TARGET" | awk '{print \$1}' || echo "----------")
+      OWNER=\$(stat -c%U "\$TARGET" 2>/dev/null || stat -f%Su "\$TARGET" 2>/dev/null || echo "unknown")
+      GROUP=\$(stat -c%G "\$TARGET" 2>/dev/null || stat -f%Sg "\$TARGET" 2>/dev/null || echo "unknown")
+
+      echo "META_START"
+      echo "SIZE:\$FILE_SIZE"
+      echo "MIME:\$MIME_TYPE"
+      echo "PERMS_OCTAL:\$PERMS_OCTAL"
+      echo "PERMS_SYMBOLIC:\$PERMS_SYMBOLIC"
+      echo "OWNER:\$OWNER"
+      echo "GROUP:\$GROUP"
+      echo "FILEPATH:\$TARGET"
+      echo "META_END"
+      echo "---CONTENT---"
+      cat "\$TARGET"
+    `;
+
+    const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${readScript.replace(/'/g, "'\\''")}'`;
+
+    const result = await execAsync(dockerCommand, {
+      timeout: 15000,
+      maxBuffer: 2 * 1024 * 1024,
+      shell: '/bin/sh'
+    });
+
+    const output = result.stdout;
+
+    // Check for error codes
+    if (output.startsWith('ERROR_CODE:')) {
+      const errorCode = output.split('\n')[0].replace('ERROR_CODE:', '').trim();
+      const errorMessages: Record<string, string> = {
+        'NOT_FOUND': `File not found: ${filePath}`,
+        'IS_DIRECTORY': `Cannot edit a directory: ${filePath}`,
+        'NO_READ_PERMISSION': `Permission denied reading: ${filePath}. Try switching to root user.`,
+        'TOO_LARGE': `File is too large to edit (>1MB). ${output.split('\n')[1] || ''}`,
+        'BINARY': `Cannot edit binary file: ${filePath}. ${output.split('\n')[1] || ''}`,
+      };
+      return res.json({
+        success: false,
+        message: errorMessages[errorCode] || `Error reading file: ${errorCode}`,
+        errorCode
+      });
+    }
+
+    // Parse metadata and content
+    const contentSeparator = '---CONTENT---';
+    const sepIndex = output.indexOf(contentSeparator);
+    if (sepIndex === -1) {
+      return res.json({ success: false, message: 'Failed to read file - unexpected output format', errorCode: 'PARSE_ERROR' });
+    }
+
+    const metaSection = output.substring(0, sepIndex);
+    const content = output.substring(sepIndex + contentSeparator.length + 1); // +1 for newline
+
+    // Parse metadata
+    const getMeta = (key: string) => {
+      const match = metaSection.match(new RegExp(`${key}:(.*)`, 'm'));
+      return match ? match[1].trim() : '';
+    };
+
+    res.json({
+      success: true,
+      content,
+      size: parseInt(getMeta('SIZE')) || 0,
+      permissions: {
+        octal: getMeta('PERMS_OCTAL'),
+        symbolic: getMeta('PERMS_SYMBOLIC'),
+        owner: getMeta('OWNER'),
+        group: getMeta('GROUP'),
+      },
+      mimeType: getMeta('MIME'),
+      filePath: getMeta('FILEPATH') || filePath,
+    });
+
+  } catch (error: any) {
+    console.error('Read file failed:', error);
+    res.json({ success: false, message: error.message || 'Failed to read file', errorCode: 'UNKNOWN' });
+  }
+});
+
+// POST /api/terminal/write-file - Write file contents
+app.post("/api/admin/terminal/write-file", async (req, res) => {
+  const { filePath, content, runAsUser = 'ubuntu' } = req.body;
+
+  if (!filePath) {
+    return res.json({ success: false, message: 'No file path specified' });
+  }
+  if (content === undefined || content === null) {
+    return res.json({ success: false, message: 'No content provided' });
+  }
+
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+
+  try {
+    const { spawn, exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+
+    // Test Docker and CasaOS container access
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 5000, maxBuffer: 1024 * 1024
+      });
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.json({ success: false, message: 'CasaOS container not found' });
+      }
+    } catch (error: any) {
+      return res.json({ success: false, message: 'Cannot access Docker or CasaOS container' });
+    }
+
+    // Check write permission first
+    const checkCommand = `docker exec --user ${safeUser} casaos bash -c 'if [ -e "${filePath}" ] && [ ! -w "${filePath}" ]; then echo "NO_WRITE"; elif [ ! -e "${filePath}" ]; then DIR=$(dirname "${filePath}"); if [ ! -w "$DIR" ]; then echo "NO_WRITE_DIR"; else echo "OK_NEW"; fi; else echo "OK"; fi'`;
+
+    const checkResult = await execAsync(checkCommand, {
+      timeout: 5000, maxBuffer: 1024 * 1024, shell: '/bin/sh'
+    });
+
+    const checkOutput = checkResult.stdout.trim();
+    if (checkOutput === 'NO_WRITE') {
+      return res.json({ success: false, message: `Permission denied writing to: ${filePath}. Try switching to root user.` });
+    }
+    if (checkOutput === 'NO_WRITE_DIR') {
+      return res.json({ success: false, message: `Permission denied writing to directory for: ${filePath}. Try switching to root user.` });
+    }
+
+    // Use spawn with stdin piping to avoid shell escaping issues
+    const writeResult = await new Promise<{ success: boolean; message: string }>((resolve, reject) => {
+      const proc = spawn('docker', [
+        'exec', '-i', '--user', safeUser, 'casaos',
+        'bash', '-c', `cat > "${filePath}"`
+      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+      let stderr = '';
+      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+      proc.on('close', (code: number) => {
+        if (code === 0) {
+          resolve({ success: true, message: 'File saved successfully' });
+        } else {
+          resolve({ success: false, message: stderr.trim() || `Write failed with exit code ${code}` });
+        }
+      });
+
+      proc.on('error', (err: Error) => {
+        reject(err);
+      });
+
+      proc.stdin.write(content);
+      proc.stdin.end();
+    });
+
+    if (!writeResult.success) {
+      return res.json(writeResult);
+    }
+
+    // Verify written file size
+    const verifyCommand = `docker exec --user ${safeUser} casaos stat -c%s "${filePath}" 2>/dev/null || echo "0"`;
+    const verifyResult = await execAsync(verifyCommand, {
+      timeout: 5000, maxBuffer: 1024 * 1024, shell: '/bin/sh'
+    });
+
+    res.json({
+      success: true,
+      message: 'File saved successfully',
+      size: parseInt(verifyResult.stdout.trim()) || 0,
+    });
+
+  } catch (error: any) {
+    console.error('Write file failed:', error);
+    res.json({ success: false, message: error.message || 'Failed to write file' });
+  }
+});
+
+// POST /api/terminal/chmod - Change file permissions
+app.post("/api/admin/terminal/chmod", async (req, res) => {
+  const { filePath, permissions, runAsUser = 'ubuntu' } = req.body;
+
+  if (!filePath) {
+    return res.json({ success: false, message: 'No file path specified' });
+  }
+  if (!permissions || !/^[0-7]{3,4}$/.test(permissions)) {
+    return res.json({ success: false, message: 'Invalid permissions format. Use 3 or 4 octal digits (e.g., 644, 0755).' });
+  }
+
+  const safeUser = runAsUser.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 32) || 'ubuntu';
+
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+
+    // Test Docker and CasaOS container access
+    try {
+      const dockerTest = await execAsync('docker ps --filter "name=casaos" --format "{{.Names}}"', {
+        timeout: 5000, maxBuffer: 1024 * 1024
+      });
+      if (dockerTest.stdout.trim() !== 'casaos') {
+        return res.json({ success: false, message: 'CasaOS container not found' });
+      }
+    } catch (error: any) {
+      return res.json({ success: false, message: 'Cannot access Docker or CasaOS container' });
+    }
+
+    const chmodScript = `
+      chmod ${permissions} "${filePath}" 2>&1 && \
+      PERMS_OCTAL=\$(stat -c%a "${filePath}" 2>/dev/null || echo "000") && \
+      PERMS_SYMBOLIC=\$(stat -c%A "${filePath}" 2>/dev/null || echo "----------") && \
+      echo "SUCCESS:\$PERMS_OCTAL:\$PERMS_SYMBOLIC"
+    `;
+
+    const dockerCommand = `docker exec --user ${safeUser} casaos bash -c '${chmodScript.replace(/'/g, "'\\''")}'`;
+
+    const result = await execAsync(dockerCommand, {
+      timeout: 10000,
+      maxBuffer: 1024 * 1024,
+      shell: '/bin/sh'
+    });
+
+    const output = result.stdout.trim();
+    if (output.startsWith('SUCCESS:')) {
+      const parts = output.split(':');
+      res.json({
+        success: true,
+        message: 'Permissions updated',
+        permissions: {
+          octal: parts[1] || permissions,
+          symbolic: parts[2] || '',
+        },
+      });
+    } else {
+      res.json({ success: false, message: output || 'Failed to change permissions. You may need root access.' });
+    }
+
+  } catch (error: any) {
+    console.error('Chmod failed:', error);
+    res.json({ success: false, message: error.message || 'Failed to change permissions' });
+  }
+});
+
 // GET /api/services/:service/logs - Get logs for a specific service
 app.get("/api/admin/services/:service/logs", async (req, res) => {
   const { service } = req.params;

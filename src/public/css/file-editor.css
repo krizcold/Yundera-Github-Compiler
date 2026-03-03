@@ -1,0 +1,315 @@
+/* File Editor Modal */
+.file-editor-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10003;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+}
+
+.file-editor-modal {
+    width: 90vw;
+    height: 90vh;
+    max-width: 1200px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+}
+
+/* Header */
+.file-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-color);
+    min-height: 44px;
+    gap: 12px;
+}
+
+.file-editor-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+}
+
+.file-editor-filename {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-editor-filename.dirty::after {
+    content: ' *';
+    color: var(--warning-color, #f59e0b);
+}
+
+.file-editor-lang-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent-color, #3b82f6);
+    color: #fff;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.file-editor-path {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 400px;
+}
+
+.file-editor-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 20px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.file-editor-close-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Toolbar */
+.file-editor-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 12px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.file-editor-permissions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+}
+
+.file-editor-permissions label {
+    font-weight: 500;
+    color: var(--text-tertiary);
+}
+
+.file-editor-perm-owner-group {
+    color: var(--text-secondary);
+}
+
+.file-editor-perm-symbolic {
+    font-family: monospace;
+    color: var(--text-secondary);
+}
+
+.file-editor-perm-octal-input {
+    width: 50px;
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: monospace;
+    font-size: 12px;
+    text-align: center;
+}
+
+.file-editor-perm-apply-btn {
+    padding: 2px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.file-editor-perm-apply-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.file-editor-cursor-pos {
+    color: var(--text-tertiary);
+    font-family: monospace;
+}
+
+.file-editor-save-status {
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+.file-editor-save-status.saved {
+    color: var(--success-color, #22c55e);
+}
+
+.file-editor-save-status.saving {
+    color: var(--warning-color, #f59e0b);
+}
+
+.file-editor-save-status.error {
+    color: var(--danger-color, #ef4444);
+}
+
+/* Editor Body */
+.file-editor-body {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+.file-editor-body .cm-editor {
+    height: 100%;
+}
+
+.file-editor-body .cm-scroller {
+    overflow: auto;
+}
+
+/* Footer */
+.file-editor-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-color);
+    gap: 12px;
+}
+
+.file-editor-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.file-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.file-editor-btn {
+    padding: 6px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+}
+
+.file-editor-btn.close {
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+}
+
+.file-editor-btn.close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.file-editor-btn.save {
+    background: var(--accent-color, #3b82f6);
+    color: #fff;
+    border-color: var(--accent-color, #3b82f6);
+}
+
+.file-editor-btn.save:hover {
+    opacity: 0.9;
+}
+
+.file-editor-btn.save:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Loading State */
+.file-editor-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    color: var(--text-secondary);
+}
+
+.file-editor-loading .spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-color, #3b82f6);
+    border-radius: 50%;
+    animation: fe-spin 0.8s linear infinite;
+}
+
+@keyframes fe-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Error State */
+.file-editor-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    padding: 32px;
+    text-align: center;
+}
+
+.file-editor-error-icon {
+    font-size: 48px;
+    opacity: 0.6;
+}
+
+.file-editor-error-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.file-editor-error-message {
+    font-size: 13px;
+    color: var(--text-secondary);
+    max-width: 400px;
+    line-height: 1.5;
+}
+
+.file-editor-error-hint {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-style: italic;
+}

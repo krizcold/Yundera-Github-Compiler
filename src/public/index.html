@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="/public/css/panels.css">
     <link rel="stylesheet" href="/public/css/dialogs.css">
     <link rel="stylesheet" href="/public/css/yml-builder.css">
+    <link rel="stylesheet" href="/public/css/file-editor.css">
     <link rel="stylesheet" href="/public/css/themes.css">
     <!-- CDN dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
@@ -237,6 +238,8 @@
     <script src="/public/js/main.js"></script>
     <!-- Smart YML Builder -->
     <script src="/public/js/yml-builder.js"></script>
+    <!-- File Editor -->
+    <script src="/public/js/file-editor.js"></script>
     <!-- CodeMirror 6 ESM loader (async, with fallback) -->
     <!-- CodeMirror 6 ESM loader (async, with fallback) -->
     <script type="module">
@@ -249,6 +252,12 @@
                 { linter, lintGutter },
                 { oneDark },
                 cmdMod,
+                langJsonMod,
+                langJsMod,
+                langHtmlMod,
+                langCssMod,
+                langXmlMod,
+                langMdMod,
             ] = await Promise.all([
                 import('https://esm.sh/codemirror'),
                 import('https://esm.sh/@codemirror/lang-yaml'),
@@ -257,10 +266,22 @@
                 import('https://esm.sh/@codemirror/lint'),
                 import('https://esm.sh/@codemirror/theme-one-dark'),
                 import('https://esm.sh/@codemirror/commands'),
+                import('https://esm.sh/@codemirror/lang-json'),
+                import('https://esm.sh/@codemirror/lang-javascript'),
+                import('https://esm.sh/@codemirror/lang-html'),
+                import('https://esm.sh/@codemirror/lang-css'),
+                import('https://esm.sh/@codemirror/lang-xml'),
+                import('https://esm.sh/@codemirror/lang-markdown'),
             ]);
             window.CM6 = {
                 basicSetup,
                 yaml,
+                json: langJsonMod.json,
+                javascript: langJsMod.javascript,
+                html: langHtmlMod.html,
+                css: langCssMod.css,
+                xml: langXmlMod.xml,
+                markdown: langMdMod.markdown,
                 EditorView: viewMod.EditorView,
                 EditorState: stateMod.EditorState,
                 ViewPlugin: viewMod.ViewPlugin,
