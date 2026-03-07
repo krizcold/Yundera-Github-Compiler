@@ -21,7 +21,14 @@
         '$TZ':          { desc: 'System timezone.', defaultVal: 'UTC', category: 'system' },
         '$USER':        { desc: 'Current system user.', defaultVal: 'root', category: 'system' },
         // Domain
-        '$APP_DOMAIN':  { desc: 'App-specific nsl.sh subdomain (e.g. username.nsl.sh). Used in Caddy labels: caddy=appname-${APP_DOMAIN}', defaultVal: '<app-domain>', category: 'domain' },
+        '$APP_DOMAIN':  { desc: 'App-specific nsl.sh subdomain (e.g. username.nsl.sh). Used in Caddy labels: caddy_0: appname-${APP_DOMAIN}', defaultVal: '<app-domain>', category: 'domain' },
+        '$PUBLIC_IP_DASH':    { desc: 'Public IP with dots/colons replaced by dashes (e.g. 192-168-1-1). Used in Caddy labels for nip.io and sslip.io routing.', defaultVal: '<ip-dash>', category: 'domain' },
+        '$APP_PUBLIC_IP':     { desc: 'Public IP address (prefers IPv6). Alias for $PCS_PUBLIC_IP.', defaultVal: '<public-ip>', category: 'domain' },
+        '$APP_PUBLIC_IPV4':   { desc: 'Public IPv4 address.', defaultVal: '<public-ipv4>', category: 'domain' },
+        '$APP_PUBLIC_IPV6':   { desc: 'Public IPv6 address.', defaultVal: '<public-ipv6>', category: 'domain' },
+        '$APP_EMAIL':         { desc: 'Admin email address (admin@DOMAIN).', defaultVal: '<email>', category: 'domain' },
+        '$APP_DATA_ROOT':     { desc: 'Data root path. Alias for $DATA_ROOT.', defaultVal: '/DATA', category: 'system' },
+        '$APP_NET':           { desc: 'App network name. Defaults to pcs.', defaultVal: 'pcs', category: 'domain' },
         '$REF_DOMAIN':  { desc: 'Full reference domain with app prefix and port. Computed from settings + webui_port.', defaultVal: '<ref-domain>', category: 'domain' },
         '$REF_NET':     { desc: 'Reference network name for mesh routing.', defaultVal: 'pcs', category: 'domain' },
         '$REF_SCHEME':  { desc: 'URL scheme (http or https).', defaultVal: 'http', category: 'domain' },
@@ -190,7 +197,7 @@
     function checkResourceLimits(parsed, ok) {
         const c = { id: 'resources', section: 'recommended',
             label: 'Resource limits',
-            help: 'Every service should have <code>cpu_shares</code> and <code>deploy.resources.limits.memory</code>. CPU share tiers: 80 (high priority), 70 (standard app), 50 (supporting DB), 10 (caches/background), 5 (ML/low priority). Memory examples: 256M (light), 512M (standard), 1024M (heavy), 2048M+ (ML/Java).' };
+            help: 'Every service should have <code>cpu_shares</code> and <code>deploy.resources.limits.memory</code>. CPU share tiers: 100 (system critical), 90 (admin critical), 80 (high priority), 70 (standard app), 50 (supporting DB), 30 (background), 20 (heavy background), 10 (caches/background), 5 (ML/low priority). Memory examples: 256M (light), 512M (standard), 1024M (heavy), 2048M+ (ML/Java).' };
         if (!ok || !parsed.services) { c.status = 'skip'; c.detail = 'No services'; return c; }
         const noCpu = [], noMem = [];
         for (const [name, svc] of Object.entries(parsed.services)) {
@@ -316,24 +323,34 @@
     function checkCaddyLabels(parsed, ok) {
         const c = { id: 'caddy', section: 'recommended',
             label: 'Caddy reverse proxy',
-            help: 'For HTTPS access via nsl.sh, the main service needs Caddy labels: <code>caddy=appname-${APP_DOMAIN}</code> and <code>caddy.reverse_proxy={{upstreams PORT}}</code>. Use <code>expose:</code> (not <code>ports:</code>) for internal ports. Apps using the external URL pattern (<code>scheme</code>+<code>hostname</code>+<code>port_map</code> in x-casaos) are exempt — they redirect to a doc page or external admin panel instead.' };
+            help: 'For HTTPS access, the main service needs three Caddy label sets: <code>caddy_0</code> (gateway via APP_DOMAIN), <code>caddy_1</code> (nip.io), <code>caddy_2</code> (sslip.io). <code>caddy_0</code> and <code>caddy_1</code> need <code>import: gateway_tls</code>. Use <code>expose:</code> (not <code>ports:</code>). Apps using the external URL pattern (<code>scheme</code>+<code>hostname</code>+<code>port_map</code> in x-casaos) are exempt.' };
         if (!ok || !parsed.services) { c.status = 'skip'; c.detail = 'No services'; return c; }
         const xc = parsed['x-casaos'];
         // Apps using external URL pattern (scheme+hostname+port_map, e.g. Samba doc page, Tailscale admin) skip Caddy
         if (xc && xc.hostname && !xc.webui_port) { c.status = 'pass'; c.detail = 'External URL pattern'; return c; }
-        // Check if any service has caddy labels
-        let hasCaddy = false;
+        // Check if any service has caddy labels (new or old format)
+        let hasNewCaddy = false;
+        let hasOldCaddy = false;
         let usesPortsInstead = false;
         for (const [name, svc] of Object.entries(parsed.services)) {
             if (!svc || typeof svc !== 'object') continue;
-            const labels = svc.labels || [];
-            const labelArr = Array.isArray(labels) ? labels : Object.entries(labels).map(([k, v]) => k + '=' + v);
-            for (const l of labelArr) {
-                if (typeof l === 'string' && l.startsWith('caddy=')) hasCaddy = true;
+            const labels = svc.labels;
+            if (labels && !Array.isArray(labels) && typeof labels === 'object') {
+                if (labels.caddy_0 !== undefined) hasNewCaddy = true;
+                if (labels.caddy !== undefined) hasOldCaddy = true;
+            }
+            if (Array.isArray(labels)) {
+                for (const l of labels) {
+                    if (typeof l === 'string') {
+                        if (l.startsWith('caddy_0=')) hasNewCaddy = true;
+                        if (l.startsWith('caddy=')) hasOldCaddy = true;
+                    }
+                }
             }
             if (svc.ports && Array.isArray(svc.ports) && svc.ports.length > 0) usesPortsInstead = true;
         }
-        if (hasCaddy) { c.status = 'pass'; c.detail = ''; }
+        if (hasNewCaddy) { c.status = 'pass'; c.detail = ''; }
+        else if (hasOldCaddy) { c.status = 'warn'; c.detail = 'Uses old Caddy label format. Use the new 3-tier format with <code>caddy_0</code>/<code>caddy_1</code>/<code>caddy_2</code>'; }
         else if (usesPortsInstead) { c.status = 'warn'; c.detail = 'Uses <code>ports:</code> — prefer <code>expose:</code> + Caddy labels for HTTPS routing'; }
         else { c.status = 'warn'; c.detail = 'No Caddy labels found on any service'; }
         return c;
@@ -550,11 +567,16 @@
                 if (xc.hostname && !xc.webui_port) return 'External URL pattern (no Caddy needed)';
                 for (const svc of Object.values(services)) {
                     if (!svc || typeof svc !== 'object') continue;
-                    const labels = svc.labels || [];
-                    const labelArr = Array.isArray(labels) ? labels : Object.entries(labels).map(([k, v]) => k + '=' + v);
-                    for (const l of labelArr) {
-                        if (typeof l === 'string' && l.startsWith('caddy=')) return 'Caddy labels already defined';
+                    const labels = svc.labels;
+                    if (labels && !Array.isArray(labels) && typeof labels === 'object') {
+                        if (labels.caddy_0 !== undefined) return 'Caddy labels already defined (new format)';
                     }
+                    if (Array.isArray(labels)) {
+                        for (const l of labels) {
+                            if (typeof l === 'string' && l.startsWith('caddy_0=')) return 'Caddy labels already defined (new format)';
+                        }
+                    }
+                    // Old format detected — allow insert so (+) button can replace it
                 }
                 return false;
             }
@@ -751,25 +773,40 @@
         try { parsed = jsyaml.load(text); } catch (e) { return; }
 
         const result = buildInsertion(checkId, parsed, text);
-        if (!result || !result.changes || result.changes.length === 0) return;
+        if (!result) return;
 
-        if (cmView) {
-            cmView.dispatch({ changes: result.changes });
-        } else {
-            // Fallback textarea insertion
-            const ta = document.querySelector('.yml-fallback-editor');
-            if (ta) {
-                let newText = text;
-                // Apply changes in reverse position order to preserve earlier positions
-                const sorted = result.changes.slice().sort((a, b) => b.from - a.from);
-                for (const change of sorted) {
-                    const before = newText.substring(0, change.from);
-                    const after = newText.substring(change.to !== undefined ? change.to : change.from);
-                    newText = before + change.insert + after;
+        // Handle fullText replacement (used when old labels are removed and replaced)
+        if (result.fullText) {
+            if (cmView) {
+                cmView.dispatch({ changes: { from: 0, to: text.length, insert: result.fullText } });
+            } else {
+                const ta = document.querySelector('.yml-fallback-editor');
+                if (ta) {
+                    ta.value = result.fullText;
+                    ta.dispatchEvent(new Event('input'));
                 }
-                ta.value = newText;
-                ta.dispatchEvent(new Event('input'));
             }
+        } else if (result.changes && result.changes.length > 0) {
+            if (cmView) {
+                cmView.dispatch({ changes: result.changes });
+            } else {
+                // Fallback textarea insertion
+                const ta = document.querySelector('.yml-fallback-editor');
+                if (ta) {
+                    let newText = text;
+                    // Apply changes in reverse position order to preserve earlier positions
+                    const sorted = result.changes.slice().sort((a, b) => b.from - a.from);
+                    for (const change of sorted) {
+                        const before = newText.substring(0, change.from);
+                        const after = newText.substring(change.to !== undefined ? change.to : change.from);
+                        newText = before + change.insert + after;
+                    }
+                    ta.value = newText;
+                    ta.dispatchEvent(new Event('input'));
+                }
+            }
+        } else {
+            return;
         }
 
         // Visual feedback
@@ -843,7 +880,7 @@
                 const hasNetworksBlock = text.match(/^networks\s*:/m);
                 if (!hasNetworksBlock) {
                     const endPos = text.length;
-                    changes.push({ from: endPos, insert: '\nnetworks:\n  pcs:\n    external: true\n' });
+                    changes.push({ from: endPos, insert: '\nnetworks:\n  pcs:\n    name: pcs\n    external: true\n' });
                 }
                 return { changes };
             }
@@ -867,34 +904,78 @@
                     port = String(xc.webui_port);
                 }
 
+                // New 3-tier Caddy label template (map style)
+                const caddyLabels =
+                    '\n      caddy_0: ' + appName + '-${APP_DOMAIN}' +
+                    '\n      caddy_0.import: gateway_tls' +
+                    '\n      caddy_0.reverse_proxy: "{{upstreams ' + port + '}}"' +
+                    '\n      caddy_1: ' + appName + '-${PUBLIC_IP_DASH}.nip.io' +
+                    '\n      caddy_1.import: gateway_tls' +
+                    '\n      caddy_1.reverse_proxy: "{{upstreams ' + port + '}}"' +
+                    '\n      caddy_2: ' + appName + '-${PUBLIC_IP_DASH}.sslip.io' +
+                    '\n      caddy_2.reverse_proxy: "{{upstreams ' + port + '}}"';
+
+                // Check for old caddy labels that need to be removed
+                const hasOldCaddy = svc.labels && !Array.isArray(svc.labels) && typeof svc.labels === 'object' &&
+                    (svc.labels.caddy !== undefined || Object.keys(svc.labels).some(k => k === 'caddy' || (k.startsWith('caddy.') && !k.startsWith('caddy_'))));
+                const hasOldCaddyArray = Array.isArray(svc.labels) &&
+                    svc.labels.some(l => typeof l === 'string' && (l.startsWith('caddy=') || l.startsWith('caddy.')));
+
                 const labelsInfo = findKeyInService(text, mainService, 'labels');
                 const exposeInfo = findKeyInService(text, mainService, 'expose');
                 const hasLabels = svc.labels && (Array.isArray(svc.labels) ? svc.labels.length > 0 : Object.keys(svc.labels).length > 0);
-                const isArrayLabels = Array.isArray(svc.labels);
 
-                if (hasLabels) {
-                    // Labels exist — add caddy entries into the existing block
-                    if (isArrayLabels) {
-                        const caddyEntries = '\n      - caddy=' + appName + '-${APP_DOMAIN}\n      - caddy.reverse_proxy={{upstreams ' + port + '}}';
-                        changes.push({ from: labelsInfo.endPos, insert: caddyEntries });
-                    } else {
-                        const caddyEntries = '\n      caddy: ' + appName + '-${APP_DOMAIN}\n      caddy.reverse_proxy: "{{upstreams ' + port + '}}"';
-                        changes.push({ from: labelsInfo.endPos, insert: caddyEntries });
+                if (hasLabels && (hasOldCaddy || hasOldCaddyArray)) {
+                    // Old caddy labels exist — remove them and replace with new 3-tier format
+                    // Remove old caddy lines from the text and insert new ones
+                    let modifiedText = text;
+                    const lines = text.split('\n');
+                    const linesToRemove = [];
+                    for (let i = 0; i < lines.length; i++) {
+                        const trimmed = lines[i].trim();
+                        // Match old format: caddy: ..., caddy.xxx: ..., - caddy=..., - caddy.xxx=...
+                        if (trimmed.match(/^-?\s*"?caddy[.=]/) || trimmed.match(/^caddy[.:]\s/) || trimmed === 'caddy:' ||
+                            (trimmed.startsWith('caddy:') && !trimmed.startsWith('caddy_'))) {
+                            // But don't match caddy_0, caddy_1, caddy_2
+                            if (!trimmed.match(/^-?\s*"?caddy_\d/)) {
+                                linesToRemove.push(i);
+                            }
+                        }
                     }
-                    // Still add expose if missing
+                    // Remove lines in reverse order and track position adjustment
+                    if (linesToRemove.length > 0) {
+                        const newLines = lines.filter((_, i) => !linesToRemove.includes(i));
+                        modifiedText = newLines.join('\n');
+                        // Re-find labels position in modified text
+                        const newLabelsInfo = findKeyInService(modifiedText, mainService, 'labels');
+                        const change = { from: newLabelsInfo.endPos, insert: caddyLabels };
+                        // Return with full text replacement since we modified lines
+                        return { fullText: modifiedText.slice(0, newLabelsInfo.endPos) + caddyLabels + modifiedText.slice(newLabelsInfo.endPos) };
+                    }
+                    // Fallback: just append
+                    changes.push({ from: labelsInfo.endPos, insert: caddyLabels });
+                } else if (hasLabels) {
+                    // Labels exist but no old caddy — append new caddy entries
+                    changes.push({ from: labelsInfo.endPos, insert: caddyLabels });
                     if (!hasExpose) {
                         const serviceEnd = findServiceBlockEndPos(text, mainService);
                         changes.push({ from: serviceEnd, insert: '\n    expose:\n      - "' + port + '"' });
                     }
                 } else if (hasExpose) {
                     // No labels, but expose exists — insert labels right after expose block
-                    const labelsSnippet = '\n    labels:\n      caddy: ' + appName + '-${APP_DOMAIN}\n      caddy.reverse_proxy: "{{upstreams ' + port + '}}"';
+                    const labelsSnippet = '\n    labels:' + caddyLabels;
                     changes.push({ from: exposeInfo.endPos, insert: labelsSnippet });
                 } else {
                     // Neither labels nor expose — add both at service end
                     const serviceEnd = findServiceBlockEndPos(text, mainService);
-                    const snippet = '\n    expose:\n      - "' + port + '"\n    labels:\n      caddy: ' + appName + '-${APP_DOMAIN}\n      caddy.reverse_proxy: "{{upstreams ' + port + '}}"';
+                    const snippet = '\n    expose:\n      - "' + port + '"\n    labels:' + caddyLabels;
                     changes.push({ from: serviceEnd, insert: snippet });
+                }
+
+                // Add expose if labels existed but expose didn't (and not already handled)
+                if (hasLabels && !hasExpose && !(hasOldCaddy || hasOldCaddyArray)) {
+                    const serviceEnd = findServiceBlockEndPos(text, mainService);
+                    changes.push({ from: serviceEnd, insert: '\n    expose:\n      - "' + port + '"' });
                 }
 
                 return { changes };

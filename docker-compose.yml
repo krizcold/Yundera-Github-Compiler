@@ -8,8 +8,15 @@ services:
     expose:
       - "80"
     labels:
-      - "caddy=yunderadevkit-${APP_DOMAIN}"
-      - "caddy.reverse_proxy={{upstreams 80}}"
+      caddy_0: yunderadevkit-${APP_DOMAIN}
+      caddy_0.import: gateway_tls
+      caddy_0.reverse_proxy: "{{upstreams 80}}"
+      caddy_1: yunderadevkit-${PUBLIC_IP_DASH}.nip.io
+      caddy_1.import: gateway_tls
+      caddy_1.reverse_proxy: "{{upstreams 80}}"
+      caddy_2: yunderadevkit-${PUBLIC_IP_DASH}.sslip.io
+      caddy_2.reverse_proxy: "{{upstreams 80}}"
+    cpu_shares: 50
     user: "root"
     environment:
       AUTH_HASH: $AUTH_HASH
@@ -69,6 +76,19 @@ services:
       PCS_PUBLIC_IP: $PCS_PUBLIC_IP
       PCS_PUBLIC_IPV6: $PCS_PUBLIC_IPV6
       PCS_EMAIL: $PCS_EMAIL
+
+      # APP environment variables (new standard)
+      APP_DEFAULT_PASSWORD: $APP_DEFAULT_PASSWORD
+      APP_DOMAIN: $APP_DOMAIN
+      APP_DATA_ROOT: $APP_DATA_ROOT
+      APP_PUBLIC_IP: $APP_PUBLIC_IP
+      APP_PUBLIC_IPV4: $APP_PUBLIC_IPV4
+      APP_PUBLIC_IPV6: $APP_PUBLIC_IPV6
+      APP_EMAIL: $APP_EMAIL
+      APP_NET: $APP_NET
+
+      # IP with dashes for Caddy nip.io/sslip.io labels
+      PUBLIC_IP_DASH: $PUBLIC_IP_DASH
 
       # REF variables
       REF_DOMAIN: $REF_DOMAIN
@@ -142,6 +162,7 @@ services:
 # Define the network as external, since it's created by the main NSL stack
 networks:
   pcs:
+    name: pcs
     external: true
 
 x-casaos:

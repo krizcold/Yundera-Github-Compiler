@@ -1862,10 +1862,16 @@ Object.assign(RepoManager.prototype, {
                 this.handleFileItemClick(fileItem, e);
             });
 
-            // Add double-click handler for directories
+            // Add double-click handler for directories and files
             if (file.type === 'directory') {
                 fileItem.addEventListener('dblclick', () => {
                     this.navigateToDirectory(file.name);
+                });
+            } else {
+                fileItem.addEventListener('dblclick', () => {
+                    if (window.FileEditor) {
+                        window.FileEditor.open(file.name, this.terminalSession.currentDir);
+                    }
                 });
             }
 
@@ -1928,6 +1934,10 @@ Object.assign(RepoManager.prototype, {
                 <span>📁</span>
                 <span>Open</span>
             </div>
+            <div class="context-menu-item" data-action="edit">
+                <span>📝</span>
+                <span>Edit</span>
+            </div>
             <div class="context-menu-separator"></div>
             <div class="context-menu-item" data-action="rename">
                 <span>✏️</span>
@@ -1986,11 +1996,20 @@ Object.assign(RepoManager.prototype, {
         // Update menu items based on selection
         const selectedItems = document.querySelectorAll('.file-item.selected');
         const openItem = contextMenu.querySelector('[data-action="open"]');
+        const editItem = contextMenu.querySelector('[data-action="edit"]');
 
+        // Open: only for single directory
         if (selectedItems.length === 1 && selectedItems[0].dataset.fileType === 'directory') {
             openItem.classList.remove('disabled');
         } else {
             openItem.classList.add('disabled');
+        }
+
+        // Edit: only for single file (not directory)
+        if (selectedItems.length === 1 && selectedItems[0].dataset.fileType !== 'directory') {
+            editItem.classList.remove('disabled');
+        } else {
+            editItem.classList.add('disabled');
         }
     },
 
@@ -2008,6 +2027,13 @@ Object.assign(RepoManager.prototype, {
             case 'open':
                 if (selectedItems.length === 1 && selectedItems[0].dataset.fileType === 'directory') {
                     this.navigateToDirectory(selectedItems[0].dataset.fileName);
+                }
+                break;
+            case 'edit':
+                if (selectedItems.length === 1 && selectedItems[0].dataset.fileType !== 'directory') {
+                    if (window.FileEditor) {
+                        window.FileEditor.open(selectedItems[0].dataset.fileName, this.terminalSession.currentDir);
+                    }
                 }
                 break;
             case 'rename':
