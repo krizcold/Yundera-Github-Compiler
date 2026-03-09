@@ -37,7 +37,7 @@ export interface Config extends BaseConfig {
   REF_SEPARATOR: string;
   
   // APP-prefixed environment variables (new standard)
-  PUBLIC_IP_DASH: string;
+  APP_PUBLIC_IP_DASH: string;
   APP_PUBLIC_IP: string;
   APP_PUBLIC_IPV4: string;
   APP_PUBLIC_IPV6: string;

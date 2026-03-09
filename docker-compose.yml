@@ -11,10 +11,10 @@ services:
       caddy_0: yunderadevkit-${APP_DOMAIN}
       caddy_0.import: gateway_tls
       caddy_0.reverse_proxy: "{{upstreams 80}}"
-      caddy_1: yunderadevkit-${PUBLIC_IP_DASH}.nip.io
+      caddy_1: yunderadevkit-${APP_PUBLIC_IP_DASH}.nip.io
       caddy_1.import: gateway_tls
       caddy_1.reverse_proxy: "{{upstreams 80}}"
-      caddy_2: yunderadevkit-${PUBLIC_IP_DASH}.sslip.io
+      caddy_2: yunderadevkit-${APP_PUBLIC_IP_DASH}.sslip.io
       caddy_2.reverse_proxy: "{{upstreams 80}}"
     cpu_shares: 50
     user: "root"
@@ -88,7 +88,7 @@ services:
       APP_NET: $APP_NET
 
       # IP with dashes for Caddy nip.io/sslip.io labels
-      PUBLIC_IP_DASH: $PUBLIC_IP_DASH
+      APP_PUBLIC_IP_DASH: $APP_PUBLIC_IP_DASH
 
       # REF variables
       REF_DOMAIN: $REF_DOMAIN

@@ -442,7 +442,7 @@ function updateCasaOSExtensions(compose: any, pcsEnv: PCSEnvironment): any {
                     .replace(/\$\{?APP_DATA_ROOT\}?/g, env.APP_DATA_ROOT || env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
                     .replace(/\$\{?APP_NET\}?/g, env.APP_NET || env.REF_NET || 'pcs')
                     // IP with dashes for Caddy nip.io/sslip.io labels
-                    .replace(/\$\{?PUBLIC_IP_DASH\}?/g, env.PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
+                    .replace(/\$\{?APP_PUBLIC_IP_DASH\}?/g, env.APP_PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
                     // REF variables
                     .replace(/\$\{?REF_NET\}?/g, env.REF_NET || pcsEnv.REF_NET)
                     .replace(/\$\{?REF_SCHEME\}?/g, pcsEnv.REF_SCHEME)
@@ -606,7 +606,7 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
 
             // IP with dashes for Caddy nip.io/sslip.io labels
             // Fallback: compute from raw IP by replacing dots and colons with dashes
-            .replace(/\$\{?PUBLIC_IP_DASH\}?/g, env.PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
+            .replace(/\$\{?APP_PUBLIC_IP_DASH\}?/g, env.APP_PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
 
             // REF variables
             .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)

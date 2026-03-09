@@ -22,7 +22,7 @@
         '$USER':        { desc: 'Current system user.', defaultVal: 'root', category: 'system' },
         // Domain
         '$APP_DOMAIN':  { desc: 'App-specific nsl.sh subdomain (e.g. username.nsl.sh). Used in Caddy labels: caddy_0: appname-${APP_DOMAIN}', defaultVal: '<app-domain>', category: 'domain' },
-        '$PUBLIC_IP_DASH':    { desc: 'Public IP with dots/colons replaced by dashes (e.g. 192-168-1-1). Used in Caddy labels for nip.io and sslip.io routing.', defaultVal: '<ip-dash>', category: 'domain' },
+        '$APP_PUBLIC_IP_DASH':    { desc: 'Public IP with dots/colons replaced by dashes (e.g. 192-168-1-1). Used in Caddy labels for nip.io and sslip.io routing.', defaultVal: '<ip-dash>', category: 'domain' },
         '$APP_PUBLIC_IP':     { desc: 'Public IP address (prefers IPv6). Alias for $PCS_PUBLIC_IP.', defaultVal: '<public-ip>', category: 'domain' },
         '$APP_PUBLIC_IPV4':   { desc: 'Public IPv4 address.', defaultVal: '<public-ipv4>', category: 'domain' },
         '$APP_PUBLIC_IPV6':   { desc: 'Public IPv6 address.', defaultVal: '<public-ipv6>', category: 'domain' },
@@ -197,7 +197,7 @@
     function checkResourceLimits(parsed, ok) {
         const c = { id: 'resources', section: 'recommended',
             label: 'Resource limits',
-            help: 'Every service should have <code>cpu_shares</code> and <code>deploy.resources.limits.memory</code>. CPU share tiers: 100 (system critical), 90 (admin critical), 80 (high priority), 70 (standard app), 50 (supporting DB), 30 (background), 20 (heavy background), 10 (caches/background), 5 (ML/low priority). Memory examples: 256M (light), 512M (standard), 1024M (heavy), 2048M+ (ML/Java).' };
+            help: 'Every service should have <code>cpu_shares</code> and <code>deploy.resources.limits.memory</code>. CPU share tiers: 100 (system critical), 90 (admin critical), 80 (interactive/web), 70 (interactive+heavy), 50 (standard default), 30 (background), 20 (heavy background/ML), 10 (system background). Memory examples: 256M (light), 512M (standard), 1024M (heavy), 2048M+ (ML/Java).' };
         if (!ok || !parsed.services) { c.status = 'skip'; c.detail = 'No services'; return c; }
         const noCpu = [], noMem = [];
         for (const [name, svc] of Object.entries(parsed.services)) {
@@ -909,10 +909,10 @@
                     '\n      caddy_0: ' + appName + '-${APP_DOMAIN}' +
                     '\n      caddy_0.import: gateway_tls' +
                     '\n      caddy_0.reverse_proxy: "{{upstreams ' + port + '}}"' +
-                    '\n      caddy_1: ' + appName + '-${PUBLIC_IP_DASH}.nip.io' +
+                    '\n      caddy_1: ' + appName + '-${APP_PUBLIC_IP_DASH}.nip.io' +
                     '\n      caddy_1.import: gateway_tls' +
                     '\n      caddy_1.reverse_proxy: "{{upstreams ' + port + '}}"' +
-                    '\n      caddy_2: ' + appName + '-${PUBLIC_IP_DASH}.sslip.io' +
+                    '\n      caddy_2: ' + appName + '-${APP_PUBLIC_IP_DASH}.sslip.io' +
                     '\n      caddy_2.reverse_proxy: "{{upstreams ' + port + '}}"';
 
                 // Check for old caddy labels that need to be removed
