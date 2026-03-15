@@ -8,6 +8,7 @@ import { loadConfig, isAppLoggingEnabled } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings, StoreConfig } from "./storage";
 import { fetchStoreApps, checkImageVersions, clearStoreCache, parseGitHubUrl, DockerImageRef } from "./store-tracker";
+import { getEnrichedImageList, deleteDockerImage, pruneDockerImages } from "./docker-images";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp, findInstalledApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
 import { validateAppTokenMiddleware, AppAuthenticatedRequest } from "./auth-middleware";
@@ -1489,6 +1490,43 @@ app.post("/api/admin/store-tracker/check-versions", async (req, res) => {
 
     const results = await checkImageVersions(images, !!refresh);
     res.json({ success: true, results });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// =============================================
+// Docker Image Manager endpoints
+// =============================================
+
+// GET /api/admin/docker-images - List all images with status, grouping, and disk usage
+app.get("/api/admin/docker-images", async (req, res) => {
+  try {
+    const repos = loadRepositories();
+    const { groups, diskUsage } = await getEnrichedImageList(repos);
+    res.json({ success: true, groups, diskUsage });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE /api/admin/docker-images/:id - Delete a single image
+app.delete("/api/admin/docker-images/:id", async (req, res) => {
+  try {
+    const force = req.query.force === 'true';
+    const result = await deleteDockerImage(req.params.id, force);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/admin/docker-images/prune - Prune dangling or all unused images
+app.post("/api/admin/docker-images/prune", async (req, res) => {
+  try {
+    const all = req.query.all === 'true';
+    const result = await pruneDockerImages(all);
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -428,21 +428,22 @@ function updateCasaOSExtensions(compose: any, pcsEnv: PCSEnvironment): any {
                     .replace(/\$\{?domain\}?/g, env.domain || env.PCS_DOMAIN || '')
                     .replace(/\$\{?APP_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
                     // PCS environment variables
+                    // IMPORTANT: Longer/more specific patterns MUST come before shorter ones
                     .replace(/\$\{?PCS_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
                     .replace(/\$\{?PCS_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
                     .replace(/\$\{?PCS_DATA_ROOT\}?/g, env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
-                    .replace(/\$\{?PCS_PUBLIC_IP\}?/g, env.PCS_PUBLIC_IP || env.public_ip || '')
                     .replace(/\$\{?PCS_PUBLIC_IPV6\}?/g, env.PCS_PUBLIC_IPV6 || '')
+                    .replace(/\$\{?PCS_PUBLIC_IP\}?/g, env.PCS_PUBLIC_IP || env.public_ip || '')
                     .replace(/\$\{?PCS_EMAIL\}?/g, env.PCS_EMAIL || '')
                     // APP-prefixed environment variables (new standard)
-                    .replace(/\$\{?APP_PUBLIC_IP\}?/g, env.APP_PUBLIC_IP || env.PCS_PUBLIC_IP || env.public_ip || '')
+                    // IMPORTANT: Longer/more specific patterns MUST come before shorter ones
+                    .replace(/\$\{?APP_PUBLIC_IP_DASH\}?/g, env.APP_PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
                     .replace(/\$\{?APP_PUBLIC_IPV4\}?/g, env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '')
                     .replace(/\$\{?APP_PUBLIC_IPV6\}?/g, env.APP_PUBLIC_IPV6 || env.PCS_PUBLIC_IPV6 || '')
+                    .replace(/\$\{?APP_PUBLIC_IP\}?/g, env.APP_PUBLIC_IP || env.PCS_PUBLIC_IP || env.public_ip || '')
                     .replace(/\$\{?APP_EMAIL\}?/g, env.APP_EMAIL || env.PCS_EMAIL || '')
                     .replace(/\$\{?APP_DATA_ROOT\}?/g, env.APP_DATA_ROOT || env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
                     .replace(/\$\{?APP_NET\}?/g, env.APP_NET || env.REF_NET || 'pcs')
-                    // IP with dashes for Caddy nip.io/sslip.io labels
-                    .replace(/\$\{?APP_PUBLIC_IP_DASH\}?/g, env.APP_PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
                     // REF variables
                     .replace(/\$\{?REF_NET\}?/g, env.REF_NET || pcsEnv.REF_NET)
                     .replace(/\$\{?REF_SCHEME\}?/g, pcsEnv.REF_SCHEME)
@@ -589,24 +590,26 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
             .replace(/\$\{?APP_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
 
             // PCS environment variables (MUST be included)
+            // IMPORTANT: Longer/more specific patterns MUST come before shorter ones
+            // to prevent e.g. $PCS_PUBLIC_IP matching inside $PCS_PUBLIC_IPV6
             .replace(/\$\{?PCS_DEFAULT_PASSWORD\}?/g, env.PCS_DEFAULT_PASSWORD || env.default_pwd || 'casaos')
             .replace(/\$\{?PCS_DOMAIN\}?/g, env.PCS_DOMAIN || env.domain || '')
             .replace(/\$\{?PCS_DATA_ROOT\}?/g, env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
-            .replace(/\$\{?PCS_PUBLIC_IP\}?/g, env.PCS_PUBLIC_IP || env.public_ip || '')
             .replace(/\$\{?PCS_PUBLIC_IPV6\}?/g, env.PCS_PUBLIC_IPV6 || '')
+            .replace(/\$\{?PCS_PUBLIC_IP\}?/g, env.PCS_PUBLIC_IP || env.public_ip || '')
             .replace(/\$\{?PCS_EMAIL\}?/g, env.PCS_EMAIL || '')
 
             // APP-prefixed environment variables (new standard, matches ensure-casaos-apps-up-to-date.sh)
-            .replace(/\$\{?APP_PUBLIC_IP\}?/g, env.APP_PUBLIC_IP || env.PCS_PUBLIC_IP || env.public_ip || '')
+            // IMPORTANT: Longer/more specific patterns MUST come before shorter ones
+            // to prevent e.g. $APP_PUBLIC_IP matching inside $APP_PUBLIC_IP_DASH
+            // IP with dashes for Caddy nip.io/sslip.io labels (MUST be before APP_PUBLIC_IP)
+            .replace(/\$\{?APP_PUBLIC_IP_DASH\}?/g, env.APP_PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
             .replace(/\$\{?APP_PUBLIC_IPV4\}?/g, env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '')
             .replace(/\$\{?APP_PUBLIC_IPV6\}?/g, env.APP_PUBLIC_IPV6 || env.PCS_PUBLIC_IPV6 || '')
+            .replace(/\$\{?APP_PUBLIC_IP\}?/g, env.APP_PUBLIC_IP || env.PCS_PUBLIC_IP || env.public_ip || '')
             .replace(/\$\{?APP_EMAIL\}?/g, env.APP_EMAIL || env.PCS_EMAIL || '')
             .replace(/\$\{?APP_DATA_ROOT\}?/g, env.APP_DATA_ROOT || env.PCS_DATA_ROOT || env.DATA_ROOT || '/DATA')
             .replace(/\$\{?APP_NET\}?/g, env.APP_NET || env.REF_NET || 'pcs')
-
-            // IP with dashes for Caddy nip.io/sslip.io labels
-            // Fallback: compute from raw IP by replacing dots and colons with dashes
-            .replace(/\$\{?APP_PUBLIC_IP_DASH\}?/g, env.APP_PUBLIC_IP_DASH || (env.APP_PUBLIC_IPV4 || env.PCS_PUBLIC_IP || env.public_ip || '').replace(/[.:]/g, '-'))
 
             // REF variables
             .replace(/\$\{?REF_DOMAIN\}?/g, domainValue)
@@ -738,12 +741,20 @@ export function preprocessAppstoreCompose(composeObject: any, settings: GlobalSe
                 });
             }
 
-            // Process template substitutions in other string fields
+            // Process template substitutions in other string/array fields
             if (typeof service.command === 'string') {
                 service.command = replaceTemplateVars(service.command);
+            } else if (Array.isArray(service.command)) {
+                service.command = service.command.map((arg: any) =>
+                    typeof arg === 'string' ? replaceTemplateVars(arg) : arg
+                );
             }
             if (typeof service.entrypoint === 'string') {
                 service.entrypoint = replaceTemplateVars(service.entrypoint);
+            } else if (Array.isArray(service.entrypoint)) {
+                service.entrypoint = service.entrypoint.map((arg: any) =>
+                    typeof arg === 'string' ? replaceTemplateVars(arg) : arg
+                );
             }
             if (typeof service.working_dir === 'string') {
                 service.working_dir = replaceTemplateVars(service.working_dir);

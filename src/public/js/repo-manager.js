@@ -178,6 +178,11 @@ class RepoManager {
             storeTrackerBtn.addEventListener('click', () => this.openStoreTracker());
         }
 
+        const dockerImagesBtn = document.getElementById('docker-images-btn');
+        if (dockerImagesBtn) {
+            dockerImagesBtn.addEventListener('click', () => this.openDockerImages());
+        }
+
         console.log('✅ Events bound successfully');
 
         document.querySelectorAll('.modal').forEach(modal => {
