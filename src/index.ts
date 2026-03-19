@@ -7,7 +7,7 @@ import axios from "axios"; // Import axios for the backend
 import { loadConfig, isAppLoggingEnabled } from "./config";
 import { cloneOrUpdateRepo, checkForUpdates, GitUpdateInfo } from "./GitHandler";
 import { loadRepositories, saveRepositories, loadSettings, saveSettings, addRepository, updateRepository, removeRepository, getRepository, Repository, GlobalSettings, StoreConfig } from "./storage";
-import { fetchStoreApps, checkImageVersions, clearStoreCache, parseGitHubUrl, DockerImageRef } from "./store-tracker";
+import { fetchStoreApps, checkImageVersions, clearStoreCache, parseGitHubUrl, parseImageRef, DockerImageRef, fetchImageEnvData, bumpComposeTags } from "./store-tracker";
 import { getEnrichedImageList, deleteDockerImage, pruneDockerImages } from "./docker-images";
 import { verifyCasaOSInstallation, isAppInstalledInCasaOS, getCasaOSInstalledApps, uninstallCasaOSApp, toggleCasaOSApp, findInstalledApp } from "./casaos-status";
 import { buildQueue } from "./build-queue";
@@ -1489,6 +1489,21 @@ app.post("/api/admin/store-tracker/check-versions", async (req, res) => {
     }
 
     const results = await checkImageVersions(images, !!refresh);
+    res.json({ success: true, results });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/admin/store-tracker/image-env - Detect environment variables from Docker images
+app.post("/api/admin/store-tracker/image-env", async (req, res) => {
+  try {
+    const { images } = req.body as { images: { registry: string; repository: string; tag: string; service: string }[] };
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ success: false, message: "images array is required" });
+    }
+
+    const results = await fetchImageEnvData(images);
     res.json({ success: true, results });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

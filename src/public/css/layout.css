@@ -7,6 +7,18 @@
     margin-bottom: 20px;
 }
 
+.header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .header h1 {
     color: var(--gray-800);
     margin-bottom: 10px;

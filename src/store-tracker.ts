@@ -544,6 +544,348 @@ export async function checkImageVersion(imageRef: DockerImageRef): Promise<Docke
   return result;
 }
 
+// --- Image ENV detection via Registry V2 API ---
+
+export interface ImageEnvVar {
+  name: string;
+  defaultValue: string;
+  source: 'image-config' | 'readme' | 'source-compose';
+  classification: 'required' | 'optional' | 'internal';
+}
+
+export interface ImageEnvResult {
+  service: string;
+  registry: string;
+  repository: string;
+  tag: string;
+  envVars: ImageEnvVar[];
+  sources: { imageConfig: boolean; readme: boolean; sourceCompose: boolean };
+  error?: string;
+}
+
+// Well-known internal env vars that are set by base images, not user-configurable
+const INTERNAL_ENV_NAMES = new Set([
+  'PATH', 'HOME', 'HOSTNAME', 'TERM', 'LANG', 'LC_ALL', 'LC_CTYPE',
+  'DEBIAN_FRONTEND', 'GPG_KEY', 'GPG_KEYS',
+  'PYTHON_VERSION', 'PYTHON_PIP_VERSION', 'PYTHON_SETUPTOOLS_VERSION', 'PYTHON_GET_PIP_URL', 'PYTHON_GET_PIP_SHA256',
+  'NODE_VERSION', 'YARN_VERSION', 'NPM_CONFIG_LOGLEVEL',
+  'GOLANG_VERSION', 'GOPATH', 'GOROOT',
+  'JAVA_HOME', 'JAVA_VERSION', 'JAVA_DEBIAN_VERSION',
+  'RUBY_VERSION', 'RUBY_MAJOR', 'RUBY_DOWNLOAD_SHA256', 'GEM_HOME', 'BUNDLE_PATH', 'BUNDLE_SILENCE_ROOT_WARNING',
+  'PHP_VERSION', 'PHP_INI_DIR', 'PHP_CFLAGS', 'PHP_CPPFLAGS', 'PHP_LDFLAGS', 'PHP_SHA256', 'PHP_URL',
+  'PHPIZE_DEPS', 'PHP_ASC_URL', 'PHP_ASC_SHA256',
+  'RUST_VERSION', 'RUSTUP_HOME', 'CARGO_HOME',
+  'DOTNET_VERSION', 'ASPNETCORE_URLS', 'DOTNET_RUNNING_IN_CONTAINER',
+  'NGINX_VERSION', 'NJS_VERSION', 'PKG_RELEASE',
+  'REDIS_VERSION', 'REDIS_DOWNLOAD_URL', 'REDIS_DOWNLOAD_SHA',
+  'GOSU_VERSION', 'TINI_VERSION',
+  'DOCKER_CHANNEL', 'DOCKER_VERSION', 'DIND_COMMIT',
+  'SHLVL', 'OLDPWD', 'PWD', 'LESSOPEN', 'LESSCLOSE', '_',
+]);
+
+async function fetchAuthToken(registry: string, repository: string): Promise<string | null> {
+  try {
+    if (registry === 'docker.io') {
+      const url = `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull`;
+      const resp = await axios.get(url, { timeout: 10000 });
+      return resp.data.token || resp.data.access_token || null;
+    } else if (registry === 'ghcr.io') {
+      const url = `https://ghcr.io/token?scope=repository:${repository}:pull`;
+      const resp = await axios.get(url, { timeout: 10000 });
+      return resp.data.token || null;
+    }
+    return null;
+  } catch (err: any) {
+    console.warn(`⚠️ Auth token fetch failed for ${registry}/${repository}: ${err.message}`);
+    return null;
+  }
+}
+
+function getRegistryBase(registry: string): string {
+  if (registry === 'docker.io') return 'https://registry-1.docker.io';
+  if (registry === 'ghcr.io') return 'https://ghcr.io';
+  return `https://${registry}`;
+}
+
+async function fetchImageConfig(registry: string, repository: string, tag: string): Promise<any | null> {
+  try {
+    const token = await fetchAuthToken(registry, repository);
+    const base = getRegistryBase(registry);
+    const headers: Record<string, string> = {
+      'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    // Fetch manifest
+    const manifestUrl = `${base}/v2/${repository}/manifests/${tag}`;
+    const manifestResp = await axios.get(manifestUrl, { headers, timeout: 15000 });
+    let manifest = manifestResp.data;
+
+    // Handle manifest list (multi-arch) — pick amd64/linux
+    const mediaType = manifestResp.headers['content-type'] || manifest.mediaType || '';
+    if (mediaType.includes('manifest.list') || mediaType.includes('image.index') || manifest.manifests) {
+      const amd64 = (manifest.manifests || []).find((m: any) =>
+        m.platform && m.platform.architecture === 'amd64' && m.platform.os === 'linux'
+      );
+      if (!amd64) return null;
+
+      // Fetch the platform-specific manifest
+      const platHeaders = { ...headers, 'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' };
+      const platResp = await axios.get(`${base}/v2/${repository}/manifests/${amd64.digest}`, { headers: platHeaders, timeout: 15000 });
+      manifest = platResp.data;
+    }
+
+    // Get config digest from manifest
+    const configDigest = manifest.config?.digest;
+    if (!configDigest) return null;
+
+    // Fetch config blob
+    const configHeaders: Record<string, string> = {};
+    if (token) configHeaders['Authorization'] = `Bearer ${token}`;
+    const configResp = await axios.get(`${base}/v2/${repository}/blobs/${configDigest}`, { headers: configHeaders, timeout: 15000 });
+    return configResp.data;
+  } catch (err: any) {
+    console.warn(`⚠️ Image config fetch failed for ${registry}/${repository}:${tag}: ${err.message}`);
+    return null;
+  }
+}
+
+function parseImageEnvVars(config: any): ImageEnvVar[] {
+  if (!config) return [];
+  const envArray: string[] = config.config?.Env || config.container_config?.Env || [];
+  const results: ImageEnvVar[] = [];
+
+  for (const entry of envArray) {
+    const eqIdx = entry.indexOf('=');
+    if (eqIdx < 0) continue;
+    const name = entry.substring(0, eqIdx);
+    const value = entry.substring(eqIdx + 1);
+
+    let classification: 'required' | 'optional' | 'internal' = 'optional';
+    if (INTERNAL_ENV_NAMES.has(name)) {
+      classification = 'internal';
+    } else if (!value || value === '' || /^(changeme|CHANGE_ME|your_|<.*>|\*+|xxx)$/i.test(value)) {
+      classification = 'required';
+    }
+
+    results.push({ name, defaultValue: value, source: 'image-config', classification });
+  }
+
+  return results;
+}
+
+function getSourceRepoUrl(config: any, registry: string, repository: string): string | null {
+  // Check OCI labels for source repo
+  const labels = config?.config?.Labels || {};
+  const sourceUrl = labels['org.opencontainers.image.source']
+    || labels['org.label-schema.vcs-url']
+    || labels['maintainer.url'];
+  if (sourceUrl && sourceUrl.includes('github.com')) return sourceUrl;
+
+  // For GHCR, derive from image name
+  if (registry === 'ghcr.io') {
+    const parts = repository.split('/');
+    if (parts.length >= 2) {
+      return `https://github.com/${parts[0]}/${parts[1]}`;
+    }
+  }
+
+  return null;
+}
+
+async function fetchSourceRepoCompose(config: any, registry: string, repository: string): Promise<ImageEnvVar[]> {
+  const repoUrl = getSourceRepoUrl(config, registry, repository);
+  if (!repoUrl) return [];
+
+  const parsed = parseGitHubUrl(repoUrl);
+  if (!parsed) return [];
+
+  const { owner, repo } = parsed;
+  const filesToTry = [
+    'docker-compose.yml', 'docker-compose.yaml', 'docker-compose.example.yml',
+    'compose.yml', 'compose.yaml',
+  ];
+
+  for (const file of filesToTry) {
+    try {
+      const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/${file}`;
+      const resp = await axios.get(url, { timeout: 8000 });
+      const yaml = require('js-yaml');
+      const compose = yaml.load(resp.data);
+      if (!compose || !compose.services) continue;
+
+      const envVars: ImageEnvVar[] = [];
+      for (const [, svcConfig] of Object.entries(compose.services)) {
+        const svc = svcConfig as any;
+        const envs = svc.environment;
+        if (!envs) continue;
+
+        if (Array.isArray(envs)) {
+          for (const entry of envs) {
+            const eqIdx = String(entry).indexOf('=');
+            const name = eqIdx > 0 ? String(entry).substring(0, eqIdx) : String(entry);
+            const value = eqIdx > 0 ? String(entry).substring(eqIdx + 1) : '';
+            if (INTERNAL_ENV_NAMES.has(name)) continue;
+            envVars.push({ name, defaultValue: value, source: 'source-compose', classification: 'required' });
+          }
+        } else if (typeof envs === 'object') {
+          for (const [name, val] of Object.entries(envs)) {
+            if (INTERNAL_ENV_NAMES.has(name)) continue;
+            envVars.push({ name, defaultValue: String(val || ''), source: 'source-compose', classification: 'required' });
+          }
+        }
+      }
+      if (envVars.length > 0) return envVars;
+    } catch {
+      // File not found or parse error, try next
+    }
+  }
+
+  return [];
+}
+
+async function fetchDockerHubReadme(repository: string): Promise<ImageEnvVar[]> {
+  try {
+    const url = `https://hub.docker.com/v2/repositories/${repository}/`;
+    const resp = await axios.get(url, { timeout: 10000 });
+    const readme: string = resp.data.full_description || '';
+    if (!readme) return [];
+
+    const envVars: ImageEnvVar[] = [];
+    const seen = new Set<string>();
+
+    // Match table rows: | `VAR_NAME` | description |
+    const tablePattern = /\|\s*`?([A-Z][A-Z0-9_]{2,})`?\s*\|/g;
+    let match;
+    while ((match = tablePattern.exec(readme)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && !INTERNAL_ENV_NAMES.has(name)) {
+        seen.add(name);
+        envVars.push({ name, defaultValue: '', source: 'readme', classification: 'optional' });
+      }
+    }
+
+    // Match -e VAR_NAME=value patterns (docker run examples)
+    const dockerRunPattern = /-e\s+([A-Z][A-Z0-9_]{2,})(?:=(\S+))?/g;
+    while ((match = dockerRunPattern.exec(readme)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && !INTERNAL_ENV_NAMES.has(name)) {
+        seen.add(name);
+        envVars.push({ name, defaultValue: match[2] || '', source: 'readme', classification: 'optional' });
+      }
+    }
+
+    // Match environment: blocks in yaml examples within README
+    const envBlockPattern = /^\s*-?\s*([A-Z][A-Z0-9_]{2,})(?:=(.*))?$/gm;
+    while ((match = envBlockPattern.exec(readme)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && !INTERNAL_ENV_NAMES.has(name)) {
+        seen.add(name);
+        envVars.push({ name, defaultValue: match[2] || '', source: 'readme', classification: 'optional' });
+      }
+    }
+
+    return envVars;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchImageEnvData(images: { registry: string; repository: string; tag: string; service: string }[]): Promise<ImageEnvResult[]> {
+  // Deduplicate by registry/repository:tag
+  const uniqueKey = (img: { registry: string; repository: string; tag: string }) => `${img.registry}/${img.repository}:${img.tag}`;
+  const checkedMap = new Map<string, { config: any; envVars: ImageEnvVar[]; sources: ImageEnvResult['sources'] }>();
+
+  for (const img of images) {
+    const key = uniqueKey(img);
+    if (checkedMap.has(key)) continue;
+
+    const config = await fetchImageConfig(img.registry, img.repository, img.tag);
+    let envVars = parseImageEnvVars(config);
+    const sources = { imageConfig: !!config, readme: false, sourceCompose: false };
+
+    // Try to get env vars from source repo compose files
+    if (config) {
+      try {
+        const composeEnvs = await fetchSourceRepoCompose(config, img.registry, img.repository);
+        if (composeEnvs.length > 0) {
+          sources.sourceCompose = true;
+          // Merge: if a compose env exists in image config, upgrade its classification
+          const imageEnvMap = new Map(envVars.map(e => [e.name, e]));
+          for (const ce of composeEnvs) {
+            if (imageEnvMap.has(ce.name)) {
+              // Env is in both image config and compose example — likely important
+              const existing = imageEnvMap.get(ce.name)!;
+              if (existing.classification === 'optional') existing.classification = 'required';
+            } else {
+              // In compose but not in image config — runtime-read env, mark as required
+              envVars.push(ce);
+            }
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
+    // Try Docker Hub README for additional env vars (only for docker.io)
+    if (img.registry === 'docker.io') {
+      try {
+        const readmeEnvs = await fetchDockerHubReadme(img.repository);
+        if (readmeEnvs.length > 0) {
+          sources.readme = true;
+          const existingNames = new Set(envVars.map(e => e.name));
+          for (const re of readmeEnvs) {
+            if (!existingNames.has(re.name)) {
+              envVars.push(re);
+            } else {
+              // If in readme and already classified as optional, consider it documented
+              const existing = envVars.find(e => e.name === re.name);
+              if (existing && existing.classification === 'optional' && re.classification === 'required') {
+                existing.classification = 'required';
+              }
+            }
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
+    checkedMap.set(key, { config, envVars, sources });
+
+    // Rate limiting between registry calls
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  // Map results back to all input images
+  return images.map(img => {
+    const key = uniqueKey(img);
+    const data = checkedMap.get(key);
+    if (!data) {
+      return { service: img.service, registry: img.registry, repository: img.repository, tag: img.tag, envVars: [], sources: { imageConfig: false, readme: false, sourceCompose: false }, error: 'Failed to fetch' };
+    }
+    return {
+      service: img.service,
+      registry: img.registry,
+      repository: img.repository,
+      tag: img.tag,
+      envVars: data.envVars,
+      sources: data.sources,
+    };
+  });
+}
+
+// --- Compose tag bumping utility ---
+
+export function bumpComposeTags(composeRaw: string, bumps: { fullRef: string; currentTag: string; latestTag: string }[]): string {
+  let result = composeRaw;
+  for (const bump of bumps) {
+    if (!bump.latestTag || bump.currentTag === bump.latestTag) continue;
+    const oldRef = bump.fullRef;
+    const newRef = oldRef.replace(':' + bump.currentTag, ':' + bump.latestTag);
+    // Replace all occurrences in the YAML (handles quoted and unquoted)
+    result = result.split(oldRef).join(newRef);
+  }
+  return result;
+}
+
 export async function checkImageVersions(images: DockerImageRef[], refresh: boolean = false): Promise<DockerImageRef[]> {
   // Always start fresh — clear stale file cache from previous runs.
   // Within this run, fetchTagsForImage naturally deduplicates via the file

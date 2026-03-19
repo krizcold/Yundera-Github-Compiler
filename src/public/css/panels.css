@@ -1291,6 +1291,50 @@
 .version-badge.unknown { color: #ef4444; }
 .version-badge.checking { color: #3b82f6; }
 
+/* --- App card action buttons --- */
+.store-app-card .app-card-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #3d3d3d;
+}
+
+.app-action-btn {
+    flex: 1;
+    background: #3d3d3d;
+    color: #ccc;
+    border: none;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.15s;
+}
+
+.app-action-btn:hover { background: #4d4d4d; color: #fff; }
+.app-action-btn.disabled, .app-action-btn[disabled] { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+
+.app-update-btn:not(.disabled):not([disabled]) {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+
+.app-update-btn:not(.disabled):not([disabled]):hover {
+    background: rgba(245, 158, 11, 0.25);
+}
+
+/* Last checked timestamp */
+.store-last-checked {
+    font-size: 11px;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
 .store-empty-state {
     display: flex;
     flex-direction: column;

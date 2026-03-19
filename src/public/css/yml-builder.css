@@ -580,3 +580,242 @@
     font-size: 11px;
     margin-top: 2px;
 }
+
+/* --- Detect Image ENVs button --- */
+.yml-check-detect-env {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    cursor: pointer;
+    font-size: 10px;
+    transition: background 0.15s, color 0.15s;
+    vertical-align: middle;
+}
+
+.yml-check-detect-env:hover {
+    background: rgba(59, 130, 246, 0.3);
+    color: #60a5fa;
+}
+
+/* --- Image ENV Detection Panel --- */
+#yml-image-env-panel {
+    margin: 4px 0 8px 26px;
+    font-size: 11px;
+}
+
+.image-env-loading {
+    color: #9ca3af;
+    padding: 6px 0;
+}
+
+.image-env-loading i {
+    margin-right: 4px;
+}
+
+.image-env-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    color: #9ca3af;
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.image-env-collapse-btn {
+    background: none;
+    border: none;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: color 0.15s;
+}
+
+.image-env-collapse-btn:hover {
+    color: #d1d5db;
+}
+
+.image-env-collapsed-hint {
+    color: #6b7280;
+    cursor: pointer;
+    padding: 4px 0;
+    font-size: 10px;
+    transition: color 0.15s;
+}
+
+.image-env-collapsed-hint:hover {
+    color: #9ca3af;
+}
+
+.image-env-collapsed-hint i {
+    margin-right: 4px;
+    font-size: 8px;
+}
+
+.image-env-service {
+    margin-bottom: 6px;
+}
+
+.image-env-service-name {
+    font-weight: 600;
+    color: #3b82f6;
+    cursor: pointer;
+    padding: 3px 0;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+}
+
+.image-env-service-name i {
+    font-size: 8px;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+}
+
+.image-env-service-name.expanded i {
+    transform: rotate(90deg);
+}
+
+.image-env-tag {
+    color: #6b7280;
+    font-weight: 400;
+    font-size: 10px;
+}
+
+.image-env-source-badges {
+    margin-left: auto;
+    display: flex;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.source-badge {
+    font-size: 8px;
+    background: rgba(255,255,255,0.06);
+    color: #6b7280;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.image-env-vars {
+    padding-left: 12px;
+}
+
+.image-env-var {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 10px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.1s;
+    line-height: 1.6;
+}
+
+.image-env-var:hover {
+    background: rgba(255,255,255,0.04);
+}
+
+.image-env-var.not-in-compose {
+    color: #e5e7eb;
+}
+
+.image-env-var.in-compose {
+    color: #6b7280;
+}
+
+.image-env-var.warning {
+    color: #f59e0b;
+}
+
+.image-env-var.internal {
+    color: #4b5563;
+    font-size: 9px;
+}
+
+.env-check-icon {
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+    font-size: 9px;
+}
+
+.env-check-icon .fa-check {
+    color: #10b981;
+}
+
+.env-check-icon .fa-exclamation-triangle {
+    color: #f59e0b;
+}
+
+.env-var-name {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.env-var-default {
+    color: #6b7280;
+    max-width: 90px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.env-var-class {
+    font-size: 9px;
+    margin-left: auto;
+    white-space: nowrap;
+    flex-shrink: 0;
+    color: #6b7280;
+    font-family: inherit;
+}
+
+.env-var-class.required {
+    color: #f87171;
+}
+
+.env-var-class.optional {
+    color: #60a5fa;
+}
+
+.env-var-class.warning {
+    color: #f59e0b;
+}
+
+.image-env-internal-toggle {
+    font-size: 10px;
+    color: #4b5563;
+    cursor: pointer;
+    padding: 3px 0;
+    user-select: none;
+    transition: color 0.15s;
+}
+
+.image-env-internal-toggle:hover {
+    color: #6b7280;
+}
+
+.image-env-internal-toggle i {
+    font-size: 8px;
+    margin-right: 4px;
+    transition: transform 0.15s;
+}
+
+.image-env-internal {
+    padding-left: 12px;
+}

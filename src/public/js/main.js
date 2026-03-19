@@ -44,15 +44,14 @@ function initializeApp() {
         // Make repoManager globally accessible for debugging
         window.repoManager = repoManager;
 
-        // Initialize theme dropdown in controls area
+        // Initialize theme dropdown in header top-right area
         if (window.ThemeManager && ThemeManager.init) {
             ThemeManager.init();
             var themeDropdown = ThemeManager.createDropdown();
             if (themeDropdown) {
-                // Insert theme dropdown in the right controls area
-                var rightControls = document.querySelector('.controls > div:last-child');
-                if (rightControls) {
-                    rightControls.insertBefore(themeDropdown, rightControls.firstChild);
+                var headerRight = document.getElementById('header-right');
+                if (headerRight) {
+                    headerRight.appendChild(themeDropdown);
                 }
             }
         }

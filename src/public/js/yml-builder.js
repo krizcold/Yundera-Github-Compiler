@@ -1062,11 +1062,20 @@
                     const disabled = getInsertDisabled(item.id, parsed);
                     insertBtn = '<span class="yml-check-insert' + (disabled ? ' disabled' : '') + '" data-insert-id="' + item.id + '" title="' + (disabled ? disabled : 'Insert template') + '"><i class="fas fa-plus"></i></span> ';
                 }
-                html += '<div class="yml-check-label">' + item.label + ' ' + insertBtn + '<span class="yml-check-help" data-help-id="' + item.id + '">?</span></div>';
+                // Add "Detect Image ENVs" button next to the envvars check item
+                let detectEnvBtn = '';
+                if (item.id === 'envvars') {
+                    detectEnvBtn = '<span class="yml-check-detect-env" id="yml-detect-env-btn" title="Detect environment variables from Docker images"><i class="fas fa-search"></i></span> ';
+                }
+                html += '<div class="yml-check-label">' + item.label + ' ' + insertBtn + detectEnvBtn + '<span class="yml-check-help" data-help-id="' + item.id + '">?</span></div>';
                 if (item.detail) {
                     html += '<div class="yml-check-detail">' + item.detail + '</div>';
                 }
                 html += '</div></div>';
+                // Insert image ENV panel placeholder after envvars check item
+                if (item.id === 'envvars') {
+                    html += '<div id="yml-image-env-panel" style="display:none"></div>';
+                }
             }
             html += '</div>';
         }
@@ -1091,6 +1100,20 @@
             });
         });
 
+        // Bind detect image ENVs button
+        const detectEnvBtn = document.getElementById('yml-detect-env-btn');
+        if (detectEnvBtn) {
+            detectEnvBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                detectImageEnvs();
+            });
+        }
+
+        // Re-render image env panel if results exist (sidebar was rebuilt)
+        if (imageEnvResults || imageEnvLoading) {
+            renderImageEnvPanel();
+        }
+
         updateFooterSummary(results);
     }
 
@@ -1108,6 +1131,266 @@
         if (warns > 0) html += '<span class="summary-item has-warn"><i class="fas fa-exclamation-triangle"></i> ' + warns + ' warning' + (warns > 1 ? 's' : '') + '</span>';
         html += '<span class="summary-item"><i class="fas fa-check" style="color:var(--success-color)"></i> ' + passes + ' passed</span>';
         summary.innerHTML = html;
+    }
+
+    // ========== Image ENV Detection ==========
+    let imageEnvResults = null; // cached results from last detection
+    let imageEnvLoading = false;
+    let imageEnvCollapsed = false;
+    let imageEnvExpandedServices = {};
+
+    function parseImageRefFrontend(imageString, serviceName) {
+        var registry = 'docker.io';
+        var repository;
+        var tag = 'latest';
+
+        var cleanedImage = imageString;
+        var digestIdx = cleanedImage.indexOf('@sha256:');
+        if (digestIdx > 0) cleanedImage = cleanedImage.substring(0, digestIdx);
+
+        var imagePart = cleanedImage;
+        var lastColon = cleanedImage.lastIndexOf(':');
+        if (lastColon > 0) {
+            var afterColon = cleanedImage.substring(lastColon + 1);
+            if (afterColon.indexOf('/') === -1) {
+                tag = afterColon;
+                imagePart = cleanedImage.substring(0, lastColon);
+            }
+        }
+
+        var parts = imagePart.split('/');
+        if (parts.length >= 2 && (parts[0].indexOf('.') >= 0 || parts[0].indexOf(':') >= 0)) {
+            registry = parts[0];
+            repository = parts.slice(1).join('/');
+        } else if (parts.length === 1) {
+            repository = 'library/' + parts[0];
+        } else {
+            repository = imagePart;
+        }
+
+        return { service: serviceName, registry: registry, repository: repository, tag: tag, fullRef: imageString };
+    }
+
+    function extractComposeEnvsByService(parsed) {
+        var result = {};
+        if (!parsed || !parsed.services) return result;
+        for (var svcName of Object.keys(parsed.services)) {
+            var svc = parsed.services[svcName];
+            var envSet = new Set();
+            if (svc && svc.environment) {
+                if (Array.isArray(svc.environment)) {
+                    svc.environment.forEach(function(entry) {
+                        var eq = String(entry).indexOf('=');
+                        var name = eq > 0 ? String(entry).substring(0, eq) : String(entry);
+                        envSet.add(name);
+                    });
+                } else if (typeof svc.environment === 'object') {
+                    Object.keys(svc.environment).forEach(function(name) { envSet.add(name); });
+                }
+            }
+            result[svcName] = envSet;
+        }
+        return result;
+    }
+
+    async function detectImageEnvs() {
+        if (imageEnvLoading) return;
+
+        var text = getValue();
+        var parsed;
+        try { parsed = jsyaml.load(text); } catch(e) { return; }
+        if (!parsed || !parsed.services) {
+            window.Notify && window.Notify.show('No services found in compose', 'warning');
+            return;
+        }
+
+        // Extract all image references
+        var images = [];
+        for (var svcName of Object.keys(parsed.services)) {
+            var svc = parsed.services[svcName];
+            if (svc && svc.image) {
+                // Resolve template variables for image parsing (replace $AppID etc with placeholder)
+                var imgStr = String(svc.image).replace(/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/g, 'placeholder');
+                var ref = parseImageRefFrontend(svc.image, svcName);
+                images.push(ref);
+            }
+        }
+
+        if (images.length === 0) {
+            window.Notify && window.Notify.show('No images found in compose', 'warning');
+            return;
+        }
+
+        imageEnvLoading = true;
+        imageEnvCollapsed = false;
+        imageEnvExpandedServices = {};
+        renderImageEnvPanel();
+
+        try {
+            var url = (window.repoManager && window.repoManager.addHashToUrl)
+                ? window.repoManager.addHashToUrl('/api/admin/store-tracker/image-env')
+                : '/api/admin/store-tracker/image-env';
+            var resp = await axios.post(url, { images: images });
+            imageEnvResults = resp.data.results || [];
+            // Auto-expand all services
+            imageEnvResults.forEach(function(r) { imageEnvExpandedServices[r.service] = true; });
+        } catch(e) {
+            console.error('ENV detection failed:', e);
+            imageEnvResults = null;
+            window.Notify && window.Notify.show('ENV detection failed: ' + (e.response?.data?.message || e.message), 'error');
+        }
+
+        imageEnvLoading = false;
+        renderImageEnvPanel();
+    }
+
+    function renderImageEnvPanel() {
+        var container = document.getElementById('yml-image-env-panel');
+        if (!container) return;
+
+        if (imageEnvLoading) {
+            container.innerHTML = '<div class="image-env-loading"><i class="fas fa-spinner fa-spin"></i> Detecting image ENVs...</div>';
+            container.style.display = '';
+            return;
+        }
+
+        if (!imageEnvResults || imageEnvResults.length === 0) {
+            container.innerHTML = '';
+            container.style.display = 'none';
+            return;
+        }
+
+        if (imageEnvCollapsed) {
+            container.innerHTML = '<div class="image-env-collapsed-hint" id="image-env-expand-btn">' +
+                '<i class="fas fa-chevron-down"></i> Image ENVs (' + imageEnvResults.reduce(function(n, r) { return n + r.envVars.filter(function(v) { return v.classification !== 'internal'; }).length; }, 0) + ' vars)' +
+                '</div>';
+            container.style.display = '';
+            document.getElementById('image-env-expand-btn').addEventListener('click', function() {
+                imageEnvCollapsed = false;
+                renderImageEnvPanel();
+            });
+            return;
+        }
+
+        // Get current compose env vars for comparison
+        var text = getValue();
+        var parsed;
+        try { parsed = jsyaml.load(text); } catch(e) { parsed = null; }
+        var composeEnvs = extractComposeEnvsByService(parsed);
+
+        var html = '<div class="image-env-results">';
+        html += '<div class="image-env-header"><span>Image ENV Detection</span>' +
+            '<button class="image-env-collapse-btn" id="image-env-collapse-toggle" title="Collapse"><i class="fas fa-chevron-up"></i></button></div>';
+
+        for (var ri = 0; ri < imageEnvResults.length; ri++) {
+            var result = imageEnvResults[ri];
+            var isExpanded = !!imageEnvExpandedServices[result.service];
+            var nonInternal = result.envVars.filter(function(v) { return v.classification !== 'internal'; });
+            var internal = result.envVars.filter(function(v) { return v.classification === 'internal'; });
+            var svcComposeEnvs = composeEnvs[result.service] || new Set();
+
+            // Source badges
+            var badges = '';
+            if (result.sources.imageConfig) badges += '<span class="source-badge">config</span>';
+            if (result.sources.sourceCompose) badges += '<span class="source-badge">compose</span>';
+            if (result.sources.readme) badges += '<span class="source-badge">readme</span>';
+
+            html += '<div class="image-env-service">';
+            html += '<div class="image-env-service-name' + (isExpanded ? ' expanded' : '') + '" data-svc="' + result.service + '">' +
+                '<i class="fas fa-chevron-right"></i> ' + result.service +
+                ' <span class="image-env-tag">(' + result.repository.split('/').pop() + ':' + result.tag + ')</span>' +
+                '<span class="image-env-source-badges">' + badges + '</span>' +
+                '</div>';
+
+            html += '<div class="image-env-vars"' + (isExpanded ? '' : ' style="display:none"') + '>';
+
+            // Non-internal env vars
+            for (var vi = 0; vi < nonInternal.length; vi++) {
+                var envVar = nonInternal[vi];
+                var inCompose = svcComposeEnvs.has(envVar.name);
+                var cls = inCompose ? 'in-compose' : 'not-in-compose';
+                var classLabel = envVar.classification;
+                if (!inCompose) classLabel += ' NEW';
+
+                html += '<div class="image-env-var ' + cls + '" data-env-copy="' + envVar.name + '=' + (envVar.defaultValue || '') + '">' +
+                    '<span class="env-check-icon">' + (inCompose ? '<i class="fas fa-check"></i>' : '') + '</span>' +
+                    '<span class="env-var-name">' + envVar.name + '</span>';
+                if (envVar.defaultValue) html += '<span class="env-var-default">=' + envVar.defaultValue + '</span>';
+                html += '<span class="env-var-class ' + envVar.classification + '">// ' + classLabel + '</span>';
+                html += '</div>';
+            }
+
+            // Warnings: env vars in compose but NOT in any image result
+            var imageEnvNames = new Set(result.envVars.map(function(v) { return v.name; }));
+            svcComposeEnvs.forEach(function(composeName) {
+                // Skip template variables (start with $ or contain $)
+                if (composeName.indexOf('$') >= 0) return;
+                if (!imageEnvNames.has(composeName)) {
+                    html += '<div class="image-env-var warning">' +
+                        '<span class="env-check-icon"><i class="fas fa-exclamation-triangle"></i></span>' +
+                        '<span class="env-var-name">' + composeName + '</span>' +
+                        '<span class="env-var-class warning">// not in image</span>' +
+                        '</div>';
+                }
+            });
+
+            // Internal vars (collapsed)
+            if (internal.length > 0) {
+                html += '<div class="image-env-internal-toggle" data-svc-internal="' + result.service + '">' +
+                    '<i class="fas fa-chevron-right"></i> ' + internal.length + ' internal vars</div>';
+                html += '<div class="image-env-internal" data-svc-internal-list="' + result.service + '" style="display:none">';
+                for (var ii = 0; ii < internal.length; ii++) {
+                    html += '<div class="image-env-var internal">' +
+                        '<span class="env-var-name">' + internal[ii].name + '</span>';
+                    if (internal[ii].defaultValue) html += '<span class="env-var-default">=' + internal[ii].defaultValue + '</span>';
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+
+            html += '</div></div>';
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+        container.style.display = '';
+
+        // Bind events
+        document.getElementById('image-env-collapse-toggle').addEventListener('click', function() {
+            imageEnvCollapsed = true;
+            renderImageEnvPanel();
+        });
+
+        container.querySelectorAll('.image-env-service-name').forEach(function(el) {
+            el.addEventListener('click', function() {
+                var svc = el.getAttribute('data-svc');
+                imageEnvExpandedServices[svc] = !imageEnvExpandedServices[svc];
+                el.classList.toggle('expanded');
+                var vars = el.nextElementSibling;
+                if (vars) vars.style.display = imageEnvExpandedServices[svc] ? '' : 'none';
+            });
+        });
+
+        container.querySelectorAll('.image-env-internal-toggle').forEach(function(el) {
+            el.addEventListener('click', function() {
+                var svc = el.getAttribute('data-svc-internal');
+                var list = container.querySelector('[data-svc-internal-list="' + svc + '"]');
+                if (list) {
+                    var show = list.style.display === 'none';
+                    list.style.display = show ? '' : 'none';
+                    el.querySelector('i').className = show ? 'fas fa-chevron-down' : 'fas fa-chevron-right';
+                }
+            });
+        });
+
+        container.querySelectorAll('.image-env-var[data-env-copy]').forEach(function(el) {
+            el.addEventListener('click', function() {
+                var text = el.getAttribute('data-env-copy');
+                navigator.clipboard.writeText(text).then(function() {
+                    window.Notify && window.Notify.show('Copied: ' + text, 'success');
+                });
+            });
+        });
     }
 
     // ========== Editor Integration ==========
@@ -1390,6 +1673,12 @@
         if (titleEl) {
             titleEl.textContent = subtitle ? 'Smart YML Builder — ' + subtitle : 'Smart YML Builder';
         }
+
+        // Clear image ENV detection state
+        imageEnvResults = null;
+        imageEnvLoading = false;
+        imageEnvCollapsed = false;
+        imageEnvExpandedServices = {};
 
         resetPreview();
         hideTooltip();

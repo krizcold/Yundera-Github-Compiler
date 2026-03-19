@@ -2,6 +2,8 @@
 'use strict';
 
 (function() {
+    var VERSION_CHECK_CACHE_MS = 60 * 60 * 1000; // 1 hour
+
     // State
     var storeTrackerState = {
         stores: [],
@@ -11,7 +13,10 @@
         selectedStore: 'all',
         sortBy: 'name',
         versionCheckInProgress: false,
-        addFormVisible: false
+        addFormVisible: false,
+        appComposeMap: {}, // name -> composeRaw lookup
+        appUpdatableMap: {}, // name -> updatable images array
+        lastVersionCheck: null // timestamp of last successful version check
     };
 
     // --- Helpers ---
@@ -144,6 +149,7 @@
                     });
                 });
 
+                storeTrackerState.lastVersionCheck = Date.now();
                 filterStoreApps();
                 renderStoreApps();
             })
@@ -307,9 +313,80 @@
             html += createAppCard(app);
         });
         grid.innerHTML = html;
+
+        // Bind action button events
+        grid.querySelectorAll('.app-open-compose-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var appName = btn.getAttribute('data-app-name');
+                var composeRaw = storeTrackerState.appComposeMap[appName];
+                if (composeRaw) openComposeInYmlBuilder(composeRaw, appName);
+            });
+        });
+
+        grid.querySelectorAll('.app-update-btn:not([disabled])').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var appName = btn.getAttribute('data-app-name');
+                var composeRaw = storeTrackerState.appComposeMap[appName];
+                var updatableImages = storeTrackerState.appUpdatableMap[appName] || [];
+                if (composeRaw) openUpdateInYmlBuilder(composeRaw, appName, updatableImages);
+            });
+        });
+    }
+
+    // --- Compose opening helpers ---
+
+    function bumpTagsInYaml(yamlStr, images) {
+        var result = yamlStr;
+        images.forEach(function(img) {
+            if (img.latestTag && img.currentTag !== img.latestTag) {
+                var oldRef = img.fullRef;
+                var newRef = oldRef.replace(':' + img.currentTag, ':' + img.latestTag);
+                result = result.split(oldRef).join(newRef);
+            }
+        });
+        return result;
+    }
+
+    function openComposeInYmlBuilder(composeRaw, appName) {
+        // Close the store tracker panel
+        PanelWindow.close('store-tracker-panel');
+
+        // Set editing mode to new-compose so saveYaml creates a new repo
+        if (window.repoManager) {
+            window.repoManager.currentEditingRepo = 'new-compose';
+        }
+
+        // Open YML Builder with the compose content
+        YmlBuilder.open(composeRaw, appName);
+
+        // Show the yaml-modal
+        var modal = document.getElementById('yaml-modal');
+        if (modal) modal.style.display = 'block';
+    }
+
+    function openUpdateInYmlBuilder(composeRaw, appName, updatableImages) {
+        // Bump image tags in the compose YAML
+        var bumped = bumpTagsInYaml(composeRaw, updatableImages);
+
+        // Close store tracker, open YML Builder
+        PanelWindow.close('store-tracker-panel');
+
+        if (window.repoManager) {
+            window.repoManager.currentEditingRepo = 'new-compose';
+        }
+
+        YmlBuilder.open(bumped, 'Update — ' + appName);
+
+        var modal = document.getElementById('yaml-modal');
+        if (modal) modal.style.display = 'block';
     }
 
     function createAppCard(app) {
+        // Store compose data for later use
+        storeTrackerState.appComposeMap[app.name] = app.composeRaw;
+
         var iconHtml;
         if (app.icon) {
             iconHtml = '<img class="app-icon" src="' + escapeHtml(app.icon) + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
@@ -322,6 +399,7 @@
         var descHtml = app.description ? '<div class="app-description" title="' + escapeHtml(app.description) + '">' + escapeHtml(app.description) + '</div>' : '';
 
         var imagesHtml = '';
+        var hasUpdate = false;
         app.images.forEach(function(img) {
             var status = img.versionStatus || '';
             var dotClass = status || '';
@@ -331,6 +409,7 @@
                 badgeText = 'Up to date';
             } else if (status === 'update-available') {
                 badgeText = img.currentTag + ' → ' + (img.latestTag || '?');
+                hasUpdate = true;
             } else if (status === 'latest-tag') {
                 badgeText = ':latest';
             } else if (status === 'unknown') {
@@ -351,6 +430,19 @@
                 '</div>';
         });
 
+        // Store updatable images in state map (not DOM attribute — JSON quotes break HTML attributes)
+        var updatableImages = app.images.filter(function(img) { return img.versionStatus === 'update-available' && img.latestTag; });
+        storeTrackerState.appUpdatableMap[app.name] = updatableImages;
+
+        var buttonsHtml = '<div class="app-card-actions">' +
+            '<button class="app-action-btn app-open-compose-btn" data-app-name="' + escapeHtml(app.name) + '">' +
+                '<i class="fas fa-file-code"></i> Open Compose</button>' +
+            '<button class="app-action-btn app-update-btn' + (hasUpdate ? '' : ' disabled') + '" ' +
+                'data-app-name="' + escapeHtml(app.name) + '"' +
+                (hasUpdate ? '' : ' disabled') + '>' +
+                '<i class="fas fa-arrow-up"></i> Update</button>' +
+            '</div>';
+
         return '<div class="store-app-card">' +
             '<div class="app-card-header">' +
                 iconHtml +
@@ -362,7 +454,19 @@
             '</div>' +
             descHtml +
             '<div class="app-images">' + imagesHtml + '</div>' +
+            buttonsHtml +
             '</div>';
+    }
+
+    function formatTimeAgo(ts) {
+        if (!ts) return '';
+        var diff = Date.now() - ts;
+        var secs = Math.floor(diff / 1000);
+        if (secs < 60) return 'just now';
+        var mins = Math.floor(secs / 60);
+        if (mins < 60) return mins + 'm ago';
+        var hrs = Math.floor(mins / 60);
+        return hrs + 'h ' + (mins % 60) + 'm ago';
     }
 
     function updateCheckButton() {
@@ -374,6 +478,17 @@
         } else {
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-tag"></i> Check Versions';
+        }
+
+        // Update "Last checked" label
+        var label = document.getElementById('store-last-checked');
+        if (label) {
+            if (storeTrackerState.lastVersionCheck) {
+                label.textContent = 'Last checked: ' + formatTimeAgo(storeTrackerState.lastVersionCheck);
+                label.style.display = '';
+            } else {
+                label.style.display = 'none';
+            }
         }
     }
 
@@ -470,6 +585,7 @@
                     '<button class="check-versions-btn" id="store-check-versions-btn">' +
                         '<i class="fas fa-tag"></i> Check Versions' +
                     '</button>' +
+                    '<span class="store-last-checked" id="store-last-checked" style="display:none"></span>' +
                 '</div>' +
                 '<div class="store-app-grid" id="store-app-grid">' +
                     '<div class="store-loading"><i class="fas fa-spinner"></i> Loading...</div>' +
@@ -478,26 +594,10 @@
 
         window.PanelWindow.create({
             id: 'store-tracker-panel',
-            title: 'Store Tracker',
+            title: 'Update Assistant',
             icon: 'fas fa-store',
             bodyHTML: bodyHTML,
-            headerButtons: [
-                {
-                    html: '<i class="fas fa-sync-alt"></i> Refresh',
-                    onClick: function() {
-                        // Reset version check state on refresh
-                        storeTrackerState.versionCheckInProgress = false;
-                        var grid = document.getElementById('store-app-grid');
-                        if (grid) grid.innerHTML = '<div class="store-loading"><i class="fas fa-spinner"></i> Refreshing...</div>';
-                        loadStoreApps(true, function() {
-                            filterStoreApps();
-                            renderSidebar();
-                            renderStoreApps();
-                            checkAllVersions(true);
-                        });
-                    }
-                }
-            ],
+            headerButtons: [],
             onClose: function() {
                 storeTrackerState.addFormVisible = false;
                 storeTrackerState.versionCheckInProgress = false;
@@ -533,7 +633,7 @@
             addBtn.addEventListener('click', showAddForm);
         }
 
-        // Load data and auto-check versions
+        // Load data and auto-check versions (skip if checked within cache TTL)
         loadStoreConfigs(function() {
             renderSidebar();
             if (storeTrackerState.stores.length > 0) {
@@ -541,8 +641,14 @@
                     filterStoreApps();
                     renderSidebar();
                     renderStoreApps();
-                    // Auto-trigger version check (always fresh)
-                    checkAllVersions(true);
+                    // Only auto-check if no recent check exists
+                    var needsCheck = !storeTrackerState.lastVersionCheck ||
+                        (Date.now() - storeTrackerState.lastVersionCheck) > VERSION_CHECK_CACHE_MS;
+                    if (needsCheck) {
+                        checkAllVersions(true);
+                    } else {
+                        updateCheckButton(); // show "Last checked" label
+                    }
                 });
             } else {
                 renderStoreApps();
