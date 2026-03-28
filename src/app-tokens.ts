@@ -136,11 +136,6 @@ export function removeAppToken(appName: string, repositoryId: string): boolean {
   return false;
 }
 
-// Get all app tokens (for admin/debugging)
-export function getAllAppTokens(): AppToken[] {
-  return loadAppTokens();
-}
-
 // Check if token has specific permission
 export function hasPermission(token: AppToken, permission: string): boolean {
   return token.permissions.includes(permission);

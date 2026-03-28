@@ -10,9 +10,6 @@ import * as yaml from 'yaml';
 
 const baseDir = "/app/repos";
 
-// This function is no longer needed with the new event-driven approach
-// async function pollInstallationJob(...) { ... }
-
 export async function processRepo(
   repository: Repository,
   force: boolean = false,

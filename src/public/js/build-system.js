@@ -508,27 +508,6 @@ Object.assign(RepoManager.prototype, {
         }
     },
 
-    // Simple helper to check if content contains environment variables that will be transferred
-    containsEnvironmentVariable: function(content, envTransfers) {
-        if (!envTransfers || envTransfers.size === 0) {
-            return false;
-        }
-
-        // Check each line for environment variables
-        const lines = content.split('\n');
-        for (const line of lines) {
-            for (const [serviceName, envMap] of envTransfers) {
-                for (const [envKey] of envMap) {
-                    // Simple string matching: check if line contains "KEY:"
-                    if (line.includes(`${envKey}:`)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    },
-
     // Helper function to normalize environment variables to object format
     normalizeEnvironment: function(env) {
         if (!env) return {};
@@ -836,13 +815,6 @@ Object.assign(RepoManager.prototype, {
         }
     },
 
-    // Helper function to check if a line contains an environment variable assignment
-    isEnvironmentValueLine: function(line) {
-        // Match lines that look like environment variable assignments
-        // Examples: "      DISCORD_TOKEN: 'value'", "      CLIENT_ID: 123", "GUILD_ID: \"value\""
-        return /^\s*[A-Z_][A-Z0-9_]*\s*:\s*.+/.test(line.trim());
-    },
-
     // Helper function to generate structural diff (red/green) using placeholder versions
     generateStructuralDiff: function(currentCompose, newCompose, side) {
         try {
@@ -941,133 +913,6 @@ Object.assign(RepoManager.prototype, {
         }
 
         return envTransfers;
-    },
-
-    // Helper function to replace only environment sections while preserving YAML formatting
-    replaceEnvironmentSectionsInYaml: function(originalYaml, modifiedConfig, envTransfers) {
-        try {
-            let result = originalYaml;
-
-            envTransfers.forEach((envMap, serviceName) => {
-                envMap.forEach((transferredValue, envKey) => {
-                    // Pattern for array format: - KEY=value
-                    const envPattern = new RegExp(
-                        `(\\s*-\\s*${this.escapeRegex(envKey)}=)[^\\n\\r]*`,
-                        'g'
-                    );
-                    // Pattern for object format: KEY: value (with possible quotes)
-                    const envPatternObj = new RegExp(
-                        `(\\s*${this.escapeRegex(envKey)}:\\s*)['"]?[^\\n\\r'"]*(["']?)`,
-                        'g'
-                    );
-
-                    // Replace with transferred value, preserving quotes if they existed
-                    result = result.replace(envPattern, `$1${transferredValue}`);
-                    result = result.replace(envPatternObj, `$1'${transferredValue}'`);
-                });
-            });
-
-            return result;
-        } catch (error) {
-            console.warn('Error replacing environment sections:', error);
-            return originalYaml;
-        }
-    },
-
-    // Helper function to escape regex special characters
-    escapeRegex: function(string) {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    },
-
-    // Helper function to highlight environment variable transfers (smart highlighting)
-    generateEnvTransferHighlight: function(originalNew, processedNew) {
-        try {
-            if (!window.Diff) {
-                return this.escapeHtml(processedNew);
-            }
-
-            // Parse both YAML files to identify actual environment variable changes
-            const yaml = window.jsyaml;
-            if (yaml) {
-                const loadOptions = { schema: yaml.FAILSAFE_SCHEMA };
-                const originalConfig = yaml.load(originalNew, loadOptions);
-                const processedConfig = yaml.load(processedNew, loadOptions);
-
-                // Find environment variables that were actually added or removed (not just transferred)
-                const envChanges = this.detectEnvironmentVariableChanges(originalConfig, processedConfig);
-
-                if (envChanges.length === 0) {
-                    // No structural env var changes, just show the final result without highlighting
-                    return this.escapeHtml(processedNew);
-                }
-            }
-
-            // Fall back to word diff for any remaining changes
-            const diff = window.Diff.diffWords(originalNew, processedNew);
-            let html = '';
-
-            for (const part of diff) {
-                const escaped = this.escapeHtml(part.value);
-
-                if (part.added) {
-                    // Only highlight if it's a true addition (not just a value transfer)
-                    html += `<span class="diff-env-transfer">${escaped}</span>`;
-                } else if (!part.removed) {
-                    html += escaped;
-                }
-                // Skip removed parts
-            }
-
-            return html;
-        } catch (error) {
-            console.warn('Error generating env transfer highlight:', error);
-            return this.escapeHtml(processedNew);
-        }
-    },
-
-    // Helper function to detect actual environment variable structure changes
-    detectEnvironmentVariableChanges: function(originalConfig, processedConfig) {
-        const changes = [];
-
-        try {
-            if (!originalConfig?.services || !processedConfig?.services) {
-                return changes;
-            }
-
-            for (const serviceName in processedConfig.services) {
-                // Use normalized environment objects for proper comparison
-                const originalEnv = this.normalizeEnvironment(originalConfig.services[serviceName]?.environment);
-                const processedEnv = this.normalizeEnvironment(processedConfig.services[serviceName]?.environment);
-
-                // Find added variables
-                for (const envVar in processedEnv) {
-                    if (!(envVar in originalEnv)) {
-                        changes.push({ type: 'added', service: serviceName, variable: envVar });
-                    }
-                }
-
-                // Find removed variables
-                for (const envVar in originalEnv) {
-                    if (!(envVar in processedEnv)) {
-                        changes.push({ type: 'removed', service: serviceName, variable: envVar });
-                    }
-                }
-            }
-
-            // Also check for services that had environment variables but are now missing entirely
-            for (const serviceName in originalConfig.services) {
-                if (!(serviceName in processedConfig.services)) {
-                    const originalEnv = this.normalizeEnvironment(originalConfig.services[serviceName]?.environment);
-                    for (const envVar in originalEnv) {
-                        changes.push({ type: 'removed', service: serviceName, variable: envVar });
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn('Error detecting environment variable changes:', error);
-        }
-
-        return changes;
     },
 
     // Helper function to transfer environment variables between docker compose configurations

@@ -163,56 +163,6 @@ export async function getCasaOSInstalledApps(forceRefresh: boolean = false): Pro
   return [];
 }
 
-// Investigate potential installation progress endpoints
-export async function checkCasaOSInstallationProgress(appName: string): Promise<{
-  isInstalling: boolean;
-  progress?: number;
-  message?: string;
-} | null> {
-  // Let's test some potential endpoints that might exist
-  const potentialEndpoints = [
-    `/v2/app_management/jobs`,
-    `/v2/app_management/tasks`,
-    `/v2/app_management/progress`,
-    `/v2/app_management/status`,
-    `/v2/app_management/apps/${appName}/status`,
-    `/v2/app_management/install/status`
-  ];
-  
-  for (const endpoint of potentialEndpoints) {
-    try {
-      const command = `
-        docker exec casaos sh -c "
-          curl -s 'http://localhost:8080${endpoint}' \\
-            -H 'Accept: application/json'
-        " 2>&1
-      `;
-      
-      const { stdout } = await execAsync(command);
-      
-      // Check if we got a valid JSON response (not a 404 or error)
-      // Only process if it looks like valid JSON (not an error page)
-      if (!stdout.includes('error') && stdout.trim().startsWith('{')) {
-        console.log(`🔍 Found potential progress endpoint: ${endpoint}`);
-        console.log(`📋 Response: ${stdout}`);
-        
-        try {
-          const response = JSON.parse(stdout);
-          // This endpoint exists and returns JSON - log it for investigation
-          return { isInstalling: false, message: `Found endpoint: ${endpoint}` };
-        } catch (e) {
-          // JSON parse failed, continue
-        }
-      }
-    } catch (error) {
-      // Continue to next endpoint
-    }
-  }
-  
-  console.log(`❌ No installation progress endpoints found`);
-  return null;
-}
-
 // Case-insensitive key lookup in an object. Returns the actual key if found.
 function findKeyIgnoreCase(obj: Record<string, any>, searchKey: string): string | undefined {
   const lower = searchKey.toLowerCase();
@@ -744,41 +694,3 @@ export async function toggleCasaOSApp(appName: string, start: boolean): Promise<
   };
 }
 
-export async function verifyDockerImageExists(imageName: string): Promise<boolean> {
-  try {
-    const command = `docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^${imageName.replace(':', '\\:')}$"`;
-    const { stdout } = await execAsync(command);
-    return stdout.trim().length > 0;
-  } catch (error) {
-    console.error(`❌ Error checking Docker image ${imageName}:`, error);
-    return false;
-  }
-}
-
-export async function getDockerContainerStatus(containerName: string): Promise<{
-  exists: boolean;
-  isRunning: boolean;
-  status: string;
-}> {
-  try {
-    const command = `docker ps -a --format "{{.Names}}\t{{.Status}}" | grep "^${containerName}\t" || echo "not_found"`;
-    const { stdout } = await execAsync(command);
-    
-    if (stdout.trim() === 'not_found') {
-      return { exists: false, isRunning: false, status: 'not_found' };
-    }
-    
-    const [, status] = stdout.trim().split('\t');
-    const isRunning = status.toLowerCase().includes('up');
-    
-    return {
-      exists: true,
-      isRunning,
-      status: status
-    };
-    
-  } catch (error) {
-    console.error(`❌ Error checking container ${containerName}:`, error);
-    return { exists: false, isRunning: false, status: 'error' };
-  }
-}

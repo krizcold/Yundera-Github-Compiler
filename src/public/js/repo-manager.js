@@ -48,28 +48,7 @@ class RepoManager {
         }
     }
 
-    setButtonLoading(buttonId, loadingText, loadingIcon) {
-        const button = document.getElementById(buttonId);
-        if (!button) return null;
 
-        const originalData = {
-            innerHTML: button.innerHTML,
-            disabled: button.disabled
-        };
-
-        button.disabled = true;
-        button.innerHTML = `<i class="fas ${loadingIcon}"></i> ${loadingText}`;
-
-        return originalData;
-    }
-
-    restoreButton(buttonId, originalData) {
-        const button = document.getElementById(buttonId);
-        if (!button || !originalData) return;
-
-        button.innerHTML = originalData.innerHTML;
-        button.disabled = originalData.disabled;
-    }
 
     startOperation(operationId) {
         if (this.activeOperations.has(operationId)) {
@@ -108,15 +87,7 @@ class RepoManager {
         return urlParams.get('hash');
     }
 
-    // Legacy function - kept for backward compatibility but should not be used for new code
-    addAuthToRequest(data = {}) {
-        if (this.authHash) {
-            data.hash = this.authHash;
-        }
-        return data;
-    }
-
-    // New helper function - adds hash to URL parameters (nginx can see this)
+    // Helper function - adds hash to URL parameters (nginx can see this)
     addHashToUrl(url) {
         if (!this.authHash) return url;
         const separator = url.includes('?') ? '&' : '?';
@@ -211,24 +182,6 @@ class RepoManager {
         }
     }
 
-    clearAllDisabledCards() {
-        // Clear disabled states ONLY for cards that don't have active operations
-        document.querySelectorAll('.repo-item[data-repo-id]').forEach(row => {
-            const repoId = row.getAttribute('data-repo-id');
-            if (repoId) {
-                // Check if this repo has any active operations
-                const hasActiveOperation = Array.from(this.activeOperations).some(opId =>
-                    opId.includes(repoId) || opId.includes('empty')
-                );
-
-                // Only clear disabled state if no active operations
-                if (!hasActiveOperation) {
-                    this.setCardDisabled(repoId, false);
-                }
-            }
-        });
-    }
-
     clearDisabledCardForRepo(repoId) {
         // Force clear disabled state for a specific repo (used when operations complete)
         this.setCardDisabled(repoId, false);
@@ -281,17 +234,6 @@ class RepoManager {
             repoList.insertBefore(newRepoElement, emptyForm);
         });
     }
-
-    async syncAndReload() {
-        try {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await this.loadRepos();
-        } catch (error) {
-            console.error('Failed to sync and reload:', error);
-            await this.loadRepos();
-        }
-    }
-
 
     async loadGlobalSettings() {
         try {

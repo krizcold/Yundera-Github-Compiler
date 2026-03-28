@@ -384,60 +384,6 @@ Object.assign(RepoManager.prototype, {
         this.loadServiceLogs();
     },
 
-    updateServiceSidebar: function() {
-        const serviceList = document.getElementById('service-list');
-        if (!serviceList) return;
-
-        // Clear existing items
-        serviceList.innerHTML = '';
-
-        // Add all services (both system services and apps)
-        Object.keys(this.serviceLogsState.services).forEach(serviceKey => {
-            const service = this.serviceLogsState.services[serviceKey];
-
-            let icon, status;
-            if (service.isApp) {
-                icon = '<i class="fas fa-cube"></i>';
-                status = 'App';
-            } else if (serviceKey === 'dev-kit') {
-                icon = '<i class="fas fa-code-branch"></i>';
-                status = 'Active';
-            } else if (serviceKey === 'casaos') {
-                icon = '<i class="fas fa-home"></i>';
-                status = 'Running';
-            } else if (serviceKey === 'mesh-router') {
-                icon = '<i class="fas fa-network-wired"></i>';
-                status = 'Running';
-            } else {
-                icon = '<i class="fas fa-server"></i>';
-                status = 'Service';
-            }
-
-            const isActive = serviceKey === this.serviceLogsState.selectedService ? 'active' : '';
-
-            const serviceItem = document.createElement('div');
-            serviceItem.className = `service-item ${isActive}`;
-            serviceItem.setAttribute('data-service', serviceKey);
-            serviceItem.innerHTML = `
-                <div class="service-icon">${icon}</div>
-                <div class="service-info">
-                    <div class="service-name">${service.name}</div>
-                    <div class="service-status">${status}</div>
-                </div>
-            `;
-
-            serviceList.appendChild(serviceItem);
-        });
-
-        // Re-bind click events for service items
-        document.querySelectorAll('.service-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const service = item.dataset.service;
-                this.selectService(service);
-            });
-        });
-    },
-
     switchLogsTab: function(tabType) {
         // Update active tab
         document.querySelectorAll('.logs-tab').forEach(tab => {
@@ -626,27 +572,6 @@ Object.assign(RepoManager.prototype, {
         }
     },
 
-    displayLogs: function(logs) {
-        const logsViewer = document.getElementById('logs-viewer');
-        if (!logsViewer) return;
-
-        if (!logs || logs.length === 0) {
-            logsViewer.innerHTML = '<div class="log-line system">📄 No logs available</div>';
-            return;
-        }
-
-        logsViewer.innerHTML = '';
-        logs.forEach(logLine => {
-            const line = document.createElement('div');
-            line.className = 'log-line';
-            line.textContent = logLine;
-            logsViewer.appendChild(line);
-        });
-
-        // Auto-scroll to bottom
-        logsViewer.scrollTop = logsViewer.scrollHeight;
-    },
-
     refreshServiceLogs: function() {
         this.loadServiceLogs();
     },
@@ -819,7 +744,7 @@ Object.assign(RepoManager.prototype, {
             const response = await fetch(this.addHashToUrl(`/api/admin/repos/${repoId}/debug`));
 
             if (response.status === 401) {
-                this.handleAuthError();
+                this.showNotification('Authentication failed. Please reload the page.', 'error');
                 return;
             }
 
@@ -1457,7 +1382,7 @@ Object.assign(RepoManager.prototype, {
             });
 
             if (response.status === 401) {
-                this.handleAuthError();
+                this.showNotification('Authentication failed. Please reload the page.', 'error');
                 return;
             }
 
@@ -1513,134 +1438,6 @@ Object.assign(RepoManager.prototype, {
                 input.value = history[container.terminalSession.historyIndex];
             }
         }
-    },
-
-    uninstallApp: async function(repoId) {
-        console.log('🗑️ uninstallApp called with repoId:', repoId);
-
-        const repo = this.repos.find(r => r.id === repoId);
-        if (!repo || !repo.name) {
-            console.log('❌ Repository not found:', repoId);
-            this.showNotification('Repository not found or not configured', 'error');
-            return;
-        }
-
-        if (!repo.isInstalled) {
-            console.log('❌ App not installed');
-            this.showNotification('Application is not installed', 'error');
-            return;
-        }
-
-        console.log(`🗑️ Uninstalling app: ${repo.name}`);
-
-        // Show confirmation dialog
-        const result = await this.showAppUninstallConfirmation(repo);
-        if (!result.proceed) {
-            console.log('❌ Uninstall cancelled by user');
-            return;
-        }
-
-        try {
-            // Call uninstall API (reuse existing app management endpoint)
-            const response = await axios.post(this.addHashToUrl(`/api/admin/repos/${repoId}/uninstall`), {
-                preserveData: result.preserveData
-            });
-
-            if (response.data.success) {
-                this.showNotification(`Application "${repo.name}" uninstalled successfully`, 'success');
-                // Refresh the repo to update status
-                await this.loadRepos();
-            } else {
-                this.showNotification(`Failed to uninstall "${repo.name}": ${response.data.message}`, 'error');
-            }
-        } catch (error) {
-            console.error(`Failed to uninstall app ${repo.name}:`, error);
-            this.showNotification(`Failed to uninstall "${repo.name}": ${error.response?.data?.message || error.message}`, 'error');
-        }
-    },
-
-    showAppUninstallConfirmation: function(repo) {
-        return new Promise((resolve) => {
-            // Create app uninstall confirmation popup
-            const popup = document.createElement('div');
-            popup.id = 'app-uninstall-confirmation';
-            popup.innerHTML = `
-                <div class="uninstall-backdrop"></div>
-                <div class="uninstall-container">
-                    <div class="uninstall-header">
-                        <div class="uninstall-icon">🗑️</div>
-                        <h2>Uninstall Application</h2>
-                    </div>
-                    <div class="uninstall-content">
-                        <p><strong>Are you sure you want to uninstall "${repo.name}"?</strong></p>
-
-                        <div class="uninstall-notice">
-                            <p><i class="fas fa-info-circle"></i> This will uninstall the application from CasaOS but keep the repository configuration.</p>
-                        </div>
-
-                        <div class="data-preservation-section">
-                            <label class="preserve-data-label">
-                                <input type="checkbox" id="preserve-app-data-uninstall" checked>
-                                <span class="preserve-data-text">
-                                    <strong>Preserve application data</strong><br>
-                                    <small>Keep user data, settings, and configurations. You can reinstall later without losing data.</small>
-                                </span>
-                            </label>
-                        </div>
-
-                        <div class="uninstall-warning">
-                            <p><strong>⚠️ What will happen:</strong></p>
-                            <ul>
-                                <li>Application will be removed from CasaOS</li>
-                                <li>Container will be stopped and removed</li>
-                                <li>Repository configuration will remain intact</li>
-                                <li id="data-warning">User data will be preserved for future reinstallation</li>
-                            </ul>
-                        </div>
-                    </div>
-                    <div class="uninstall-actions">
-                        <button class="btn btn-secondary" id="cancel-app-uninstall">Cancel</button>
-                        <button class="btn btn-danger" id="confirm-app-uninstall">Uninstall Application</button>
-                    </div>
-                </div>
-            `;
-
-            document.body.appendChild(popup);
-
-            // Handle button clicks
-            const cancelBtn = document.getElementById('cancel-app-uninstall');
-            const confirmBtn = document.getElementById('confirm-app-uninstall');
-            const preserveDataCheckbox = document.getElementById('preserve-app-data-uninstall');
-            const dataWarning = document.getElementById('data-warning');
-
-            // Handle preserve data checkbox
-            preserveDataCheckbox.addEventListener('change', () => {
-                if (preserveDataCheckbox.checked) {
-                    dataWarning.textContent = 'User data will be preserved for future reinstallation';
-                    dataWarning.style.color = '#10b981';
-                } else {
-                    dataWarning.textContent = 'If data preservation is disabled, all user data will be lost';
-                    dataWarning.style.color = '#dc2626';
-                }
-            });
-
-            cancelBtn.addEventListener('click', () => {
-                popup.remove();
-                resolve({ proceed: false });
-            });
-
-            confirmBtn.addEventListener('click', () => {
-                const preserveData = preserveDataCheckbox.checked;
-                popup.remove();
-                resolve({ proceed: true, preserveData });
-            });
-
-            // Handle backdrop click
-            popup.querySelector('.uninstall-backdrop').addEventListener('click', () => {
-                popup.remove();
-                resolve({ proceed: false });
-            });
-        });
     },
 
     setupInteractiveTerminalHandlers: function() {
@@ -2481,15 +2278,6 @@ Object.assign(RepoManager.prototype, {
         } catch (error) {
             console.log('[DEBUG] Failed to proactively cache directory:', fullPath, error);
         }
-    },
-
-    showCachedCompletions: function(files) {
-        const output = document.getElementById('terminal-output');
-        const completionLine = document.createElement('div');
-        completionLine.className = 'log-line info';
-        completionLine.textContent = `📁 ${files.length} items: ${files.map(f => f.split('/').pop()).join('  ')}`;
-        output.appendChild(completionLine);
-        output.scrollTop = output.scrollHeight;
     },
 
     showCompletionsInOutput: function(files, title = 'Completions:') {

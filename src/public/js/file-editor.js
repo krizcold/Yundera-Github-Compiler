@@ -340,8 +340,8 @@
                 if (statusEl) { statusEl.textContent = 'Saved'; statusEl.className = 'file-editor-save-status saved'; }
 
                 // Clear terminal sidebar cache so file list refreshes
-                if (window.Panels && window.Panels.terminalSession) {
-                    window.Panels.terminalSession.directoryCache.clear();
+                if (window.repoManager && window.repoManager.terminalSession) {
+                    window.repoManager.terminalSession.directoryCache.clear();
                 }
 
                 setTimeout(() => {
