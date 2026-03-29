@@ -395,7 +395,7 @@
     function checkHealthchecks(parsed, ok) {
         const c = { id: 'healthchecks', section: 'optional',
             label: 'Healthchecks',
-            help: 'Healthchecks let Docker monitor container health. Examples: HTTP check with <code>curl -f http://localhost/</code>, DB check with <code>pg_isready</code>, Redis with <code>redis-cli ping</code>. Set <code>interval</code>, <code>timeout</code>, <code>retries</code>, and <code>start_period</code>.' };
+            help: 'Healthchecks let Docker monitor container health. Auto-detects: port from <code>expose</code>/<code>ports</code>/env vars, tool from image (wget for nginx/alpine, native CLI for databases, curl+wget fallback for unknown). Review the generated check after inserting.' };
         if (!ok || !parsed.services) { c.status = 'skip'; c.detail = 'Not defined'; return c; }
         let count = 0;
         for (const svc of Object.values(parsed.services)) {
@@ -513,6 +513,185 @@
             activeTooltip.remove();
             activeTooltip = null;
         }
+    }
+
+    // ========== Healthcheck Auto-Detection ==========
+
+    /**
+     * Detects the best healthcheck command and port for a service.
+     * Inspects the image name to pick the right tool (curl vs wget vs native CLI),
+     * and inspects expose/ports/environment to find the correct port.
+     */
+    function detectHealthcheck(svc, serviceName, allServices) {
+        const image = (svc.image || '').toLowerCase();
+
+        // --- Detect service type from image name ---
+
+        // Databases & caches — use their native CLI tools (no HTTP needed)
+        if (image.match(/postgres/))
+            return { test: '["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} || exit 1"]', startPeriod: '30s' };
+        if (image.match(/mysql|mariadb/))
+            return { test: '["CMD-SHELL", "mysqladmin ping -h localhost || exit 1"]', startPeriod: '30s' };
+        if (image.match(/redis/))
+            return { test: '["CMD-SHELL", "redis-cli ping | grep -q PONG || exit 1"]', startPeriod: '10s' };
+        if (image.match(/mongo/))
+            return { test: '["CMD-SHELL", "mongosh --quiet --eval \\"db.runCommand(\'ping\').ok\\" || exit 1"]', startPeriod: '30s' };
+        if (image.match(/memcache/))
+            return { test: '["CMD-SHELL", "echo stats | nc localhost 11211 | grep -q pid || exit 1"]', startPeriod: '10s' };
+
+        // --- Detect the listening port ---
+        const port = detectServicePort(svc, serviceName, allServices);
+
+        // --- Pick HTTP check tool based on image ---
+
+        // Alpine-based images: wget is built-in, curl is not
+        const isAlpine = image.match(/alpine/);
+
+        // Nginx images: use wget (alpine nginx has no curl)
+        if (image.match(/nginx/))
+            return { test: '["CMD-SHELL", "wget --spider -q http://localhost:' + port + '/ || exit 1"]', startPeriod: '15s' };
+
+        // BusyBox-based / lightweight images: wget only
+        if (image.match(/busybox|traefik/))
+            return { test: '["CMD-SHELL", "wget --spider -q http://localhost:' + port + '/ || exit 1"]', startPeriod: '15s' };
+
+        // Known images that ship curl
+        if (image.match(/node|python|ruby|php|java|golang|dotnet|ubuntu|debian|fedora|centos/))
+            return { test: '["CMD", "curl", "-f", "http://localhost:' + port + '/"]', startPeriod: '30s' };
+
+        // Alpine-based images default to wget
+        if (isAlpine)
+            return { test: '["CMD-SHELL", "wget --spider -q http://localhost:' + port + '/ || exit 1"]', startPeriod: '15s' };
+
+        // Default: try curl with wget fallback (works on most images)
+        return { test: '["CMD-SHELL", "curl -sf http://localhost:' + port + '/ || wget --spider -q http://localhost:' + port + '/ || exit 1"]', startPeriod: '30s' };
+    }
+
+    /**
+     * Detects the port a service listens on by checking (in priority order):
+     * 1. expose array
+     * 2. ports mappings (container port)
+     * 3. Own environment variables (LISTEN_PORT, PORT, HTTP_PORT, etc.)
+     * 4. Sibling services that reference this service as a host (cross-service discovery)
+     * 5. Falls back to 80
+     */
+    function detectServicePort(svc, serviceName, allServices) {
+        // 1. Check expose (most reliable for CasaOS apps)
+        if (svc.expose && Array.isArray(svc.expose) && svc.expose.length > 0) {
+            const p = String(svc.expose[0]).replace(/\/.*/, ''); // strip protocol like /tcp
+            if (p && /^\d+$/.test(p)) return p;
+        }
+
+        // 2. Check ports (extract container-side port)
+        if (svc.ports && Array.isArray(svc.ports)) {
+            for (const mapping of svc.ports) {
+                if (typeof mapping === 'string') {
+                    // "8080:3000" → 3000, "8080" → 8080
+                    const parts = mapping.split(':');
+                    const containerPort = (parts.length > 1 ? parts[parts.length - 1] : parts[0]).replace(/\/.*/, '');
+                    if (containerPort && /^\d+$/.test(containerPort)) return containerPort;
+                } else if (mapping && typeof mapping === 'object' && mapping.target) {
+                    return String(mapping.target);
+                }
+            }
+        }
+
+        // 3. Check own environment variables for port hints
+        const portFromEnv = getPortFromEnv(svc.environment);
+        if (portFromEnv) return portFromEnv;
+
+        // 4. Cross-service discovery: check if a sibling references this service as a backend host
+        //    e.g. sibling has BACKEND_HOST: "stremiocommunity" + BACKEND_PORT: "8080"
+        if (serviceName && allServices) {
+            const crossPort = detectPortFromSiblings(serviceName, allServices);
+            if (crossPort) return crossPort;
+        }
+
+        // 5. Default to 80 (most web services)
+        return '80';
+    }
+
+    /**
+     * Extracts a port number from a service's environment block.
+     * Returns the port string or null if not found.
+     */
+    function getPortFromEnv(env) {
+        if (!env) return null;
+        const portVarNames = ['LISTEN_PORT', 'PORT', 'HTTP_PORT', 'SERVER_PORT', 'APP_PORT', 'WEBUI_PORT', 'WEB_PORT', 'NGINX_PORT'];
+
+        if (Array.isArray(env)) {
+            for (const varName of portVarNames) {
+                const match = env.find(e => typeof e === 'string' && e.startsWith(varName + '='));
+                if (match) {
+                    const val = match.split('=')[1].replace(/["']/g, '');
+                    if (val && /^\d+$/.test(val)) return val;
+                }
+            }
+        } else if (typeof env === 'object') {
+            for (const varName of portVarNames) {
+                const val = String(env[varName] || '').replace(/["']/g, '');
+                if (val && /^\d+$/.test(val)) return val;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Cross-service port discovery.
+     * Scans sibling services for env var pairs like:
+     *   BACKEND_HOST: "thisService"  +  BACKEND_PORT: "8080"
+     *   DB_HOST: "thisService"       +  DB_PORT: "5432"
+     * The pattern: any *_HOST (or *_SERVER) whose value matches this service name,
+     * then look for a matching *_PORT with the same prefix.
+     */
+    function detectPortFromSiblings(serviceName, allServices) {
+        for (const [sibName, sibSvc] of Object.entries(allServices)) {
+            if (sibName === serviceName || !sibSvc || typeof sibSvc !== 'object') continue;
+            const env = sibSvc.environment;
+            if (!env || typeof env !== 'object' || Array.isArray(env)) {
+                // Also handle array format
+                if (Array.isArray(env)) {
+                    const portFromArray = scanEnvArrayForSiblingPort(env, serviceName);
+                    if (portFromArray) return portFromArray;
+                }
+                continue;
+            }
+            // Object format: { BACKEND_HOST: "stremiocommunity", BACKEND_PORT: "8080" }
+            for (const [key, val] of Object.entries(env)) {
+                if (String(val).toLowerCase() !== serviceName.toLowerCase()) continue;
+                // Found a reference to our service — look for a port with matching prefix
+                // e.g. BACKEND_HOST → BACKEND_PORT, DB_HOST → DB_PORT
+                const prefix = key.replace(/_(HOST|SERVER|HOSTNAME|ADDR|ADDRESS)$/i, '');
+                if (prefix === key) continue; // key didn't end with a host-like suffix
+                const portKey = prefix + '_PORT';
+                const portVal = String(env[portKey] || '').replace(/["']/g, '');
+                if (portVal && /^\d+$/.test(portVal)) return portVal;
+            }
+        }
+        return null;
+    }
+
+    /** Array-format version of sibling env scan: ["BACKEND_HOST=stremiocommunity", "BACKEND_PORT=8080"] */
+    function scanEnvArrayForSiblingPort(envArray, serviceName) {
+        // First pass: find entries whose value matches serviceName
+        for (const entry of envArray) {
+            if (typeof entry !== 'string') continue;
+            const eqIdx = entry.indexOf('=');
+            if (eqIdx < 0) continue;
+            const key = entry.substring(0, eqIdx);
+            const val = entry.substring(eqIdx + 1).replace(/["']/g, '');
+            if (val.toLowerCase() !== serviceName.toLowerCase()) continue;
+            const prefix = key.replace(/_(HOST|SERVER|HOSTNAME|ADDR|ADDRESS)$/i, '');
+            if (prefix === key) continue;
+            const portKey = prefix + '_PORT';
+            // Second pass: find the matching port entry
+            const portEntry = envArray.find(e => typeof e === 'string' && e.startsWith(portKey + '='));
+            if (portEntry) {
+                const portVal = portEntry.split('=')[1].replace(/["']/g, '');
+                if (portVal && /^\d+$/.test(portVal)) return portVal;
+            }
+        }
+        return null;
     }
 
     // ========== Insert Button Logic ==========
@@ -1000,8 +1179,8 @@
                 for (const [name, svc] of Object.entries(services)) {
                     if (!svc || typeof svc !== 'object' || svc.healthcheck) continue;
                     const pos = findServiceBlockEndPos(text, name);
-                    const port = '8080';
-                    const snippet = '\n    healthcheck:\n      test: ["CMD", "curl", "-f", "http://localhost:' + port + '/"]\n      interval: 30s\n      timeout: 10s\n      retries: 3\n      start_period: 30s';
+                    const hc = detectHealthcheck(svc, name, services);
+                    const snippet = '\n    healthcheck:\n      test: ' + hc.test + '\n      interval: 30s\n      timeout: 10s\n      retries: 3\n      start_period: ' + hc.startPeriod;
                     changes.push({ from: pos, insert: snippet });
                 }
                 return { changes };
