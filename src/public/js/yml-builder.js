@@ -569,14 +569,15 @@
 
     /**
      * Detects the port a service listens on by checking (in priority order):
-     * 1. expose array
+     * 1. expose array (compose author's explicit declaration)
      * 2. ports mappings (container port)
      * 3. Own environment variables (LISTEN_PORT, PORT, HTTP_PORT, etc.)
-     * 4. Sibling services that reference this service as a host (cross-service discovery)
-     * 5. Falls back to 80
+     * 4. Registry metadata (ExposedPorts from image's Dockerfile)
+     * 5. Sibling services that reference this service as a host (cross-service discovery)
+     * 6. Falls back to 80
      */
     function detectServicePort(svc, serviceName, allServices) {
-        // 1. Check expose (most reliable for CasaOS apps)
+        // 1. Check expose (compose author's explicit declaration — highest priority)
         if (svc.expose && Array.isArray(svc.expose) && svc.expose.length > 0) {
             const p = String(svc.expose[0]).replace(/\/.*/, ''); // strip protocol like /tcp
             if (p && /^\d+$/.test(p)) return p;
@@ -600,14 +601,19 @@
         const portFromEnv = getPortFromEnv(svc.environment);
         if (portFromEnv) return portFromEnv;
 
-        // 4. Cross-service discovery: check if a sibling references this service as a backend host
+        // 4. Registry metadata (ExposedPorts from image's Dockerfile — the ground truth for what the image listens on)
+        if (serviceName && registryPortCache[serviceName]) {
+            return registryPortCache[serviceName];
+        }
+
+        // 5. Cross-service discovery: check if a sibling references this service as a backend host
         //    e.g. sibling has BACKEND_HOST: "stremiocommunity" + BACKEND_PORT: "8080"
         if (serviceName && allServices) {
             const crossPort = detectPortFromSiblings(serviceName, allServices);
             if (crossPort) return crossPort;
         }
 
-        // 5. Default to 80 (most web services)
+        // 6. Default to 80 (most web services)
         return '80';
     }
 
@@ -946,7 +952,69 @@
         return inKey ? { found: true, endPos: lastKeyLineEnd } : { found: false, endPos: -1 };
     }
 
+    // Registry-fetched ports cache: { serviceName: "8080", ... }
+    // Populated by fetchImagePorts() before healthcheck insertion
+    let registryPortCache = {};
+
     function handleInsert(checkId) {
+        // For healthchecks, fetch real ExposedPorts from image registries first
+        if (checkId === 'healthchecks') {
+            const text = getValue();
+            let parsed;
+            try { parsed = jsyaml.load(text); } catch (e) { return; }
+
+            const services = parsed.services || {};
+            const images = [];
+            for (const [name, svc] of Object.entries(services)) {
+                if (svc && typeof svc === 'object' && svc.image && !svc.healthcheck) {
+                    images.push({ image: svc.image, service: name });
+                }
+            }
+
+            if (images.length > 0) {
+                // Show loading state on the button
+                const el = document.querySelector('[data-insert-id="healthchecks"]');
+                if (el) el.classList.add('loading');
+
+                fetchImagePorts(images).then(() => {
+                    if (el) el.classList.remove('loading');
+                    applyInsertion(checkId);
+                });
+                return;
+            }
+        }
+
+        applyInsertion(checkId);
+    }
+
+    /**
+     * Fetches ExposedPorts from image registry metadata for a list of services.
+     * Populates registryPortCache so detectServicePort can use it.
+     */
+    async function fetchImagePorts(images) {
+        try {
+            const resp = await fetch('/api/admin/image-ports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ images }),
+            });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data.success || !data.results) return;
+
+            registryPortCache = {};
+            for (const result of data.results) {
+                if (result.ports && result.ports.length > 0) {
+                    // Use the first exposed port (most images expose their primary port first)
+                    registryPortCache[result.service] = result.ports[0];
+                }
+            }
+        } catch {
+            // Non-critical — compose-based detection will still work
+        }
+    }
+
+    function applyInsertion(checkId) {
         const text = getValue();
         let parsed;
         try { parsed = jsyaml.load(text); } catch (e) { return; }

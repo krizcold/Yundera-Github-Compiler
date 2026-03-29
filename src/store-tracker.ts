@@ -607,7 +607,7 @@ function getRegistryBase(registry: string): string {
   return `https://${registry}`;
 }
 
-async function fetchImageConfig(registry: string, repository: string, tag: string): Promise<any | null> {
+export async function fetchImageConfig(registry: string, repository: string, tag: string): Promise<any | null> {
   try {
     const token = await fetchAuthToken(registry, repository);
     const base = getRegistryBase(registry);
