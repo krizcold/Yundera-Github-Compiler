@@ -2437,9 +2437,10 @@ app.post("/api/admin/terminal/read-file", async (req, res) => {
     // Build the read script
     const readScript = `
       TARGET="${filePath}"
-      if [ ! "${filePath}" = /* ]; then
-        TARGET="${currentDir}/${filePath}"
-      fi
+      case "${filePath}" in
+        /*) ;;
+        *) TARGET="${currentDir}/${filePath}" ;;
+      esac
 
       if [ ! -e "\$TARGET" ]; then
         echo "ERROR_CODE:NOT_FOUND"
